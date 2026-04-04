@@ -15,6 +15,7 @@ from arena_fighters.env import ArenaFightersEnv
 from arena_fighters.network import ArenaFeaturesExtractor
 from arena_fighters.replay import load_replay
 from arena_fighters.self_play import OpponentPool, SelfPlayWrapper
+from stable_baselines3.common.callbacks import BaseCallback
 
 
 def mirror_obs(obs: dict) -> dict:
@@ -40,31 +41,10 @@ def mirror_obs(obs: dict) -> dict:
     return {"grid": grid, "vector": vector}
 
 
-class SelfPlayCallback:
-    """Snapshots weights into the opponent pool at regular intervals.
+class SelfPlayCallback(BaseCallback):
+    """Snapshots weights into the opponent pool at regular intervals."""
 
-    Inherits from SB3's BaseCallback. Separated here so the import
-    only happens when training.
-    """
-
-    def __new__(cls, *args, **kwargs):
-        # Lazy import so the module loads without SB3 installed
-        from stable_baselines3.common.callbacks import BaseCallback
-
-        # Dynamically create a proper subclass of BaseCallback
-        real_cls = type(
-            "SelfPlayCallback",
-            (BaseCallback,),
-            {
-                "__init__": cls._real_init,
-                "_on_rollout_end": cls._on_rollout_end,
-            },
-        )
-        instance = BaseCallback.__new__(real_cls)
-        return instance
-
-    @staticmethod
-    def _real_init(
+    def __init__(
         self,
         wrapper: SelfPlayWrapper,
         opponent_pool: OpponentPool,
@@ -72,9 +52,7 @@ class SelfPlayCallback:
         checkpoint_dir: str = "checkpoints",
         verbose: int = 0,
     ):
-        from stable_baselines3.common.callbacks import BaseCallback
-
-        BaseCallback.__init__(self, verbose=verbose)
+        super().__init__(verbose=verbose)
         self.wrapper = wrapper
         self.opponent_pool = opponent_pool
         self.snapshot_interval = snapshot_interval
@@ -82,7 +60,9 @@ class SelfPlayCallback:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self._rollout_count = 0
 
-    @staticmethod
+    def _on_step(self) -> bool:
+        return True
+
     def _on_rollout_end(self) -> None:
         self._rollout_count += 1
         if self._rollout_count % self.snapshot_interval != 0:
