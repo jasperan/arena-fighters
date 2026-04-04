@@ -59,8 +59,21 @@ class SelfPlayCallback(BaseCallback):
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self._rollout_count = 0
+        self._milestones = {100_000, 500_000, 1_000_000, 5_000_000, 10_000_000,
+                            50_000_000, 100_000_000}
+        self._milestones_hit: set[int] = set()
 
     def _on_step(self) -> bool:
+        # Check for milestone checkpoints based on total timesteps
+        steps = self.num_timesteps
+        for m in self._milestones:
+            if m not in self._milestones_hit and steps >= m:
+                self._milestones_hit.add(m)
+                label = f"{m // 1_000_000}M" if m >= 1_000_000 else f"{m // 1_000}K"
+                path = self.checkpoint_dir / f"ppo_{label}"
+                self.model.save(str(path))
+                if self.verbose:
+                    print(f"[Milestone] {label} steps reached, saved to {path}")
         return True
 
     def _on_rollout_end(self) -> None:
