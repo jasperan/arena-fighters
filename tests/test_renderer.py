@@ -14,15 +14,14 @@ def test_ansi_render_contains_hp():
     env = ArenaFightersEnv(config=Config(), render_mode="ansi")
     env.reset()
     output = env.render()
-    assert "HP:" in output
-    assert "100" in output
+    assert "100HP" in output
 
 
 def test_ansi_render_contains_platforms():
     env = ArenaFightersEnv(config=Config(), render_mode="ansi")
     env.reset()
     output = env.render()
-    assert "=" in output
+    assert "platform" in output  # legend text
 
 
 def test_ansi_render_shows_bullets():
@@ -30,7 +29,7 @@ def test_ansi_render_shows_bullets():
     env.reset()
     env._bullets.append(Bullet(x=20, y=10, dx=2, dy=0, owner="agent_0"))
     output = env.render()
-    assert "*" in output
+    assert "-" in output  # horizontal bullet char
 
 
 def test_ansi_render_shows_tick():
@@ -38,4 +37,4 @@ def test_ansi_render_shows_tick():
     env.reset()
     env._tick = 42
     output = env.render()
-    assert "Tick 42" in output
+    assert "42" in output

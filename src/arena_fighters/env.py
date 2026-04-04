@@ -365,44 +365,96 @@ class ArenaFightersEnv(ParallelEnv):
             return True
         return self._is_solid(st.x, below_y)
 
-    def _render_ansi(self) -> str:
+    def _render_ansi(self, score: tuple[int, int] | None = None) -> str:
         h, w = self.cfg.arena.height, self.cfg.arena.width
         st0 = self._agent_states["agent_0"]
         st1 = self._agent_states["agent_1"]
+        max_hp = self.cfg.agent.start_hp
 
-        # Header
-        lines = [
-            f"Tick {self._tick}/{self.cfg.arena.max_ticks}  "
-            f"HP: @={st0.hp}  X={st1.hp}"
-        ]
+        # Box drawing border
+        border_w = w + 2
+        lines: list[str] = []
+
+        # Title bar
+        lines.append(f"\033[1;36m{'ARENA FIGHTERS':^{border_w}}\033[0m")
+        lines.append(f"\033[90m{'=' * border_w}\033[0m")
+
+        # Score line (if provided)
+        if score is not None:
+            score_str = f"Score: \033[1;33m@\033[0m {score[0]}  -  {score[1]} \033[1;35mX\033[0m"
+            lines.append(f"  {score_str}")
+
+        # HP bars
+        hp0_pct = max(0, st0.hp) / max_hp
+        hp1_pct = max(0, st1.hp) / max_hp
+        bar_len = 15
+        bar0 = "\033[32m" + "█" * int(hp0_pct * bar_len) + "\033[90m" + "░" * (bar_len - int(hp0_pct * bar_len)) + "\033[0m"
+        bar1 = "\033[32m" + "█" * int(hp1_pct * bar_len) + "\033[90m" + "░" * (bar_len - int(hp1_pct * bar_len)) + "\033[0m"
+        if hp0_pct < 0.3:
+            bar0 = "\033[31m" + "█" * int(hp0_pct * bar_len) + "\033[90m" + "░" * (bar_len - int(hp0_pct * bar_len)) + "\033[0m"
+        if hp1_pct < 0.3:
+            bar1 = "\033[31m" + "█" * int(hp1_pct * bar_len) + "\033[90m" + "░" * (bar_len - int(hp1_pct * bar_len)) + "\033[0m"
+
+        hp_line = f"  \033[1;33m@ {st0.hp:3d}HP\033[0m {bar0}    {bar1} \033[1;35mX {st1.hp:3d}HP\033[0m"
+        lines.append(hp_line)
+
+        # Status indicators
+        status_parts = [f"  \033[90mTick {self._tick:3d}/{self.cfg.arena.max_ticks}\033[0m"]
+        if st0.duck_ticks > 0:
+            status_parts.append("\033[33m@ DUCK\033[0m")
+        if st1.duck_ticks > 0:
+            status_parts.append("\033[33mX DUCK\033[0m")
+        if st0.shoot_cd > 0:
+            status_parts.append(f"\033[90m@ CD:{st0.shoot_cd}\033[0m")
+        if st1.shoot_cd > 0:
+            status_parts.append(f"\033[90mX CD:{st1.shoot_cd}\033[0m")
+        lines.append("  ".join(status_parts))
+
+        # Top border
+        lines.append("\033[90m+" + "-" * w + "+\033[0m")
 
         # Build display grid
-        display = [["." for _ in range(w)] for _ in range(h)]
+        display = [[" " for _ in range(w)] for _ in range(h)]
 
         # Platforms
         for y in range(h):
             for x in range(w):
                 if self._platform_grid[y, x]:
-                    display[y][x] = "="
+                    display[y][x] = "\033[90m█\033[0m"
 
-        # Bullets
+        # Bullets with direction indicators
         for b in self._bullets:
             bx, by = int(round(b.x)), int(round(b.y))
             if 0 <= bx < w and 0 <= by < h:
-                display[by][bx] = "*"
+                if b.dy < 0:
+                    char = "/"
+                elif b.dy > 0:
+                    char = "\\"
+                else:
+                    char = "-"
+                color = "\033[33m" if b.owner == "agent_0" else "\033[35m"
+                display[by][bx] = f"{color}{char}\033[0m"
 
-        # Agents (drawn last so they're visible)
-        display[st0.y][st0.x] = "@"
-        display[st1.y][st1.x] = "X"
+        # Agents with facing indicators
+        a0_char = "\033[1;33m@\033[0m" if st0.duck_ticks == 0 else "\033[1;33m_\033[0m"
+        a1_char = "\033[1;35mX\033[0m" if st1.duck_ticks == 0 else "\033[1;35m_\033[0m"
+        display[st0.y][st0.x] = a0_char
+        display[st1.y][st1.x] = a1_char
 
         for row in display:
-            lines.append("".join(row))
+            lines.append("\033[90m|\033[0m" + "".join(row) + "\033[90m|\033[0m")
+
+        # Bottom border
+        lines.append("\033[90m+" + "-" * w + "+\033[0m")
+
+        # Legend
+        lines.append(f"  \033[1;33m@\033[0m Agent 0  \033[1;35mX\033[0m Agent 1  \033[33m-\033[0m bullet  \033[90m█\033[0m platform")
 
         return "\n".join(lines)
 
-    def render(self) -> str | None:
+    def render(self, score: tuple[int, int] | None = None) -> str | None:
         if self.render_mode == "ansi":
-            return self._render_ansi()
+            return self._render_ansi(score=score)
         return None
 
     def get_state(self) -> dict[str, Any]:

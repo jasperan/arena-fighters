@@ -133,48 +133,108 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
     print(f"Training complete. Final model saved to {final_path}")
 
 
-def run_watch(cfg: Config, checkpoint: str | None) -> None:
-    """Load a checkpoint and play a game in ASCII."""
+def run_watch(cfg: Config, checkpoint: str | None, num_rounds: int = 0) -> None:
+    """Load a checkpoint and play games in ASCII with score tracking.
+
+    Args:
+        num_rounds: number of rounds to play. 0 = infinite (Ctrl+C to stop).
+    """
     import numpy as np
 
-    env = ArenaFightersEnv(config=cfg, render_mode="ansi")
     model = None
-
     if checkpoint and Path(checkpoint).exists():
         from stable_baselines3 import PPO
 
         model = PPO.load(checkpoint)
-        print(f"Loaded checkpoint: {checkpoint}")
-    else:
-        if checkpoint:
-            print(f"Checkpoint not found: {checkpoint}, using random actions")
-        else:
-            print("No checkpoint specified, using random actions")
 
-    obs_dict, _ = env.reset()
+    score = [0, 0]  # [agent_0 wins, agent_1 wins]
+    draws = 0
+    round_num = 0
 
-    while env.agents:
-        actions = {}
-        for agent_name in env.agents:
-            agent_obs = obs_dict[agent_name]
-            if model is not None:
-                if agent_name == "agent_1":
-                    agent_obs = mirror_obs(agent_obs)
-                action, _ = model.predict(agent_obs, deterministic=False)
-                actions[agent_name] = int(action)
+    try:
+        while num_rounds == 0 or round_num < num_rounds:
+            round_num += 1
+            env = ArenaFightersEnv(config=cfg, render_mode="ansi")
+            obs_dict, _ = env.reset()
+
+            # Round start splash
+            os.system("clear" if os.name != "nt" else "cls")
+            print(f"\033[1;36m{'ARENA FIGHTERS':^44}\033[0m")
+            print(f"\033[90m{'=' * 44}\033[0m")
+            print(f"\n  \033[1mRound {round_num}\033[0m")
+            print(f"  Score: \033[1;33m@\033[0m {score[0]}  -  {score[1]} \033[1;35mX\033[0m  (draws: {draws})")
+            if model:
+                print(f"  \033[90mCheckpoint: {checkpoint}\033[0m")
             else:
-                actions[agent_name] = np.random.randint(0, NUM_ACTIONS)
+                print(f"  \033[90mRandom agents (no checkpoint)\033[0m")
+            print(f"\n  \033[90mStarting in 2s...\033[0m")
+            time.sleep(2)
 
-        obs_dict, rewards, terminations, truncations, infos = env.step(actions)
+            winner = None
+            while env.agents:
+                actions = {}
+                for agent_name in env.agents:
+                    agent_obs = obs_dict[agent_name]
+                    if model is not None:
+                        if agent_name == "agent_1":
+                            agent_obs = mirror_obs(agent_obs)
+                        action, _ = model.predict(agent_obs, deterministic=False)
+                        actions[agent_name] = int(action)
+                    else:
+                        actions[agent_name] = np.random.randint(0, NUM_ACTIONS)
 
-        # Clear screen and render
-        os.system("clear" if os.name != "nt" else "cls")
-        frame = env.render()
-        if frame:
-            print(frame)
-        time.sleep(0.1)
+                obs_dict, rewards, terminations, truncations, infos = env.step(actions)
 
-    print("\nGame over!")
+                os.system("clear" if os.name != "nt" else "cls")
+                frame = env._render_ansi(score=tuple(score))
+                print(frame)
+                time.sleep(0.08)
+
+                # Determine winner from rewards
+                if any(terminations.values()) or any(truncations.values()):
+                    r0 = rewards.get("agent_0", 0)
+                    r1 = rewards.get("agent_1", 0)
+                    if r0 > r1:
+                        winner = "agent_0"
+                    elif r1 > r0:
+                        winner = "agent_1"
+
+            # Update score
+            if winner == "agent_0":
+                score[0] += 1
+            elif winner == "agent_1":
+                score[1] += 1
+            else:
+                draws += 1
+
+            # Round result splash
+            os.system("clear" if os.name != "nt" else "cls")
+            print(f"\033[1;36m{'ARENA FIGHTERS':^44}\033[0m")
+            print(f"\033[90m{'=' * 44}\033[0m")
+            print(f"\n  \033[1mRound {round_num} Result\033[0m\n")
+            if winner == "agent_0":
+                print(f"  \033[1;33m>>> @ WINS! <<<\033[0m")
+            elif winner == "agent_1":
+                print(f"  \033[1;35m>>> X WINS! <<<\033[0m")
+            else:
+                print(f"  \033[90m>>> DRAW <<<\033[0m")
+            print(f"\n  Score: \033[1;33m@\033[0m {score[0]}  -  {score[1]} \033[1;35mX\033[0m  (draws: {draws})")
+            print(f"  Win rates: \033[33m@\033[0m {score[0]*100/round_num:.0f}%  \033[35mX\033[0m {score[1]*100/round_num:.0f}%")
+            print(f"\n  \033[90mNext round in 3s... (Ctrl+C to quit)\033[0m")
+            time.sleep(3)
+            env.close()
+
+    except KeyboardInterrupt:
+        pass
+
+    # Final summary
+    print(f"\n\033[1;36m{'FINAL RESULTS':^44}\033[0m")
+    print(f"\033[90m{'=' * 44}\033[0m")
+    print(f"  Rounds played: {round_num}")
+    print(f"  Score: \033[1;33m@\033[0m {score[0]}  -  {score[1]} \033[1;35mX\033[0m  (draws: {draws})")
+    if round_num > 0:
+        print(f"  Win rates: \033[33m@\033[0m {score[0]*100/round_num:.0f}%  \033[35mX\033[0m {score[1]*100/round_num:.0f}%")
+    print()
 
 
 def run_replay(cfg: Config, episode_path: str) -> None:
@@ -279,6 +339,12 @@ def main():
         default="replays",
         help="Directory for replay files (default: replays)",
     )
+    parser.add_argument(
+        "--rounds",
+        type=int,
+        default=0,
+        help="Number of rounds to watch (0 = infinite, Ctrl+C to stop)",
+    )
     args = parser.parse_args()
 
     cfg = Config()
@@ -293,7 +359,7 @@ def main():
     if args.mode == "train":
         run_train(cfg, args.checkpoint_dir, args.replay_dir)
     elif args.mode == "watch":
-        run_watch(cfg, args.checkpoint)
+        run_watch(cfg, args.checkpoint, num_rounds=args.rounds)
     elif args.mode == "replay":
         if not args.episode:
             parser.error("--episode is required for replay mode")
