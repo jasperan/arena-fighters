@@ -10,7 +10,7 @@ class ArenaConfig:
 
 @dataclass(frozen=True)
 class AgentConfig:
-    start_hp: int = 100
+    start_hp: int = 1
     bullet_damage: int = 10
     melee_damage: int = 15
     shoot_cooldown: int = 5

@@ -11,7 +11,7 @@ def test_config_defaults():
     cfg = Config()
     assert cfg.arena.width == 40
     assert cfg.arena.height == 20
-    assert cfg.agent.start_hp == 100
+    assert cfg.agent.start_hp == 1
     assert cfg.training.total_timesteps == 10_000_000
 
 

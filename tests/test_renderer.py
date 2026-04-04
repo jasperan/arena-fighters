@@ -14,7 +14,7 @@ def test_ansi_render_contains_hp():
     env = ArenaFightersEnv(config=Config(), render_mode="ansi")
     env.reset()
     output = env.render()
-    assert "100HP" in output
+    assert "1HP" in output
 
 
 def test_ansi_render_contains_platforms():
