@@ -6,6 +6,8 @@ dist/
 build/
 .agents/
 .claude/
+.omc/
+tb_logs/
 docs/plans/
 task_plan.md
 findings.md
