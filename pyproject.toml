@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arena-fighters"
+version = "0.1.0"
+description = "2D platform fighter with self-play PPO training"
+requires-python = ">=3.12"
+dependencies = [
+    "pettingzoo>=1.24",
+    "stable-baselines3>=2.3",
+    "gymnasium>=0.29",
+    "torch>=2.2",
+    "numpy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "tensorboard",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,12 @@
+checkpoints/
+replays/
+__pycache__/
+*.egg-info/
+dist/
+build/
+.agents/
+.claude/
+docs/plans/
+task_plan.md
+findings.md
+progress.md
