@@ -12,3 +12,9 @@ docs/plans/
 task_plan.md
 findings.md
 progress.md
+.crush/
+.openhands/
+.serena/
+dogfood-output/
+.playwright-mcp/
+content/
