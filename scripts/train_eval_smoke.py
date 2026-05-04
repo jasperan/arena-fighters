@@ -192,6 +192,31 @@ def validate_smoke_long_run_check(long_run_check: Path, exit_code: int) -> None:
         raise RuntimeError("Diagnostic long_run_check failed but returned exit code 0")
 
 
+def validate_smoke_checkpoint_metadata(
+    metadata_path: Path,
+    *,
+    expected_opponent_pool_seed: int | None,
+) -> None:
+    if not metadata_path.exists():
+        raise RuntimeError(f"Tiny training did not write metadata: {metadata_path}")
+
+    metadata = json.loads(metadata_path.read_text())
+    if expected_opponent_pool_seed is None:
+        return
+
+    opponent_pool_config = metadata.get("opponent_pool_config")
+    actual_seed = (
+        opponent_pool_config.get("seed")
+        if isinstance(opponent_pool_config, dict)
+        else None
+    )
+    if actual_seed != expected_opponent_pool_seed:
+        raise RuntimeError(
+            "Tiny training metadata recorded opponent_pool_config.seed="
+            f"{actual_seed!r}; expected {expected_opponent_pool_seed!r}"
+        )
+
+
 def build_train_eval_summary(output_dir: Path) -> dict:
     checkpoint = output_dir / "checkpoints" / "ppo_final.zip"
     metadata = output_dir / "checkpoints" / "ppo_final.meta.json"
@@ -374,6 +399,10 @@ def main() -> None:
     )
 
     checkpoint = checkpoint_dir / "ppo_final.zip"
+    validate_smoke_checkpoint_metadata(
+        checkpoint_dir / "ppo_final.meta.json",
+        expected_opponent_pool_seed=args.opponent_pool_seed,
+    )
     run_command(
         base_cmd
         + [

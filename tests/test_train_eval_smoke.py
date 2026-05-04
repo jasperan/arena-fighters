@@ -12,6 +12,7 @@ from scripts.train_eval_smoke import (
     build_train_command,
     build_train_eval_summary,
     run_command,
+    validate_smoke_checkpoint_metadata,
     validate_smoke_long_run_check,
 )
 
@@ -166,6 +167,29 @@ def test_validate_smoke_long_run_check_rejects_unexpected_failure(tmp_path):
         assert "artifact_index_has_required_artifacts" in str(exc)
     else:
         raise AssertionError("Expected unexpected long_run_check failure to raise")
+
+
+def test_validate_smoke_checkpoint_metadata_accepts_expected_seed(tmp_path):
+    path = tmp_path / "ppo_final.meta.json"
+    path.write_text(
+        json.dumps({"opponent_pool_config": {"seed": 123}}) + "\n"
+    )
+
+    validate_smoke_checkpoint_metadata(path, expected_opponent_pool_seed=123)
+
+
+def test_validate_smoke_checkpoint_metadata_rejects_seed_mismatch(tmp_path):
+    path = tmp_path / "ppo_final.meta.json"
+    path.write_text(
+        json.dumps({"opponent_pool_config": {"seed": 456}}) + "\n"
+    )
+
+    try:
+        validate_smoke_checkpoint_metadata(path, expected_opponent_pool_seed=123)
+    except RuntimeError as exc:
+        assert "expected 123" in str(exc)
+    else:
+        raise AssertionError("Expected checkpoint metadata seed mismatch to raise")
 
 
 def test_build_train_eval_summary_reads_expected_artifacts(tmp_path):
