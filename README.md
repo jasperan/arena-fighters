@@ -67,6 +67,9 @@ Saved checkpoints also get companion `.meta.json` files recording map settings,
 reward config, active curriculum stage, opponent-pool config and stats, file
 size, and SHA-256 digest. Eval mode can find this metadata even when you pass
 the Stable Baselines `.zip` checkpoint path.
+Training also writes `checkpoint-trust-manifest.json`, an explicit SHA-256
+allowlist for checkpoints produced by that run. Pass it when loading those
+checkpoints for watch, eval, suite, rank, or promotion-audit modes.
 Training also writes sampled episode replays to `--replay-dir` every
 `Config.training.replay_save_interval` episodes so long-run artifact analysis can
 inspect real training behavior without saving every rollout.
@@ -82,10 +85,10 @@ The `anti_stall` reward preset increases draw and idle penalties, adds an extra 
 python scripts/train.py --mode watch
 
 # Trained agent
-python scripts/train.py --mode watch --checkpoint checkpoints/ppo_final
+python scripts/train.py --mode watch --checkpoint checkpoints/ppo_final --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json
 
 # Fixed number of rounds
-python scripts/train.py --mode watch --checkpoint checkpoints/ppo_1M --rounds 10
+python scripts/train.py --mode watch --checkpoint checkpoints/ppo_1M --rounds 10 --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json
 
 # Specific map
 python scripts/train.py --mode watch --map tower --rounds 3
@@ -110,7 +113,7 @@ episodes for later strategy reports.
 
 ```bash
 # Checkpoint against a scripted baseline
-python scripts/train.py --mode eval --checkpoint checkpoints/ppo_final --opponent scripted --rounds 100 --seed 123
+python scripts/train.py --mode eval --checkpoint checkpoints/ppo_final --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json --opponent scripted --rounds 100 --seed 123
 
 # Random policy smoke test against the scripted baseline
 python scripts/train.py --mode eval --opponent scripted --rounds 20 --seed 123
@@ -122,7 +125,7 @@ python scripts/train.py --mode eval --agent-policy idle --opponent idle --rounds
 python scripts/train.py --mode eval --opponent evasive --rounds 20 --seed 123
 
 # Report performance across randomized maps
-python scripts/train.py --mode eval --checkpoint checkpoints/ppo_final --opponent scripted --rounds 100 --randomize-maps --map-choices classic,flat,split,tower
+python scripts/train.py --mode eval --checkpoint checkpoints/ppo_final --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json --opponent scripted --rounds 100 --randomize-maps --map-choices classic,flat,split,tower
 
 # Persist timestamped metrics for later comparison
 python scripts/train.py --mode eval --opponent scripted --rounds 20 --eval-output-dir evals --eval-label random-vs-scripted
@@ -133,15 +136,16 @@ Saved eval, suite, rank, comparison, gate, rank-gate, promotion-audit,
 audit-summary, artifact-index, strategy-report, long-run-manifest,
 long-run-check, long-run-status, league-health, reward-shaping-smoke,
 smoke-suite, long-run-artifact-smoke, self-play-sampling-smoke, and
-replay-analysis/replay-analysis-batch JSON include an `artifact` block with
-`artifact_type` and `schema_version`.
+checkpoint-trust-manifest, and replay-analysis/replay-analysis-batch JSON
+include an `artifact` block with `artifact_type` and `schema_version`.
 
 Only load Stable-Baselines3 checkpoints that were produced locally or obtained
 from trusted sources. Checkpoints are serialized model artifacts, not inert data;
-checkpoint loading now verifies project checkpoint metadata before
-deserialization when no explicit trust manifest is supplied. For external
-checkpoints, pass `--trusted-checkpoint-manifest` with expected SHA-256 digests;
-use `--allow-unverified-checkpoints` only for known-local legacy artifacts.
+checkpoint loading requires an explicit trusted SHA-256 manifest before
+deserialization. Sidecar checkpoint metadata is still used for integrity and
+analysis, but it is not treated as a trust source. Use a manifest produced by a
+trusted local training run, or pass `--allow-unverified-checkpoints` only for
+known-local legacy artifacts.
 
 ### Compare
 
@@ -171,8 +175,8 @@ Suite mode evaluates one checkpoint or built-in agent policy against multiple bu
 ### Rank
 
 ```bash
-python scripts/train.py --mode rank --checkpoint-dir checkpoints --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-rank
-python scripts/train.py --mode rank --rank-checkpoints checkpoints/ppo_1M.zip,checkpoints/ppo_final.zip --suite-opponents scripted --suite-maps classic --rounds 20 --rank-head-to-head
+python scripts/train.py --mode rank --checkpoint-dir checkpoints --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-rank
+python scripts/train.py --mode rank --rank-checkpoints checkpoints/ppo_1M.zip,checkpoints/ppo_final.zip --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json --suite-opponents scripted --suite-maps classic --rounds 20 --rank-head-to-head
 ```
 
 Rank mode discovers checkpoints from `--checkpoint-dir` or uses
@@ -206,7 +210,7 @@ promotion gate exits.
 ### Promotion Audit
 
 ```bash
-python scripts/train.py --mode promotion_audit --checkpoint-dir checkpoints --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-promotion
+python scripts/train.py --mode promotion_audit --checkpoint-dir checkpoints --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-promotion
 ```
 
 Promotion audit runs the same baseline ranking and rank-gate checks in one

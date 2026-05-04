@@ -68,6 +68,7 @@ def test_promotion_audit_smoke_command_relaxes_expected_tiny_run_failures(tmp_pa
         "flat",
         1,
         tmp_path / "evals",
+        tmp_path / "checkpoint-trust-manifest.json",
     )
 
     assert "--rank-min-score" in command
@@ -78,6 +79,10 @@ def test_promotion_audit_smoke_command_relaxes_expected_tiny_run_failures(tmp_pa
     assert command[command.index("--rank-max-no-damage-rate") + 1] == "1"
     assert "--rank-max-low-engagement-rate" in command
     assert command[command.index("--rank-max-low-engagement-rate") + 1] == "1"
+    assert "--trusted-checkpoint-manifest" in command
+    assert command[command.index("--trusted-checkpoint-manifest") + 1] == str(
+        tmp_path / "checkpoint-trust-manifest.json"
+    )
 
 
 def test_train_smoke_command_can_seed_opponent_pool(tmp_path):

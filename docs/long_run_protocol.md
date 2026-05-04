@@ -124,12 +124,16 @@ python scripts/train.py --mode train \
 This uses the map-progression curriculum and switches to anti-stall rewards in
 later stages. Increase timesteps only after the eval artifacts show useful
 behavior rather than low-engagement draw farming.
+Training writes checkpoint metadata plus `checkpoint-trust-manifest.json`; the
+launcher also writes a run-scoped trust manifest under `$EVAL_DIR` before any
+mode deserializes checkpoints.
 
 ## 4. Run Promotion Audit
 
 ```bash
 python scripts/train.py --mode promotion_audit \
   --checkpoint-dir "$CHECKPOINT_DIR" \
+  --trusted-checkpoint-manifest "$EVAL_DIR/checkpoint-trust-manifest.json" \
   --suite-opponents idle,scripted,aggressive,evasive \
   --suite-maps classic,flat,split,tower \
   --rounds 20 \

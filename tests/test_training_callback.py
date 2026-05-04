@@ -23,6 +23,7 @@ from scripts.train import (
     checkpoint_metadata_integrity,
     checkpoint_metadata_maps,
     checkpoint_metadata,
+    checkpoint_trust_manifest,
     curriculum_metadata,
     discover_checkpoints,
     effective_reward_config,
@@ -80,6 +81,11 @@ class FakeLogger:
 class FakeModelWithLogger:
     def __init__(self):
         self.logger = FakeLogger()
+
+
+class FakePredictModel:
+    def predict(self, obs, deterministic=True):
+        return IDLE, None
 
 
 def _clean_source_snapshot():
@@ -568,17 +574,33 @@ def test_checkpoint_metadata_integrity_detects_stale_sidecar(tmp_path):
     assert failing["reason"] == "sha256_mismatch"
 
 
-def test_verify_checkpoint_trust_accepts_project_metadata(tmp_path):
+def test_verify_checkpoint_trust_rejects_sidecar_metadata_as_trust(tmp_path):
     checkpoint = tmp_path / "ppo_final.zip"
     checkpoint.write_bytes(b"checkpoint-bytes")
     write_checkpoint_metadata(tmp_path / "ppo_final", Config(), num_timesteps=100)
 
-    trust = verify_checkpoint_trust(checkpoint)
+    try:
+        verify_checkpoint_trust(checkpoint)
+    except ValueError as exc:
+        assert "sidecar metadata only proves file integrity" in str(exc)
+    else:
+        raise AssertionError("expected sidecar metadata not to establish trust")
 
-    assert trust["verified"] is True
-    assert trust["verification_source"] == "checkpoint_metadata"
-    assert trust["sha256"] == checkpoint_file_sha256(checkpoint)
-    assert trust["metadata_path"] == str(tmp_path / "ppo_final.meta.json")
+
+def test_checkpoint_trust_manifest_records_resolved_checkpoint_keys(tmp_path):
+    checkpoint = tmp_path / "ppo_final.zip"
+    checkpoint.write_bytes(b"checkpoint-bytes")
+    digest = checkpoint_file_sha256(checkpoint)
+
+    manifest = checkpoint_trust_manifest((tmp_path / "ppo_final",))
+
+    assert manifest["artifact"] == {
+        "artifact_type": "checkpoint_trust_manifest",
+        "schema_version": 1,
+    }
+    assert manifest["checkpoints"][str(tmp_path / "ppo_final")]["sha256"] == digest
+    assert manifest["checkpoints"][checkpoint.name]["sha256"] == digest
+    assert manifest["checkpoints"]["ppo_final"]["sha256"] == digest
 
 
 def test_load_checkpoint_trust_manifest_accepts_mapping_shapes(tmp_path):
@@ -782,6 +804,41 @@ def test_run_eval_can_use_builtin_agent_policy_and_cumulative_rewards(capsys):
     assert summary["behavior"]["avg_idle_rate"]["agent_0"] == 1.0
 
 
+def test_run_eval_resolves_extensionless_checkpoint_before_loading(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    checkpoint = tmp_path / "ppo_final.zip"
+    checkpoint.write_bytes(b"checkpoint-bytes")
+    trusted = {str(tmp_path / "ppo_final"): checkpoint_file_sha256(checkpoint)}
+    load_calls = []
+
+    def fake_load(path):
+        load_calls.append(path)
+        return FakePredictModel()
+
+    monkeypatch.setattr("stable_baselines3.PPO.load", fake_load)
+    cfg = replace(Config(), arena=replace(Config().arena, max_ticks=1))
+
+    run_eval(
+        cfg,
+        checkpoint=str(tmp_path / "ppo_final"),
+        opponent="idle",
+        num_rounds=1,
+        seed=7,
+        deterministic=True,
+        reward_preset="default",
+        output_dir=None,
+        output_label=None,
+        trusted_checkpoint_manifest=trusted,
+    )
+    summary = json.loads(capsys.readouterr().out)
+
+    assert load_calls == [str(checkpoint)]
+    assert summary["agent_0_policy"] == str(checkpoint)
+
+
 def test_run_suite_includes_curriculum_metadata(capsys):
     cfg = Config()
     cfg = replace(
@@ -842,6 +899,42 @@ def test_run_suite_can_use_builtin_agent_policy(capsys):
     assert suite["suite_config"]["agent_0_policy"] == "idle"
     assert matchup["agent_0_policy"] == "idle"
     assert abs(matchup["avg_rewards"]["agent_0"] - expected_reward) < 1e-9
+
+
+def test_run_suite_resolves_extensionless_checkpoint_metadata(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    checkpoint = tmp_path / "ppo_final.zip"
+    checkpoint.write_bytes(b"checkpoint-bytes")
+    write_checkpoint_metadata(tmp_path / "ppo_final", Config(), num_timesteps=100)
+    trusted = {str(tmp_path / "ppo_final"): checkpoint_file_sha256(checkpoint)}
+
+    monkeypatch.setattr(
+        "stable_baselines3.PPO.load",
+        lambda path: FakePredictModel(),
+    )
+    cfg = replace(Config(), arena=replace(Config().arena, max_ticks=1))
+
+    run_suite(
+        cfg,
+        checkpoint=str(tmp_path / "ppo_final"),
+        agent_policy="random",
+        opponents=("idle",),
+        maps=("flat",),
+        num_rounds=1,
+        seed=7,
+        deterministic=True,
+        reward_preset="default",
+        output_dir=None,
+        output_label=None,
+        trusted_checkpoint_manifest=trusted,
+    )
+    suite = json.loads(capsys.readouterr().out)
+
+    assert suite["suite_config"]["agent_0_policy"] == str(checkpoint)
+    assert suite["suite_config"]["checkpoint_metadata"]["num_timesteps"] == 100
 
 
 def test_run_compare_can_save_comparison_artifact(tmp_path, capsys):
@@ -3648,6 +3741,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
         "archive_launcher",
         "train_eval_smoke_preflight",
         "train",
+        "checkpoint_trust_manifest",
         "promotion_audit",
         "resolve_promotion_audit",
         "audit_summary",
@@ -3681,6 +3775,15 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert "train.exitcode" in manifest["shell_script"]
     assert "train.out" in manifest["shell_script"]
     assert 'if [ "$TRAIN_EXIT" -ne 0 ]; then' in manifest["shell_script"]
+    assert "python scripts/train.py --mode checkpoint_trust_manifest" in manifest[
+        "shell_script"
+    ]
+    assert 'TRUSTED_CHECKPOINT_MANIFEST="$EVAL_DIR/checkpoint-trust-manifest.json"' in (
+        manifest["shell_script"]
+    )
+    assert "--trusted-checkpoint-manifest \"$TRUSTED_CHECKPOINT_MANIFEST\"" in (
+        manifest["shell_script"]
+    )
     assert "--suite-maps flat,tower" in manifest["shell_script"]
     assert "--rank-min-score 0.2" in manifest["shell_script"]
     assert "--rank-min-win-rate 0.1" in manifest["shell_script"]
@@ -3855,6 +3958,7 @@ def test_build_long_run_manifest_redirects_command_logs():
     for log_name in (
         "preflight.out",
         "train.out",
+        "checkpoint-trust-manifest.out",
         "promotion-audit.out",
         "audit-summary.out",
         "replay-analysis.out",

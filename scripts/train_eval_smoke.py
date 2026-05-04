@@ -17,6 +17,12 @@ import tempfile
 import time
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.train import write_checkpoint_trust_manifest
+
 
 DEFAULT_SMOKE_SUITE_OPPONENTS = "idle,scripted,aggressive,evasive"
 DEFAULT_SMOKE_SUITE_MAPS = "classic,flat,split,tower"
@@ -97,8 +103,9 @@ def build_promotion_audit_command(
     suite_maps: str,
     rounds: int,
     eval_dir: Path,
+    trust_manifest: Path | None = None,
 ) -> list[str]:
-    return base_cmd + [
+    cmd = base_cmd + [
         "--mode",
         "promotion_audit",
         "--rank-checkpoints",
@@ -122,6 +129,9 @@ def build_promotion_audit_command(
         "--eval-label",
         "train-smoke-promotion",
     ]
+    if trust_manifest is not None:
+        cmd.extend(["--trusted-checkpoint-manifest", str(trust_manifest)])
+    return cmd
 
 
 def _csv_count(value: str) -> int:
@@ -403,6 +413,8 @@ def main() -> None:
         checkpoint_dir / "ppo_final.meta.json",
         expected_opponent_pool_seed=args.opponent_pool_seed,
     )
+    trust_manifest = output_dir / "checkpoint-trust-manifest.json"
+    write_checkpoint_trust_manifest((checkpoint,), trust_manifest)
     run_command(
         base_cmd
         + [
@@ -420,6 +432,8 @@ def main() -> None:
             str(eval_dir),
             "--eval-label",
             "train-smoke-suite",
+            "--trusted-checkpoint-manifest",
+            str(trust_manifest),
         ],
         repo_root,
         output_dir / "suite.out",
@@ -434,6 +448,7 @@ def main() -> None:
                 args.suite_maps,
                 args.rounds,
                 eval_dir,
+                trust_manifest,
             ),
             repo_root,
             output_dir / "promotion-audit.out",

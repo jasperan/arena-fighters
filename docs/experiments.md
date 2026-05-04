@@ -15,21 +15,24 @@ python scripts/train.py --mode eval \
   --eval-label baseline-scripted
 ```
 
-For checkpoint evals, add `--checkpoint checkpoints/ppo_final`. If a companion
-checkpoint metadata file exists, eval output records it under
+For checkpoint evals, add `--checkpoint checkpoints/ppo_final` and pass a
+trusted SHA-256 allowlist such as
+`--trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json`.
+If a companion checkpoint metadata file exists, eval output records it under
 `eval_config.checkpoint_metadata`. New checkpoint sidecars also record file size
 and SHA-256 digest so verifier runs can catch stale or replaced candidates.
 Only load Stable-Baselines3 checkpoints from local or trusted sources. External
 checkpoint `.zip` files should be treated as executable serialized artifacts and
-verified by provenance and digest before use. Checkpoint-loading modes verify
-project metadata before deserialization by default; pass
-`--trusted-checkpoint-manifest` for external allowlisted SHA-256 digests, or
-`--allow-unverified-checkpoints` only for known-local legacy artifacts.
+verified by provenance and digest before use. Checkpoint-loading modes require
+an explicit trust manifest before deserialization; sidecar project metadata is
+integrity evidence, not a trust source. Use `--allow-unverified-checkpoints`
+only for known-local legacy artifacts.
 
 Saved eval, suite, rank, comparison, gate, rank-gate, promotion-audit,
-audit-summary, artifact-index, strategy-report, long-run-check, and
-replay-analysis JSON include an `artifact` block with `artifact_type` and
-`schema_version` so comparison and gate tools can detect artifact shape changes.
+audit-summary, artifact-index, strategy-report, long-run-check,
+checkpoint-trust-manifest, and replay-analysis JSON include an `artifact` block
+with `artifact_type` and `schema_version` so comparison and gate tools can
+detect artifact shape changes.
 
 ## 2. Run A Changed Eval
 

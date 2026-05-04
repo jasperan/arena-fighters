@@ -389,6 +389,55 @@ def expected_checkpoint_sha256(
     return None
 
 
+def checkpoint_trust_manifest(checkpoints: tuple[str | Path, ...]) -> dict:
+    """Build an explicit SHA-256 allowlist for checkpoints from a trusted run."""
+    entries: dict[str, dict[str, str]] = {}
+
+    def add_entry(key: str, sha256: str, checkpoint_path: Path) -> None:
+        existing = entries.get(key)
+        if existing is not None and existing["sha256"] != sha256:
+            raise ValueError(
+                "Checkpoint trust manifest key collision for "
+                f"{key}: {checkpoint_path}"
+            )
+        entries[key] = {"sha256": sha256}
+
+    for checkpoint in checkpoints:
+        raw_checkpoint = Path(checkpoint)
+        checkpoint_path = checkpoint_file_path(checkpoint)
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
+
+        sha256 = checkpoint_file_sha256(checkpoint_path)
+        add_entry(str(raw_checkpoint), sha256, checkpoint_path)
+        add_entry(str(checkpoint_path), sha256, checkpoint_path)
+        add_entry(checkpoint_path.name, sha256, checkpoint_path)
+        try:
+            add_entry(str(checkpoint_path.resolve()), sha256, checkpoint_path)
+        except OSError:
+            pass
+        if checkpoint_path.suffix == ".zip":
+            add_entry(checkpoint_path.with_suffix("").name, sha256, checkpoint_path)
+
+    if not entries:
+        raise ValueError("Checkpoint trust manifest requires at least one checkpoint")
+    return {
+        "artifact": artifact_metadata("checkpoint_trust_manifest"),
+        "checkpoints": entries,
+    }
+
+
+def write_checkpoint_trust_manifest(
+    checkpoints: tuple[str | Path, ...],
+    path: str | Path,
+) -> Path:
+    manifest = checkpoint_trust_manifest(checkpoints)
+    manifest_path = Path(path)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    return manifest_path
+
+
 def verify_checkpoint_trust(
     path: str | Path,
     *,
@@ -399,7 +448,7 @@ def verify_checkpoint_trust(
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
-    expected = expected_checkpoint_sha256(checkpoint_path, trusted_checkpoint_manifest)
+    expected = expected_checkpoint_sha256(path, trusted_checkpoint_manifest)
     if expected is not None:
         expected = _normalize_sha256(expected, source="trusted_checkpoint_manifest")
         actual = checkpoint_file_sha256(checkpoint_path)
@@ -418,30 +467,20 @@ def verify_checkpoint_trust(
     if trusted_checkpoint_manifest is not None:
         raise ValueError(f"Checkpoint is not listed in trust manifest: {checkpoint_path}")
 
-    metadata = read_checkpoint_metadata(checkpoint_path)
-    integrity = checkpoint_metadata_integrity(checkpoint_path, metadata)
-    if integrity["passed"]:
-        metadata_path = checkpoint_metadata_path(checkpoint_path)
-        return {
-            "path": str(checkpoint_path),
-            "verified": True,
-            "verification_source": "checkpoint_metadata",
-            "sha256": integrity["actual_sha256"],
-            "metadata_path": str(metadata_path) if metadata_path else None,
-        }
-
     if allow_unverified:
         return {
             "path": str(checkpoint_path),
             "verified": False,
             "verification_source": "explicit_unverified_override",
-            "reason": integrity.get("reason"),
         }
 
+    metadata = read_checkpoint_metadata(checkpoint_path)
+    integrity = checkpoint_metadata_integrity(checkpoint_path, metadata)
     raise ValueError(
         "Refusing to load checkpoint before trust verification. "
-        "Provide --trusted-checkpoint-manifest with an expected SHA-256, use a "
-        "checkpoint produced with project metadata, or pass "
+        "Checkpoint sidecar metadata only proves file integrity and is not a "
+        "trust source for deserialization. Provide --trusted-checkpoint-manifest "
+        "with an expected SHA-256, or pass "
         "--allow-unverified-checkpoints only for known-local legacy checkpoints. "
         f"Verification failure: {integrity.get('reason')}"
     )
@@ -462,7 +501,7 @@ def load_trusted_ppo_checkpoint(
 
     checkpoint_path = checkpoint_file_path(path)
     verify_checkpoint_trust(
-        checkpoint_path,
+        path,
         trusted_checkpoint_manifest=trusted_checkpoint_manifest,
         allow_unverified=allow_unverified,
     )
@@ -744,7 +783,12 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
         model.num_timesteps,
         opponent_pool_stats=pool.stats(),
     )
+    trust_manifest_path = write_checkpoint_trust_manifest(
+        discover_checkpoints(checkpoint_dir),
+        Path(checkpoint_dir) / "checkpoint-trust-manifest.json",
+    )
     print(f"Training complete. Final model saved to {final_path}")
+    print(f"Checkpoint trust manifest saved to {trust_manifest_path}")
 
 
 def run_watch(
@@ -763,12 +807,18 @@ def run_watch(
     import numpy as np
 
     model = None
-    if checkpoint and Path(checkpoint).exists():
+    checkpoint_label = checkpoint
+    if checkpoint:
+        checkpoint_path = checkpoint_file_path(checkpoint)
+        if not checkpoint_path.exists():
+            print(f"Checkpoint not found: {checkpoint}")
+            sys.exit(1)
         model = load_trusted_ppo_checkpoint(
             checkpoint,
             trusted_checkpoint_manifest=trusted_checkpoint_manifest,
             allow_unverified=allow_unverified_checkpoints,
         )
+        checkpoint_label = str(checkpoint_path)
 
     score = [0, 0]  # [agent_0 wins, agent_1 wins]
     draws = 0
@@ -787,7 +837,7 @@ def run_watch(
             print(f"\n  \033[1mRound {round_num}\033[0m")
             print(f"  Score: \033[1;33m@\033[0m {score[0]}  -  {score[1]} \033[1;35mX\033[0m  (draws: {draws})")
             if model:
-                print(f"  \033[90mCheckpoint: {checkpoint}\033[0m")
+                print(f"  \033[90mCheckpoint: {checkpoint_label}\033[0m")
             else:
                 print(f"  \033[90mRandom agents (no checkpoint)\033[0m")
             print(f"\n  \033[90mStarting in 2s...\033[0m")
@@ -1122,12 +1172,12 @@ def run_eval(
 ) -> None:
     """Evaluate a checkpoint or built-in policy against a built-in baseline."""
     if checkpoint:
-        path = Path(checkpoint)
+        path = checkpoint_file_path(checkpoint)
         if not path.exists():
             print(f"Checkpoint not found: {checkpoint}")
             sys.exit(1)
         model = load_trusted_ppo_checkpoint(
-            path,
+            checkpoint,
             trusted_checkpoint_manifest=trusted_checkpoint_manifest,
             allow_unverified=allow_unverified_checkpoints,
         )
@@ -1267,12 +1317,12 @@ def run_suite(
     agent0_label = agent_policy
     model = None
     if checkpoint:
-        path = Path(checkpoint)
+        path = checkpoint_file_path(checkpoint)
         if not path.exists():
             print(f"Checkpoint not found: {checkpoint}")
             sys.exit(1)
         model = load_trusted_ppo_checkpoint(
-            path,
+            checkpoint,
             trusted_checkpoint_manifest=trusted_checkpoint_manifest,
             allow_unverified=allow_unverified_checkpoints,
         )
@@ -1294,7 +1344,9 @@ def run_suite(
         seed=seed,
         reward_preset=reward_preset,
     )
-    suite["suite_config"]["checkpoint_metadata"] = read_checkpoint_metadata(checkpoint)
+    suite["suite_config"]["checkpoint_metadata"] = (
+        read_checkpoint_metadata(path) if checkpoint else None
+    )
     suite["suite_config"]["curriculum"] = curriculum_metadata(cfg, 0)
     suite["artifact"] = artifact_metadata("suite")
     print(json.dumps(suite, indent=2, sort_keys=True))
@@ -1333,13 +1385,13 @@ def build_rank_summary(
     loaded_models = {}
     used_labels = set()
     for checkpoint_idx, checkpoint in enumerate(checkpoint_paths):
-        path = Path(checkpoint)
+        path = checkpoint_file_path(checkpoint)
         if not path.exists():
             print(f"Checkpoint not found: {checkpoint}")
             sys.exit(1)
 
         model = load_trusted_ppo_checkpoint(
-            path,
+            checkpoint,
             trusted_checkpoint_manifest=trusted_checkpoint_manifest,
             allow_unverified=allow_unverified_checkpoints,
         )
@@ -1878,6 +1930,13 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
                 for command in commands
                 if command.get("expensive")
             ],
+        }
+    if artifact_type == "checkpoint_trust_manifest":
+        checkpoints = data.get("checkpoints", {})
+        return {
+            "trusted_checkpoint_count": (
+                len(checkpoints) if isinstance(checkpoints, dict) else None
+            ),
         }
     if artifact_type == "long_run_check":
         candidate = data.get("candidate") or {}
@@ -4889,6 +4948,20 @@ def run_league_health(
         print(f"Saved league health report to {path}")
 
 
+def run_checkpoint_trust_manifest(
+    checkpoint_dir: str,
+    checkpoints: tuple[str, ...] | None,
+    output_path: str,
+) -> None:
+    checkpoint_paths = checkpoints or discover_checkpoints(checkpoint_dir)
+    if not checkpoint_paths:
+        raise ValueError(f"No checkpoints found in {checkpoint_dir}")
+    path = write_checkpoint_trust_manifest(tuple(checkpoint_paths), output_path)
+    manifest = json.loads(path.read_text())
+    print(json.dumps(manifest, indent=2, sort_keys=True))
+    print(f"Saved checkpoint trust manifest to {path}")
+
+
 def _shell_assign(name: str, value: str) -> str:
     return f"{name}={shlex.quote(value)}"
 
@@ -5218,6 +5291,11 @@ def build_long_run_manifest(
         '  --eval-output-dir "$EVAL_DIR" \\',
         "  --eval-label league-health",
     ]
+    checkpoint_trust_manifest_parts = [
+        "python scripts/train.py --mode checkpoint_trust_manifest \\",
+        '  --checkpoint-dir "$CHECKPOINT_DIR" \\',
+        '  --checkpoint-trust-manifest-output "$TRUSTED_CHECKPOINT_MANIFEST"',
+    ]
     preflight_index_parts = [
         "python scripts/train.py --mode artifact_index \\",
         '  --artifact-dir "$PREFLIGHT_DIR" \\',
@@ -5321,6 +5399,17 @@ def build_long_run_manifest(
             "shell": train_shell,
         },
         {
+            "id": "checkpoint_trust_manifest",
+            "description": "Write a trusted SHA-256 allowlist for checkpoints generated by this run.",
+            "expensive": False,
+            "shell": "\n".join(
+                _with_output_redirect(
+                    checkpoint_trust_manifest_parts,
+                    '"$EVAL_DIR/checkpoint-trust-manifest.out"',
+                )
+            ),
+        },
+        {
             "id": "promotion_audit",
             "description": "Rank checkpoints, gate the top promotion candidate, and capture its exit code.",
             "expensive": False,
@@ -5341,6 +5430,7 @@ def build_long_run_manifest(
                             f"  --rank-max-no-damage-rate {_shell_arg(rank_max_no_damage_rate)} \\",
                             "  --rank-max-low-engagement-rate "
                             f"{_shell_arg(rank_max_low_engagement_rate)} \\",
+                            '  --trusted-checkpoint-manifest "$TRUSTED_CHECKPOINT_MANIFEST" \\',
                             '  --eval-output-dir "$EVAL_DIR" \\',
                             "  --eval-label promotion",
                         ],
@@ -5493,6 +5583,7 @@ def build_long_run_manifest(
         _shell_assign("EVAL_DIR", str(eval_dir)),
         _shell_assign("REPLAY_DIR", str(replay_dir)),
         _shell_assign("PREFLIGHT_DIR", str(preflight_dir)),
+        'TRUSTED_CHECKPOINT_MANIFEST="$EVAL_DIR/checkpoint-trust-manifest.json"',
     ]
     shell_script = "\n\n".join(
         [
@@ -5516,6 +5607,9 @@ def build_long_run_manifest(
             "eval_dir": str(eval_dir),
             "replay_dir": str(replay_dir),
             "preflight_dir": str(preflight_dir),
+            "trusted_checkpoint_manifest": str(
+                eval_dir / "checkpoint-trust-manifest.json"
+            ),
             "preflight_timesteps": preflight_timesteps,
             "preflight_rounds": preflight_rounds,
             "timesteps": timesteps,
@@ -5696,6 +5790,7 @@ def main():
             "long_run_check",
             "long_run_status",
             "league_health",
+            "checkpoint_trust_manifest",
         ],
         default="train",
         help="Operating mode (default: train)",
@@ -5868,11 +5963,17 @@ def main():
         ),
     )
     parser.add_argument(
+        "--checkpoint-trust-manifest-output",
+        type=str,
+        default=None,
+        help="Output path for checkpoint_trust_manifest mode",
+    )
+    parser.add_argument(
         "--allow-unverified-checkpoints",
         action="store_true",
         help=(
-            "Allow loading checkpoints without project metadata or a trusted "
-            "manifest; use only for known-local legacy checkpoints"
+            "Allow loading checkpoints without a trusted manifest; use only for "
+            "known-local legacy checkpoints"
         ),
     )
     parser.add_argument(
@@ -6408,6 +6509,26 @@ def main():
             output_dir=args.eval_output_dir,
             output_label=args.eval_label,
         )
+    elif args.mode == "checkpoint_trust_manifest":
+        if not args.checkpoint_trust_manifest_output:
+            parser.error(
+                "--checkpoint-trust-manifest-output is required for "
+                "checkpoint_trust_manifest mode"
+            )
+        try:
+            rank_checkpoints = parse_rank_checkpoints(args.rank_checkpoints)
+            explicit_checkpoints = (
+                rank_checkpoints
+                if rank_checkpoints is not None
+                else ((args.checkpoint,) if args.checkpoint else None)
+            )
+            run_checkpoint_trust_manifest(
+                args.checkpoint_dir,
+                explicit_checkpoints,
+                args.checkpoint_trust_manifest_output,
+            )
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
     elif args.mode == "long_run_manifest":
         try:
             suite_opponents = (
