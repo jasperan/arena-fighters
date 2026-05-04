@@ -25,8 +25,19 @@ from arena_fighters.replay import ReplayLogger
 class OpponentPool:
     """Stores frozen policy state_dict snapshots for self-play."""
 
-    def __init__(self, max_size: int = 20):
+    def __init__(
+        self,
+        max_size: int = 20,
+        *,
+        seed: int | None = None,
+        rng: Any | None = None,
+    ):
+        if seed is not None and rng is not None:
+            raise ValueError("Pass either seed or rng, not both")
         self.max_size = max_size
+        self._rng = rng if rng is not None else (
+            random.Random(seed) if seed is not None else random
+        )
         self._snapshots: list[dict] = []
         self._snapshot_ids: list[int] = []
         self._snapshot_sample_counts: dict[int, int] = {}
@@ -49,12 +60,14 @@ class OpponentPool:
 
     def sample(self, latest_prob: float = 0.8) -> dict:
         assert not self.is_empty(), "Cannot sample from empty pool"
-        if len(self._snapshots) == 1 or random.random() < latest_prob:
+        if not 0.0 <= latest_prob <= 1.0:
+            raise ValueError("latest_prob must be between 0.0 and 1.0")
+        if len(self._snapshots) == 1 or self._rng.random() < latest_prob:
             idx = len(self._snapshots) - 1
             kind = "latest"
         else:
             # Pick from all except the latest
-            idx = random.randint(0, len(self._snapshots) - 2)
+            idx = self._rng.randint(0, len(self._snapshots) - 2)
             kind = "historical"
         snapshot_id = self._snapshot_ids[idx]
         self.last_sample_index = idx

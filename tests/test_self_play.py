@@ -1,6 +1,5 @@
 from dataclasses import replace
 
-import numpy as np
 from arena_fighters.config import Config, IDLE, MOVE_LEFT, reward_config_for_preset
 from arena_fighters.replay import ReplayLogger, load_replay
 from arena_fighters.self_play import SelfPlayWrapper, OpponentPool
@@ -42,12 +41,44 @@ def test_opponent_pool_evicts_oldest():
 
 
 def test_opponent_pool_random_sample():
-    pool = OpponentPool(max_size=10)
+    pool = OpponentPool(max_size=10, seed=42)
     for i in range(10):
         pool.add({"weight": i})
-    np.random.seed(42)
     samples = [pool.sample(latest_prob=0.0)["weight"] for _ in range(20)]
     assert len(set(samples)) > 1
+
+
+def test_opponent_pool_sampling_is_reproducible_with_seed():
+    first = OpponentPool(max_size=10, seed=123)
+    second = OpponentPool(max_size=10, seed=123)
+    for i in range(10):
+        first.add({"weight": i})
+        second.add({"weight": i})
+
+    first_samples = [first.sample(latest_prob=0.4)["weight"] for _ in range(20)]
+    second_samples = [second.sample(latest_prob=0.4)["weight"] for _ in range(20)]
+
+    assert first_samples == second_samples
+
+
+def test_opponent_pool_rejects_invalid_sampling_configuration():
+    try:
+        OpponentPool(seed=1, rng=object())
+    except ValueError as exc:
+        assert "either seed or rng" in str(exc)
+    else:
+        raise AssertionError("expected seed and rng combination to fail")
+
+    pool = OpponentPool(max_size=3, seed=1)
+    pool.add({"weight": 0})
+
+    for latest_prob in (-0.1, 1.1):
+        try:
+            pool.sample(latest_prob=latest_prob)
+        except ValueError as exc:
+            assert "latest_prob" in str(exc)
+        else:
+            raise AssertionError("expected invalid latest_prob to fail")
 
 
 def test_opponent_pool_tracks_latest_and_historical_samples():
