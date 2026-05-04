@@ -240,7 +240,9 @@ When replay analysis is required, use `--long-run-min-replay-combat-maps` to
 reject runs whose sampled combat replay evidence covers too few distinct
 required maps. Generated long-run manifests default this threshold to the full
 required-map count, so the standard four-map run expects combat replay evidence
-on all four maps.
+on all four maps. Replay-required checks also fail when the strategy report
+contains replay-level no-damage, no-attack, idle-heavy, or dominant-action
+collapse issues.
 Generated real-run manifests also require at least one historical-opponent sample
 recorded in the selected checkpoint metadata, so a run cannot pass promotion if
 it never exercised frozen opponent snapshots.

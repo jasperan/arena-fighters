@@ -334,6 +334,10 @@ python scripts/train.py --mode long_run_check \
   --eval-label long-run-check
 ```
 
+When replay analysis is required, `long_run_check` also fails if the strategy
+report contains replay-level bad-strategy issues such as no-damage draws,
+no-attack draws, idle-heavy behavior, or dominant-action collapse.
+
 Use long-run status to audit existing plans and run directories without
 launching training:
 
@@ -364,8 +368,9 @@ promotion-audit candidate, and long-run check into one compact JSON artifact. It
 uses the latest long-run status artifact to scope those source artifacts to the
 latest run's eval directory when available, so older or unrelated runs do not
 pollute triage. It reports blockers such as blocked long-run status, failed
-promotion audit, candidate strategy issues, missing historical-opponent sampling,
-or a failed long-run check, plus warnings for missing source artifacts.
+promotion audit, candidate or replay strategy issues, missing
+historical-opponent sampling, or a failed long-run check, plus warnings for
+missing source artifacts.
 Use it as a triage dashboard before spending time on deeper replay inspection or
 new training runs.
 

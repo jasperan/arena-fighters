@@ -20,7 +20,10 @@ from pathlib import Path
 
 DEFAULT_SMOKE_SUITE_OPPONENTS = "idle,scripted,aggressive,evasive"
 DEFAULT_SMOKE_SUITE_MAPS = "classic,flat,split,tower"
-ALLOWED_SMOKE_LONG_RUN_FAILURES = {"no_candidate_bad_strategy_issues"}
+ALLOWED_SMOKE_LONG_RUN_FAILURES = {
+    "no_candidate_bad_strategy_issues",
+    "no_replay_bad_strategy_issues",
+}
 
 
 def run_command(

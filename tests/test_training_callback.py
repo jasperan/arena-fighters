@@ -273,7 +273,10 @@ def _long_run_promotion_audit():
     return summary
 
 
-def _long_run_strategy_report(candidate_issue: bool = False):
+def _long_run_strategy_report(
+    candidate_issue: bool = False,
+    replay_issue: bool = False,
+):
     issues = []
     if candidate_issue:
         issues.append(
@@ -281,6 +284,15 @@ def _long_run_strategy_report(candidate_issue: bool = False):
                 "scope": "candidate:candidate",
                 "metric": "mean_no_damage_rate",
                 "value": 1.0,
+            }
+        )
+    if replay_issue:
+        issues.append(
+            {
+                "scope": "replay:episode_0001",
+                "metric": "replay_idle_rate_agent_0",
+                "value": 1.0,
+                "threshold": 0.75,
             }
         )
     return {
@@ -2082,6 +2094,7 @@ def test_build_long_run_check_passes_documented_promotion_criteria():
         "candidate_map_coverage",
         "artifact_index_has_required_artifacts",
         "replay_analysis_has_combat",
+        "no_replay_bad_strategy_issues",
         "head_to_head_candidate_not_worse",
     }
 
@@ -2107,6 +2120,26 @@ def test_build_long_run_check_fails_bad_strategy_and_low_map_coverage():
         "candidate_map_coverage",
         "replay_analysis_has_combat",
     }.issubset(failed)
+
+
+def test_build_long_run_check_fails_replay_strategy_issues_when_required():
+    result = build_long_run_check(
+        _long_run_promotion_audit(),
+        _long_run_strategy_report(replay_issue=True),
+        _long_run_artifact_index(),
+        min_maps=2,
+        require_replay_analysis=True,
+    )
+
+    check = next(
+        check
+        for check in result["checks"]
+        if check["id"] == "no_replay_bad_strategy_issues"
+    )
+    assert result["passed"] is False
+    assert check["passed"] is False
+    assert check["details"]["issue_count"] == 1
+    assert check["details"]["issues"][0]["metric"] == "replay_idle_rate_agent_0"
 
 
 def test_build_long_run_check_can_require_replay_combat_map_coverage():
@@ -4066,6 +4099,47 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
     assert report["signals"]["long_run"]["failed_required_checks"] == [
         "no_candidate_bad_strategy_issues"
     ]
+
+
+def test_build_league_health_blocks_on_replay_strategy_issues(tmp_path):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 1,
+        "issues": [
+            {
+                "scope": "replay:episode_0001",
+                "metric": "replay_dominant_action_rate_agent_0",
+                "value": 1.0,
+                "threshold": 0.95,
+            }
+        ],
+    }
+    long_run_status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "candidate_evidence_ready": True,
+        "latest_manifest": {"run_id": "status-run"},
+    }
+    rank = _rank_summary(label="candidate", score=0.5)
+    promotion = _promotion_audit_summary()
+    long_run_check = {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": True,
+        "candidate": {"label": "candidate", "score": 0.5},
+        "checks": [],
+    }
+    (artifact_dir / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+    (artifact_dir / "status.json").write_text(json.dumps(long_run_status) + "\n")
+    (artifact_dir / "rank.json").write_text(json.dumps(rank) + "\n")
+    (artifact_dir / "promotion.json").write_text(json.dumps(promotion) + "\n")
+    (artifact_dir / "check.json").write_text(json.dumps(long_run_check) + "\n")
+
+    report = build_league_health_report(artifact_dir)
+
+    assert report["health"]["ready"] is False
+    assert "replay_strategy_issues" in report["health"]["blockers"]
+    assert report["signals"]["strategy"]["replay_issue_count"] == 1
 
 
 def test_build_league_health_blocks_on_latest_long_run_status(tmp_path):

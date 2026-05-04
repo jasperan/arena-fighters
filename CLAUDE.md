@@ -115,8 +115,9 @@ latest manifest status summarizes checkpoint opponent-pool metadata and flags
 missing historical-opponent samples before promotion checks are run.
 Use `league_health` to combine the latest strategy report, long-run status,
 rank/head-to-head standings, promotion audit, and long-run check into one compact
-promotion-health artifact. When latest status includes an eval directory,
-league health scopes source artifacts to that run.
+promotion-health artifact. Replay-level strategy issues are league-health
+blockers. When latest status includes an eval directory, league health scopes
+source artifacts to that run.
 
 ## Architecture
 

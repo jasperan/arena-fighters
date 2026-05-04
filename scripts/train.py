@@ -67,6 +67,13 @@ _JSON_SECRET_RE = re.compile(
     rf'(?i)("({_SECRET_NAME_PATTERN})"\s*:\s*")[^"]+(")'
 )
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+REPLAY_STRATEGY_METRICS = {
+    "replay_no_damage",
+    "replay_low_engagement",
+    "replay_no_attacks",
+    "replay_idle_rate_agent_0",
+    "replay_dominant_action_rate_agent_0",
+}
 
 
 def clear_terminal() -> None:
@@ -1707,6 +1714,9 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "long_run_check_passed": signals.get("long_run", {}).get(
                 "latest_check_passed"
             ),
+            "replay_strategy_issue_count": signals.get("strategy", {}).get(
+                "replay_issue_count"
+            ),
         }
     if artifact_type == "smoke_suite":
         smokes = data.get("smokes", {})
@@ -2688,6 +2698,15 @@ def candidate_strategy_issues_for_check(
     ]
 
 
+def replay_strategy_issues_for_check(strategy_report: dict) -> list[dict]:
+    return [
+        issue
+        for issue in strategy_report.get("issues", [])
+        if str(issue.get("scope", "")).startswith("replay:")
+        and issue.get("metric") in REPLAY_STRATEGY_METRICS
+    ]
+
+
 def replay_analysis_has_combat(artifact_index: dict) -> bool:
     return replay_analysis_combat_summary(artifact_index)["combat_replay_count"] > 0
 
@@ -2917,6 +2936,7 @@ def build_long_run_check(
         strategy_report,
         candidate_label=candidate_label,
     )
+    replay_strategy_issues = replay_strategy_issues_for_check(strategy_report)
     rank_summary = load_rank_for_promotion(promotion_audit)
     eval_episode_counts = rank_evaluation_episode_counts(
         rank_summary,
@@ -3044,6 +3064,16 @@ def build_long_run_check(
                 {
                     "replay_analysis_count": counts.get("replay_analysis", 0),
                     **replay_combat,
+                },
+            )
+        )
+        checks.append(
+            check_result(
+                "no_replay_bad_strategy_issues",
+                not replay_strategy_issues,
+                {
+                    "issue_count": len(replay_strategy_issues),
+                    "issues": replay_strategy_issues,
                 },
             )
         )
@@ -4150,6 +4180,12 @@ def build_league_health_report(
         for issue in strategy_issues
         if issue.get("metric") == "checkpoint_historical_opponent_samples"
     ]
+    replay_strategy_issues = [
+        issue
+        for issue in strategy_issues
+        if str(issue.get("scope", "")).startswith("replay:")
+        and issue.get("metric") in REPLAY_STRATEGY_METRICS
+    ]
     weaknesses = strategy.get("weaknesses", [])
     if not isinstance(weaknesses, list):
         weaknesses = []
@@ -4193,6 +4229,8 @@ def build_league_health_report(
         blockers.append("promotion_audit_failed")
     if candidate_issues:
         blockers.append("candidate_strategy_issues")
+    if replay_strategy_issues:
+        blockers.append("replay_strategy_issues")
     missing_evidence = status.get("missing_evidence", [])
     if not isinstance(missing_evidence, list):
         missing_evidence = []
@@ -4242,6 +4280,7 @@ def build_league_health_report(
                 "issue_count": strategy.get("issue_count", len(strategy_issues)),
                 "candidate_issue_count": len(candidate_issues),
                 "historical_sampling_issue_count": len(historical_sampling_issues),
+                "replay_issue_count": len(replay_strategy_issues),
                 "issue_metrics": sorted(
                     {
                         issue.get("metric")
