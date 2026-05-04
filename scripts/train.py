@@ -1958,6 +1958,12 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "smoke_strategy_issue_count": signals.get("strategy", {}).get(
                 "smoke_issue_count"
             ),
+            "self_play_sampling_passed": signals.get("self_play_sampling", {}).get(
+                "passed"
+            ),
+            "self_play_sampling_historical_samples": signals.get(
+                "self_play_sampling", {}
+            ).get("historical_samples"),
         }
     if artifact_type == "reward_shaping_smoke":
         return {
@@ -4688,6 +4694,7 @@ def build_league_health_report(
         "rank",
         "promotion_audit",
         "long_run_check",
+        "self_play_sampling_smoke",
     ):
         latest_entries[artifact_type] = _latest_artifact_entry(
             index,
@@ -4740,6 +4747,8 @@ def build_league_health_report(
     if not isinstance(checkpoint_pool, dict):
         checkpoint_pool = {}
     long_run_check_failed = failed_required_check_ids(long_run_check)
+    self_play_sampling = latest["self_play_sampling_smoke"] or {}
+    self_play_sampling_failed_checks = failed_smoke_check_ids(self_play_sampling)
     promotion_candidate = promotion.get("candidate") or {}
     rankings = rank.get("rankings") or []
     if not isinstance(rankings, list) or not rankings:
@@ -4776,6 +4785,8 @@ def build_league_health_report(
         blockers.append("replay_strategy_issues")
     if smoke_strategy_issues:
         blockers.append("smoke_strategy_issues")
+    if self_play_sampling and self_play_sampling.get("passed") is False:
+        blockers.append("self_play_sampling_smoke_failed")
     missing_evidence = status.get("missing_evidence", [])
     if not isinstance(missing_evidence, list):
         missing_evidence = []
@@ -4842,6 +4853,16 @@ def build_league_health_report(
                 "worst": weaknesses[0] if weaknesses else None,
             },
             "head_to_head": _candidate_head_to_head_signal(rank),
+            "self_play_sampling": {
+                "available": bool(self_play_sampling),
+                "passed": self_play_sampling.get("passed"),
+                "historical_samples": self_play_sampling.get("historical_samples"),
+                "historical_sample_rate": self_play_sampling.get(
+                    "historical_sample_rate"
+                ),
+                "unique_maps_seen": self_play_sampling.get("unique_maps_seen"),
+                "failed_checks": self_play_sampling_failed_checks,
+            },
             "long_run": {
                 "status_candidate_evidence_ready": status.get(
                     "candidate_evidence_ready"

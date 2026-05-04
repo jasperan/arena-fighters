@@ -4682,6 +4682,60 @@ def test_build_league_health_blocks_on_smoke_strategy_issues(tmp_path):
     assert report["signals"]["strategy"]["smoke_issue_count"] == 1
 
 
+def test_build_league_health_blocks_on_failed_self_play_sampling_smoke(tmp_path):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 0,
+        "issues": [],
+    }
+    long_run_status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "candidate_evidence_ready": True,
+        "latest_manifest": {"run_id": "status-run"},
+    }
+    sampling_smoke = {
+        "artifact": artifact_metadata("self_play_sampling_smoke"),
+        "passed": False,
+        "historical_samples": 0,
+        "unique_maps_seen": 4,
+        "checks": [
+            {"id": "historical_samples_meet_minimum", "passed": False},
+        ],
+    }
+    rank = _rank_summary(label="candidate", score=0.5)
+    promotion = _promotion_audit_summary()
+    long_run_check = {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": True,
+        "candidate": {"label": "candidate", "score": 0.5},
+        "checks": [],
+    }
+    (artifact_dir / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+    (artifact_dir / "status.json").write_text(json.dumps(long_run_status) + "\n")
+    (artifact_dir / "sampling.json").write_text(json.dumps(sampling_smoke) + "\n")
+    (artifact_dir / "rank.json").write_text(json.dumps(rank) + "\n")
+    (artifact_dir / "promotion.json").write_text(json.dumps(promotion) + "\n")
+    (artifact_dir / "check.json").write_text(json.dumps(long_run_check) + "\n")
+
+    report = build_league_health_report(artifact_dir)
+
+    assert report["health"]["ready"] is False
+    assert "self_play_sampling_smoke_failed" in report["health"]["blockers"]
+    assert report["signals"]["self_play_sampling"] == {
+        "available": True,
+        "passed": False,
+        "historical_samples": 0,
+        "historical_sample_rate": None,
+        "unique_maps_seen": 4,
+        "failed_checks": ["historical_samples_meet_minimum"],
+    }
+    assert report["source_artifacts"]["self_play_sampling_smoke"] == str(
+        artifact_dir / "sampling.json"
+    )
+
+
 def test_build_league_health_blocks_on_latest_long_run_status(tmp_path):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()
