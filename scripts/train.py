@@ -1619,6 +1619,7 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
         }
     if artifact_type == "long_run_status":
         latest = data.get("latest_manifest") or {}
+        checkpoint_opponent_pool = latest.get("checkpoint_opponent_pool") or {}
         return {
             "latest_run_id": latest.get("run_id"),
             "latest_launcher_path": latest.get("launcher_path"),
@@ -1636,6 +1637,12 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             ),
             "latest_manifest_source_stale_reasons": latest.get(
                 "source_stale_reasons", []
+            ),
+            "latest_checkpoint_max_historical_samples": (
+                checkpoint_opponent_pool.get("max_historical_samples")
+            ),
+            "latest_checkpoint_historical_sample_ready": (
+                checkpoint_opponent_pool.get("meets_min_opponent_historical_samples")
             ),
             "next_command": data.get("next_command"),
             "next_preflight_command": data.get("next_preflight_command"),
@@ -3304,6 +3311,101 @@ def _directory_file_count(path: Path | None) -> int:
     return sum(1 for child in path.iterdir() if child.is_file())
 
 
+def checkpoint_opponent_pool_status(
+    checkpoint_path: Path | None,
+    min_historical_samples: int = 0,
+) -> dict:
+    metadata_paths = (
+        sorted(checkpoint_path.glob("*.meta.json"))
+        if checkpoint_path is not None and checkpoint_path.exists()
+        else []
+    )
+    best_metadata = None
+    load_errors = []
+    metadata_with_opponent_pool = 0
+    metadata_with_historical_samples = 0
+    metadata_meeting_min = 0
+    max_historical_samples = None
+
+    for metadata_path in metadata_paths:
+        try:
+            metadata = json.loads(metadata_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            load_errors.append(
+                {
+                    "path": str(metadata_path),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+        if not isinstance(metadata, dict):
+            continue
+
+        opponent_pool = metadata.get("opponent_pool")
+        if not isinstance(opponent_pool, dict):
+            continue
+        metadata_with_opponent_pool += 1
+
+        historical_samples = json_non_negative_int(
+            opponent_pool.get("historical_samples")
+        )
+        if historical_samples is not None:
+            metadata_with_historical_samples += 1
+            if max_historical_samples is None:
+                max_historical_samples = historical_samples
+            else:
+                max_historical_samples = max(
+                    max_historical_samples,
+                    historical_samples,
+                )
+            if historical_samples >= min_historical_samples:
+                metadata_meeting_min += 1
+
+        checkpoint_file = metadata.get("checkpoint_file")
+        entry = {
+            "path": str(metadata_path),
+            "checkpoint_file": (
+                checkpoint_file.get("file_name")
+                if isinstance(checkpoint_file, dict)
+                else None
+            ),
+            "num_timesteps": json_non_negative_int(metadata.get("num_timesteps")),
+            "pool_size": json_non_negative_int(opponent_pool.get("size")),
+            "historical_samples": historical_samples,
+        }
+        best_key = (
+            historical_samples if historical_samples is not None else -1,
+            entry["num_timesteps"] if entry["num_timesteps"] is not None else -1,
+            str(metadata_path),
+        )
+        if best_metadata is None or best_key > best_metadata["_key"]:
+            best_metadata = {**entry, "_key": best_key}
+
+    if best_metadata is not None:
+        best_metadata.pop("_key", None)
+
+    meets_min = (
+        True
+        if min_historical_samples <= 0
+        else (
+            max_historical_samples is not None
+            and max_historical_samples >= min_historical_samples
+        )
+    )
+    return {
+        "metadata_file_count": len(metadata_paths),
+        "metadata_with_opponent_pool_count": metadata_with_opponent_pool,
+        "metadata_with_historical_samples_count": metadata_with_historical_samples,
+        "metadata_meeting_min_count": metadata_meeting_min,
+        "metadata_load_error_count": len(load_errors),
+        "metadata_load_errors": load_errors[:5],
+        "min_opponent_historical_samples": min_historical_samples,
+        "max_historical_samples": max_historical_samples,
+        "meets_min_opponent_historical_samples": meets_min,
+        "best_checkpoint_metadata": best_metadata,
+    }
+
+
 def _manifest_source_status(manifest_source: dict, current_source: dict) -> dict:
     source_commit = manifest_source.get("commit")
     current_commit = current_source.get("commit")
@@ -3356,6 +3458,13 @@ def _manifest_status_entry(
     )
     source_control = cfg.get("source_control", {})
     source_status = _manifest_source_status(source_control, current_source)
+    min_opponent_historical_samples = json_non_negative_int(
+        cfg.get("min_opponent_historical_samples")
+    )
+    checkpoint_pool_status = checkpoint_opponent_pool_status(
+        checkpoint_path,
+        min_historical_samples=min_opponent_historical_samples or 0,
+    )
     return {
         "path": str(manifest_path),
         "run_id": cfg.get("run_id"),
@@ -3397,12 +3506,11 @@ def _manifest_status_entry(
         "min_eval_episodes": cfg.get("min_eval_episodes"),
         "min_map_episodes": cfg.get("min_map_episodes"),
         "min_replay_combat_maps": cfg.get("min_replay_combat_maps"),
-        "min_opponent_historical_samples": cfg.get(
-            "min_opponent_historical_samples"
-        ),
+        "min_opponent_historical_samples": min_opponent_historical_samples,
         "require_head_to_head": cfg.get("require_head_to_head"),
         "min_head_to_head_episodes": cfg.get("min_head_to_head_episodes"),
         "min_head_to_head_map_episodes": cfg.get("min_head_to_head_map_episodes"),
+        "checkpoint_opponent_pool": checkpoint_pool_status,
         "source_commit": source_control.get("commit"),
         "require_candidate_integrity": cfg.get("require_candidate_integrity"),
         "source_dirty": source_control.get("dirty"),
@@ -3445,6 +3553,13 @@ def long_run_missing_evidence(
         missing.append("candidate_checkpoint_files")
     if latest_manifest.get("replay_file_count", 0) == 0:
         missing.append("real_training_replay_files")
+    if (
+        json_non_negative_int(latest_manifest.get("min_opponent_historical_samples"))
+        or 0
+    ) > 0:
+        checkpoint_pool_status = latest_manifest.get("checkpoint_opponent_pool") or {}
+        if not checkpoint_pool_status.get("meets_min_opponent_historical_samples"):
+            missing.append("checkpoint_historical_opponent_samples")
     if not latest_checks:
         missing.append("latest_run_long_run_check")
     elif not latest_passing_checks:

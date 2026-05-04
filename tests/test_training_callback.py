@@ -3494,6 +3494,74 @@ def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkey
     assert latest["replay_file_count"] == 0
 
 
+def test_build_long_run_status_reports_checkpoint_historical_opponent_samples(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    manifest = build_long_run_manifest(
+        run_id="status-run",
+        checkpoint_root=str(tmp_path / "checkpoints"),
+        eval_root=str(artifact_dir),
+        replay_root=str(tmp_path / "replays"),
+        timesteps=5_000_000,
+    )
+    manifest_path = artifact_dir / "status-plan.json"
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    checkpoint_dir = Path(manifest["manifest_config"]["checkpoint_dir"])
+    checkpoint_dir.mkdir(parents=True)
+    checkpoint = checkpoint_dir / "ppo_final.zip"
+    checkpoint.write_bytes(b"candidate")
+    write_checkpoint_metadata(
+        checkpoint_dir / "ppo_final",
+        Config(),
+        num_timesteps=100,
+        opponent_pool_stats={
+            "size": 2,
+            "latest_samples": 4,
+            "historical_samples": 0,
+        },
+    )
+
+    status = build_long_run_status(artifact_dir)
+
+    latest = status["latest_manifest"]
+    opponent_pool = latest["checkpoint_opponent_pool"]
+    assert latest["min_opponent_historical_samples"] == 1
+    assert opponent_pool["metadata_file_count"] == 1
+    assert opponent_pool["metadata_with_opponent_pool_count"] == 1
+    assert opponent_pool["max_historical_samples"] == 0
+    assert opponent_pool["meets_min_opponent_historical_samples"] is False
+    assert (
+        opponent_pool["best_checkpoint_metadata"]["path"]
+        == str(checkpoint_dir / "ppo_final.meta.json")
+    )
+    assert "checkpoint_historical_opponent_samples" in status["missing_evidence"]
+
+    write_checkpoint_metadata(
+        checkpoint_dir / "ppo_final",
+        Config(),
+        num_timesteps=200,
+        opponent_pool_stats={
+            "size": 3,
+            "latest_samples": 8,
+            "historical_samples": 2,
+        },
+    )
+
+    passing_status = build_long_run_status(artifact_dir)
+    passing_pool = passing_status["latest_manifest"]["checkpoint_opponent_pool"]
+    assert passing_pool["max_historical_samples"] == 2
+    assert passing_pool["metadata_meeting_min_count"] == 1
+    assert passing_pool["meets_min_opponent_historical_samples"] is True
+    assert (
+        "checkpoint_historical_opponent_samples"
+        not in passing_status["missing_evidence"]
+    )
+
+
 def test_build_long_run_status_detects_latest_passing_check(tmp_path):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()

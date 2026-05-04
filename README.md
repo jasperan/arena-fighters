@@ -344,11 +344,13 @@ whether any passing check is present, and the next `bash ...` commands when the
 latest preflight or full launcher has not been executed yet and the manifest
 source snapshot still matches the current clean checkout. It also emits a
 machine-readable `missing_evidence` list such as `train_exitcode`,
-`real_training_replay_files`, or `latest_run_long_run_check`. The latest
-manifest summary includes `source_safe_to_launch` and `source_stale_reasons` so
-stale or dirty-source launchers can be regenerated before spending compute. It
-is an audit aid only; a passing status still needs the underlying verifier
-artifacts to be inspected before promoting a checkpoint.
+`real_training_replay_files`, `checkpoint_historical_opponent_samples`, or
+`latest_run_long_run_check`. The latest manifest summary includes
+`source_safe_to_launch`, `source_stale_reasons`, and a checkpoint opponent-pool
+metadata summary so stale launchers or self-play runs with no historical
+opponent samples can be caught before spending promotion compute. It is an audit
+aid only; a passing status still needs the underlying verifier artifacts to be
+inspected before promoting a checkpoint.
 
 Long-run check validates saved promotion-audit, strategy-report, and
 artifact-index outputs against the documented promotion criteria. It exits

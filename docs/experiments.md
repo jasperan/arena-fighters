@@ -255,7 +255,10 @@ and `self_play/last_sample_was_historical`. Reset info also includes active
 snapshot ids and per-snapshot sample counts under `opponent_pool`, which helps
 detect silent collapse to only the latest policy. Checkpoint metadata records the
 latest opponent-pool stats, and generated real-run manifests require historical
-opponent sampling evidence before promotion.
+opponent sampling evidence before promotion. Long-run status also summarizes
+checkpoint opponent-pool metadata and flags
+`checkpoint_historical_opponent_samples` when a run directory has not produced
+the required historical sampling evidence yet.
 
 Current stages:
 
@@ -364,7 +367,8 @@ not been executed and the manifest source snapshot still matches the current
 clean checkout. It also reports `missing_evidence` entries for absent exit-code
 sidecars, checkpoint files, replay files, or latest-run verifier artifacts, and
 includes `source_safe_to_launch` plus `source_stale_reasons` before a long run is
-started.
+started. The latest manifest status also summarizes checkpoint opponent-pool
+metadata and flags missing historical-opponent sample evidence.
 
 Single eval output records the current curriculum under
 `eval_config.curriculum`; suite output records it under

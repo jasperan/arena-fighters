@@ -97,7 +97,9 @@ has produced a passing long-run-check artifact and prints the next launcher
 commands when its preflight or full run has not run and its source snapshot still
 matches the current clean checkout. The status artifact also includes
 `missing_evidence` for machine-readable blocker reporting and
-`source_safe_to_launch`/`source_stale_reasons` for stale-manifest detection.
+`source_safe_to_launch`/`source_stale_reasons` for stale-manifest detection. The
+latest manifest status summarizes checkpoint opponent-pool metadata and flags
+missing historical-opponent samples before promotion checks are run.
 
 ## Architecture
 
@@ -120,6 +122,7 @@ All source lives in `src/arena_fighters/`:
 - Opponent pool (max 20 snapshots): sample frozen historical snapshots, 80% latest and 20% random older; reset info and training logger expose latest-vs-historical sampling telemetry
 - Opponent pool telemetry includes active snapshot ids, per-snapshot sample counts, last sampled snapshot id, and historical sample rate so league collapse is easier to spot
 - Checkpoint metadata records latest opponent-pool stats; generated real-run long-run checks require historical opponent samples
+- Long-run status summarizes checkpoint opponent-pool metadata and flags missing historical-opponent sample evidence
 - Checkpoints get companion `.meta.json` files with map settings, reward config, active curriculum stage, file size, and SHA-256 digest
 - Eval JSON includes average cumulative rewards and behavior diagnostics for idle rate, action spam, no-damage episodes, low-engagement episodes, and damage events
 - Evaluation winner inference treats timeouts as draws and knockouts by terminal HP; shaped rewards do not create timeout wins
