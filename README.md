@@ -517,6 +517,7 @@ Dict observation with two components:
 ```bash
 # Cheap smoke bundle: no training by default
 python scripts/smoke_suite.py
+python scripts/smoke_suite.py --summary-output /tmp/arena-smoke-summary.json
 
 # Full test suite
 pytest tests/ -v

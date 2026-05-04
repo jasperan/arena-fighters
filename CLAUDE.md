@@ -15,6 +15,7 @@ pip install -e ".[dev]"
 
 # Cheap smoke bundle (no training by default)
 python scripts/smoke_suite.py
+python scripts/smoke_suite.py --summary-output /tmp/arena-smoke-summary.json
 
 # Run full tests (env, network, self-play, evaluation, renderer, replay, training metadata)
 pytest tests/ -v
@@ -78,6 +79,7 @@ python scripts/train.py --mode league_health --artifact-dir evals --eval-output-
 python scripts/reward_shaping_smoke.py
 python scripts/long_run_artifact_smoke.py
 python scripts/smoke_suite.py
+python scripts/smoke_suite.py --summary-output /tmp/arena-smoke-summary.json
 python scripts/train_eval_smoke.py
 
 # TensorBoard

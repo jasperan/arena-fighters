@@ -2,7 +2,11 @@ import json
 from pathlib import Path
 
 from arena_fighters.evaluation import artifact_metadata
-from scripts.smoke_suite import build_smoke_commands, build_smoke_suite_summary
+from scripts.smoke_suite import (
+    build_smoke_commands,
+    build_smoke_suite_summary,
+    write_smoke_suite_summary,
+)
 
 
 def test_build_smoke_commands_defaults_to_no_training_smokes(tmp_path):
@@ -111,3 +115,16 @@ def test_build_smoke_suite_summary_reads_no_training_smokes(tmp_path):
         summary["smokes"]["long_run_artifact"]["health_artifact_scope_dir"]
         == str(eval_dir)
     )
+
+
+def test_write_smoke_suite_summary_creates_parent_dirs(tmp_path):
+    summary = {
+        "smoke_order": ["reward_shaping", "long_run_artifact"],
+        "smoke_count": 2,
+    }
+    path = tmp_path / "nested" / "smoke-summary.json"
+
+    written = write_smoke_suite_summary(summary, path)
+
+    assert written == path
+    assert json.loads(path.read_text()) == summary

@@ -140,6 +140,13 @@ def build_smoke_suite_summary(output_dir: Path, commands: list[dict]) -> dict:
     }
 
 
+def write_smoke_suite_summary(summary: dict, path: str | Path) -> Path:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    return output_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Arena Fighters smoke suite")
     parser.add_argument(
@@ -147,6 +154,12 @@ def main() -> None:
         type=str,
         default=None,
         help="Output directory (default: /tmp timestamped dir)",
+    )
+    parser.add_argument(
+        "--summary-output",
+        type=str,
+        default=None,
+        help="Optional path for saving the combined smoke-suite summary JSON",
     )
     parser.add_argument(
         "--reward-rounds",
@@ -197,6 +210,9 @@ def main() -> None:
         run_command(command["cmd"], repo_root, command["stdout_path"])
 
     summary = build_smoke_suite_summary(output_dir, commands)
+    if args.summary_output:
+        summary["summary_output"] = str(Path(args.summary_output))
+        write_smoke_suite_summary(summary, args.summary_output)
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
