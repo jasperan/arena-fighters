@@ -51,15 +51,20 @@ from arena_fighters.self_play import OpponentPool, SelfPlayWrapper
 from stable_baselines3.common.callbacks import BaseCallback
 
 
+_SECRET_NAME_PATTERN = (
+    r"[A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|pwd)"
+    r"[A-Za-z0-9_.-]*"
+)
+_SECRET_VALUE_PATTERN = r'"[^"]*"|\'[^\']*\'|[^\s]+'
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\b(\s*[:=]\s*)[^\s]+"
+    rf"(?i)\b({_SECRET_NAME_PATTERN})(\s*[:=]\s*)({_SECRET_VALUE_PATTERN})"
 )
 _BEARER_TOKEN_RE = re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)[^\s]+")
 _SECRET_ARG_RE = re.compile(
-    r"(?i)(--(?:api[_-]?key|secret|token|password|passwd|pwd)\s+)[^\s]+"
+    rf"(?i)(--{_SECRET_NAME_PATTERN}(?:=|\s+))({_SECRET_VALUE_PATTERN})"
 )
 _JSON_SECRET_RE = re.compile(
-    r'(?i)("(?:api[_-]?key|secret|token|password|passwd|pwd)"\s*:\s*")[^"]+(")'
+    rf'(?i)("({_SECRET_NAME_PATTERN})"\s*:\s*")[^"]+(")'
 )
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -1451,7 +1456,17 @@ def redact_log_line(line: str) -> str:
     redacted = _BEARER_TOKEN_RE.sub(r"\1<redacted>", line)
     redacted = _SECRET_ASSIGNMENT_RE.sub(r"\1\2<redacted>", redacted)
     redacted = _SECRET_ARG_RE.sub(r"\1<redacted>", redacted)
-    return _JSON_SECRET_RE.sub(r"\1<redacted>\2", redacted)
+    return _JSON_SECRET_RE.sub(r"\1<redacted>\3", redacted)
+
+
+def _is_indexable_artifact_path(path: Path, root: Path) -> bool:
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
@@ -1711,7 +1726,7 @@ def build_artifact_index(artifact_dir: str | Path, recursive: bool = False) -> d
             path
             for pattern in patterns
             for path in root.glob(pattern)
-            if path.is_file()
+            if _is_indexable_artifact_path(path, root)
         }
     )
     artifacts = [summarize_artifact_file(path, root=root) for path in paths]
@@ -3974,10 +3989,18 @@ def build_league_health_report(
         warnings.append("missing_strategy_report")
     if latest["rank"] is None:
         warnings.append("missing_rank")
+    if latest["promotion_audit"] is None:
+        warnings.append("missing_promotion_audit")
     if latest["long_run_status"] is None:
         warnings.append("missing_long_run_status")
     if latest["long_run_check"] is None:
         warnings.append("missing_long_run_check")
+    if status and (
+        status.get("blocked_reason") or status.get("candidate_evidence_ready") is False
+    ):
+        blockers.append("long_run_status_blocked")
+    if promotion and promotion.get("passed") is False:
+        blockers.append("promotion_audit_failed")
     if candidate_issues:
         blockers.append("candidate_strategy_issues")
     missing_evidence = status.get("missing_evidence", [])
@@ -4371,6 +4394,18 @@ def build_long_run_manifest(
         '  --eval-output-dir "$EVAL_DIR" \\',
         "  --eval-label final-artifact-index",
     ]
+    long_run_status_parts = [
+        "python scripts/train.py --mode long_run_status \\",
+        '  --artifact-dir "$EVAL_ROOT" \\',
+        '  --eval-output-dir "$EVAL_DIR" \\',
+        "  --eval-label long-run-status",
+    ]
+    league_health_parts = [
+        "python scripts/train.py --mode league_health \\",
+        '  --artifact-dir "$EVAL_ROOT" \\',
+        '  --eval-output-dir "$EVAL_DIR" \\',
+        "  --eval-label league-health",
+    ]
     preflight_index_parts = [
         "python scripts/train.py --mode artifact_index \\",
         '  --artifact-dir "$PREFLIGHT_DIR" \\',
@@ -4597,8 +4632,30 @@ def build_long_run_manifest(
             "shell": "\n".join(long_run_check_parts),
         },
         {
+            "id": "long_run_status",
+            "description": "Summarize launcher execution and missing long-run evidence.",
+            "expensive": False,
+            "shell": "\n".join(
+                _with_output_redirect(
+                    long_run_status_parts,
+                    '"$EVAL_DIR/long-run-status.out"',
+                )
+            ),
+        },
+        {
+            "id": "league_health",
+            "description": "Combine strategy, status, rank, and verifier signals into a health summary.",
+            "expensive": False,
+            "shell": "\n".join(
+                _with_output_redirect(
+                    league_health_parts,
+                    '"$EVAL_DIR/league-health.out"',
+                )
+            ),
+        },
+        {
             "id": "final_artifact_index",
-            "description": "Index final artifacts, including long_run_check output.",
+            "description": "Index final artifacts, including status and league-health output.",
             "expensive": False,
             "shell": "\n".join(
                 _with_output_redirect(
@@ -4619,6 +4676,7 @@ def build_long_run_manifest(
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         _shell_assign("RUN_ID", run_id),
+        _shell_assign("EVAL_ROOT", str(eval_root)),
         _shell_assign("CHECKPOINT_DIR", str(checkpoint_dir)),
         _shell_assign("EVAL_DIR", str(eval_dir)),
         _shell_assign("REPLAY_DIR", str(replay_dir)),
@@ -5058,8 +5116,8 @@ def main():
         "--recursive-artifacts",
         action="store_true",
         help=(
-            "Recursively scan --artifact-dir in artifact_index, strategy_report, "
-            "and league_health modes"
+            "Recursively scan --artifact-dir in artifact_index and strategy_report "
+            "modes; long_run_status and league_health always scan recursively"
         ),
     )
     parser.add_argument(

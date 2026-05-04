@@ -289,8 +289,9 @@ eval directory so the final artifact index keeps lightweight command-log tails.
 If the preflight or training step fails, it writes a final artifact index before
 exiting with that failing status. If promotion-audit or `long_run_check` fails
 after artifacts were written, it still continues into the diagnostic verifier
-and final artifact index before exiting with the verifier status. The captured
-exit codes are persisted as `preflight.exitcode`, `train.exitcode`,
+then saves `long_run_status`, `league_health`, and the final artifact index
+before exiting with the verifier status. The captured exit codes are persisted
+as `preflight.exitcode`, `train.exitcode`,
 `promotion-audit.exitcode`, and `long-run-check.exitcode` inside the run's eval
 directory for later inspection. If promotion-audit crashes before writing a
 promotion artifact, the launcher passes a missing-artifact placeholder into
@@ -358,8 +359,9 @@ inspected before promoting a checkpoint.
 League health mode recursively scans the same artifact directory and combines the
 latest strategy report, long-run status, rank/head-to-head standings,
 promotion-audit candidate, and long-run check into one compact JSON artifact. It
-reports blockers such as candidate strategy issues, missing historical-opponent
-sampling, or a failed long-run check, plus warnings for missing source artifacts.
+reports blockers such as blocked long-run status, failed promotion audit,
+candidate strategy issues, missing historical-opponent sampling, or a failed
+long-run check, plus warnings for missing source artifacts.
 Use it as a triage dashboard before spending time on deeper replay inspection or
 new training runs.
 

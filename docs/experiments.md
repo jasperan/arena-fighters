@@ -353,6 +353,9 @@ strategy-report, or artifact-index files are converted into verifier input
 failures rather than shell `ls` failures during artifact resolution.
 Generated commands also write stdout/stderr to `.out` files in the run eval
 directory, and artifact indexes summarize those command-log tails.
+After the verifier runs, generated launchers save long-run status and league
+health artifacts before the final artifact index, so each run ends with a compact
+triage bundle even when promotion fails.
 When a diagnostic manifest uses `--timesteps 10000` or less, the launcher pins
 `--replay-save-interval 1` so replay analysis is covered even in tiny runs.
 To see whether the latest generated plan has actually produced run evidence,
@@ -374,7 +377,7 @@ metadata and flags missing historical-opponent sample evidence.
 League health mode rolls the latest strategy report, long-run status,
 rank/head-to-head standings, promotion audit, and long-run check into one
 promotion-health artifact with `health.blockers`, `health.warnings`, opponent-pool
-readiness, weakest maps, and head-to-head candidate Elo.
+readiness, long-run status blockers, weakest maps, and head-to-head candidate Elo.
 
 Single eval output records the current curriculum under
 `eval_config.curriculum`; suite output records it under

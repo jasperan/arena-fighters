@@ -92,6 +92,8 @@ verifier as placeholder paths so failures are recorded in `long_run_check`
 instead of aborting during shell artifact resolution.
 Generated launcher commands write stdout/stderr to `.out` sidecars that
 artifact indexes summarize as command logs.
+Generated launchers emit long-run status and league-health artifacts after
+`long_run_check` and before the final artifact index.
 Use `long_run_status` to recursively inspect generated manifests and run
 directories without starting training; it reports whether the latest launcher
 has produced a passing long-run-check artifact and prints the next launcher

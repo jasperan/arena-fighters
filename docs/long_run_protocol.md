@@ -59,8 +59,11 @@ writes a final artifact index before exiting with the failing status. If
 promotion-audit exits before writing a promotion JSON, the launcher uses a
 missing-artifact placeholder so `long_run_check` can report a structured
 `input_artifacts_loadable` failure and the final artifact index can still be
-written. Each generated command writes stdout/stderr to a named `.out` file in
-`$EVAL_DIR` so failed runs keep command-log tails in the final artifact index.
+written. After `long_run_check`, the launcher writes `long_run_status` and
+`league_health` artifacts before the final artifact index, so the run bundle
+keeps a compact evidence and blocker summary. Each generated command writes
+stdout/stderr to a named `.out` file in `$EVAL_DIR` so failed runs keep
+command-log tails in the final artifact index.
 Run IDs are restricted to letters, numbers, dots, underscores, and hyphens so
 generated checkpoint, replay, and eval paths stay under their configured roots.
 For diagnostic manifests with `--timesteps` at or below `10000`, the generated
@@ -295,8 +298,9 @@ Treat this as a quick triage artifact, not as promotion proof by itself.
 League health mode then combines the latest strategy report, long-run status,
 rank/head-to-head standings, promotion audit, and long-run check into a compact
 triage artifact. Its `health.blockers` list highlights candidate strategy issues,
-missing historical-opponent sampling, and failed long-run checks in one place,
-while `health.warnings` records missing source artifacts.
+blocked long-run status, failed promotion audits, missing historical-opponent
+sampling, and failed long-run checks in one place, while `health.warnings`
+records missing source artifacts.
 
 ## 9. Promotion Criteria
 

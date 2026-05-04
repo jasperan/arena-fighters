@@ -1318,9 +1318,14 @@ def test_build_artifact_index_redacts_command_log_secrets(tmp_path):
             [
                 "api_key=abc123",
                 "TOKEN: xyz789",
+                "OPENAI_API_KEY=sk-local",
+                "AWS_SECRET_ACCESS_KEY = aws-secret",
+                "MY_TOKEN: custom-token",
+                "client_secret='quoted-secret'",
                 "Authorization: Bearer opaque-token",
                 "password = swordfish",
                 "python script.py --api-key abc123 --safe value",
+                "python script.py --api-key=abc123 --safe value",
                 '{"token":"json-token","safe":"value"}',
                 "safe line",
             ]
@@ -1335,12 +1340,34 @@ def test_build_artifact_index_redacts_command_log_secrets(tmp_path):
     assert entry["summary"]["tail_lines"] == [
         "api_key=<redacted>",
         "TOKEN: <redacted>",
+        "OPENAI_API_KEY=<redacted>",
+        "AWS_SECRET_ACCESS_KEY = <redacted>",
+        "MY_TOKEN: <redacted>",
+        "client_secret=<redacted>",
         "Authorization: Bearer <redacted>",
         "password = <redacted>",
         "python script.py --api-key <redacted> --safe value",
+        "python script.py --api-key=<redacted> --safe value",
         '{"token":"<redacted>","safe":"value"}',
         "safe line",
     ]
+
+
+def test_build_artifact_index_skips_symlinked_artifacts(tmp_path):
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    outside_log = tmp_path / "outside.out"
+    outside_log.write_text("secret_token=outside\n")
+    symlink_path = artifact_dir / "train.out"
+    try:
+        symlink_path.symlink_to(outside_log)
+    except OSError:
+        return
+
+    index = build_artifact_index(artifact_dir)
+
+    assert index["artifact_counts"] == {}
+    assert index["artifacts"] == []
 
 
 def test_run_analyze_replay_can_save_indexable_artifact(tmp_path, capsys):
@@ -2926,10 +2953,13 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
         "artifact_index",
         "resolve_validation_artifacts",
         "long_run_check",
+        "long_run_status",
+        "league_health",
         "final_artifact_index",
         "exit_with_long_run_check_status",
     ]
     assert "--timesteps 1234" in manifest["shell_script"]
+    assert "EVAL_ROOT=evals" in manifest["shell_script"]
     assert 'cp "$0" "$EVAL_DIR/long-run-launcher.sh"' in manifest["shell_script"]
     assert "python scripts/train_eval_smoke.py" in manifest["shell_script"]
     assert 'PREFLIGHT_DIR=evals/arena-test-preflight-smoke' in manifest["shell_script"]
@@ -2982,6 +3012,13 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert "LONG_RUN_CHECK_EXIT=$?" in manifest["shell_script"]
     assert "long-run-check.exitcode" in manifest["shell_script"]
     assert "long-run-check.out" in manifest["shell_script"]
+    assert "python scripts/train.py --mode long_run_status" in manifest["shell_script"]
+    assert '--artifact-dir "$EVAL_ROOT"' in manifest["shell_script"]
+    assert "--eval-label long-run-status" in manifest["shell_script"]
+    assert "long-run-status.out" in manifest["shell_script"]
+    assert "python scripts/train.py --mode league_health" in manifest["shell_script"]
+    assert "--eval-label league-health" in manifest["shell_script"]
+    assert "league-health.out" in manifest["shell_script"]
     assert "--eval-label final-artifact-index" in manifest["shell_script"]
     assert "final-artifact-index.out" in manifest["shell_script"]
     assert 'exit "$LONG_RUN_CHECK_EXIT"' in manifest["shell_script"]
@@ -3115,6 +3152,8 @@ def test_build_long_run_manifest_redirects_command_logs():
         "strategy-report.out",
         "artifact-index.out",
         "long-run-check.out",
+        "long-run-status.out",
+        "league-health.out",
         "final-artifact-index.out",
     ):
         assert f' > "$EVAL_DIR/{log_name}" 2>&1' in script
@@ -3774,6 +3813,7 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
     assert report["health"] == {
         "ready": False,
         "blockers": [
+            "long_run_status_blocked",
             "candidate_strategy_issues",
             "historical_opponent_sampling",
             "long_run_check_failed",
@@ -3797,6 +3837,61 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
     ]
 
 
+def test_build_league_health_blocks_on_latest_long_run_status(tmp_path):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 0,
+        "issues": [],
+        "weakness_count": 0,
+        "weaknesses": [],
+    }
+    long_run_status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "candidate_evidence_ready": False,
+        "blocked_reason": "latest_long_run_check_not_passing",
+        "missing_evidence": ["passing_latest_long_run_check"],
+        "latest_manifest": {
+            "run_id": "latest-run",
+            "checkpoint_opponent_pool": {
+                "min_opponent_historical_samples": 1,
+                "max_historical_samples": 2,
+                "meets_min_opponent_historical_samples": True,
+            },
+        },
+    }
+    long_run_check = {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": True,
+        "candidate": {"label": "older", "score": 0.5},
+        "checks": [
+            {
+                "id": "promotion_audit_passed",
+                "required": True,
+                "passed": True,
+            }
+        ],
+    }
+    (artifact_dir / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+    (artifact_dir / "status.json").write_text(json.dumps(long_run_status) + "\n")
+    (artifact_dir / "rank.json").write_text(json.dumps(_rank_summary()) + "\n")
+    (artifact_dir / "check.json").write_text(json.dumps(long_run_check) + "\n")
+    (artifact_dir / "promotion.json").write_text(
+        json.dumps(_promotion_audit_summary()) + "\n"
+    )
+
+    report = build_league_health_report(artifact_dir)
+
+    assert report["health"]["ready"] is False
+    assert report["health"]["blockers"] == ["long_run_status_blocked"]
+    assert report["health"]["warnings"] == []
+    assert report["signals"]["long_run"]["status_blocked_reason"] == (
+        "latest_long_run_check_not_passing"
+    )
+    assert report["signals"]["long_run"]["latest_check_passed"] is True
+
+
 def test_run_league_health_can_save_indexable_artifact(tmp_path, capsys):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()
@@ -3818,6 +3913,7 @@ def test_run_league_health_can_save_indexable_artifact(tmp_path, capsys):
     assert set(saved["health"]["warnings"]) == {
         "missing_strategy_report",
         "missing_rank",
+        "missing_promotion_audit",
         "missing_long_run_status",
         "missing_long_run_check",
     }
