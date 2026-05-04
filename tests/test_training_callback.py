@@ -4257,6 +4257,7 @@ def test_build_long_run_status_reports_latest_manifest_execution_state(
     assert status["next_preflight_command"] == f"bash {preflight_launcher_path}"
     assert set(status["missing_evidence"]) >= {
         "self_play_sampling_preflight_exitcode",
+        "self_play_sampling_preflight_summary",
         "preflight_exitcode",
         "train_exitcode",
         "promotion_audit_exitcode",
@@ -4414,6 +4415,20 @@ def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkey
     preflight_dir = Path(manifest["manifest_config"]["preflight_dir"])
     eval_dir.mkdir(parents=True)
     preflight_dir.mkdir(parents=True)
+    sampling_summary = {
+        "artifact": artifact_metadata("self_play_sampling_smoke"),
+        "passed": True,
+        "historical_samples": 18,
+        "historical_sample_rate": 0.28125,
+        "latest_samples": 46,
+        "unique_maps_seen": 4,
+        "checks": [
+            {"id": "historical_samples_meet_minimum", "passed": True},
+        ],
+    }
+    (preflight_dir / "self-play-sampling-summary.json").write_text(
+        json.dumps(sampling_summary) + "\n"
+    )
     (eval_dir / "self-play-sampling-preflight.exitcode").write_text("0\n")
     (eval_dir / "preflight.exitcode").write_text("0\n")
 
@@ -4423,6 +4438,7 @@ def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkey
     assert status["next_command"] == f"bash {launcher_path}"
     assert status["next_preflight_command"] is None
     assert "self_play_sampling_preflight_exitcode" not in status["missing_evidence"]
+    assert "self_play_sampling_preflight_summary" not in status["missing_evidence"]
     assert "preflight_exitcode" not in status["missing_evidence"]
     assert set(status["missing_evidence"]) >= {
         "train_exitcode",
@@ -4437,10 +4453,78 @@ def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkey
     assert latest["preflight_dir_exists"] is True
     assert latest["expects_self_play_sampling_preflight"] is True
     assert latest["self_play_sampling_preflight_exitcode_exists"] is True
+    assert latest["self_play_sampling_preflight"] == {
+        "available": True,
+        "path": str(preflight_dir / "self-play-sampling-summary.json"),
+        "passed": True,
+        "historical_samples": 18,
+        "historical_sample_rate": 0.28125,
+        "latest_samples": 46,
+        "unique_maps_seen": 4,
+        "failed_checks": [],
+    }
     assert latest["preflight_exitcode_exists"] is True
     assert latest["train_exitcode_exists"] is False
     assert latest["checkpoint_file_count"] == 0
     assert latest["replay_file_count"] == 0
+
+
+def test_build_long_run_status_reports_failed_self_play_preflight_summary(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    manifest = build_long_run_manifest(
+        run_id="status-run",
+        checkpoint_root=str(tmp_path / "checkpoints"),
+        eval_root=str(artifact_dir),
+        replay_root=str(tmp_path / "replays"),
+        timesteps=5_000_000,
+    )
+    manifest_path = artifact_dir / "status-plan.json"
+    launcher_path = manifest_path.with_suffix(".sh")
+    preflight_launcher_path = manifest_path.with_suffix(".preflight.sh")
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    launcher_path.write_text(manifest["shell_script"] + "\n")
+    preflight_launcher_path.write_text(manifest["preflight_shell_script"] + "\n")
+    eval_dir = Path(manifest["manifest_config"]["eval_dir"])
+    preflight_dir = Path(manifest["manifest_config"]["preflight_dir"])
+    eval_dir.mkdir(parents=True)
+    preflight_dir.mkdir(parents=True)
+    sampling_summary = {
+        "artifact": artifact_metadata("self_play_sampling_smoke"),
+        "passed": False,
+        "historical_samples": 0,
+        "historical_sample_rate": 0.0,
+        "latest_samples": 64,
+        "unique_maps_seen": 4,
+        "checks": [
+            {"id": "historical_samples_meet_minimum", "passed": False},
+        ],
+    }
+    (preflight_dir / "self-play-sampling-summary.json").write_text(
+        json.dumps(sampling_summary) + "\n"
+    )
+    (eval_dir / "self-play-sampling-preflight.exitcode").write_text("1\n")
+    (eval_dir / "preflight.exitcode").write_text("1\n")
+
+    status = build_long_run_status(artifact_dir)
+
+    assert "self_play_sampling_preflight_exitcode" not in status["missing_evidence"]
+    assert "self_play_sampling_preflight_summary" not in status["missing_evidence"]
+    latest = status["latest_manifest"]
+    assert latest["self_play_sampling_preflight"] == {
+        "available": True,
+        "path": str(preflight_dir / "self-play-sampling-summary.json"),
+        "passed": False,
+        "historical_samples": 0,
+        "historical_sample_rate": 0.0,
+        "latest_samples": 64,
+        "unique_maps_seen": 4,
+        "failed_checks": ["historical_samples_meet_minimum"],
+    }
 
 
 def test_build_long_run_status_requires_usable_checkpoint_and_replay_files(
@@ -4678,6 +4762,16 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
                 "max_historical_samples": 0,
                 "meets_min_opponent_historical_samples": False,
             },
+            "self_play_sampling_preflight": {
+                "available": True,
+                "path": str(artifact_dir / "preflight-sampling.json"),
+                "passed": True,
+                "historical_samples": 18,
+                "historical_sample_rate": 0.28125,
+                "latest_samples": 46,
+                "unique_maps_seen": 4,
+                "failed_checks": [],
+            },
         },
     }
     rank = _rank_summary(label="candidate", score=0.5)
@@ -4735,6 +4829,18 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
     assert report["signals"]["map_weaknesses"]["worst"]["scope"] == "suite:flat/idle"
     assert report["signals"]["head_to_head"]["candidate_elo"] == 1012.0
     assert report["signals"]["head_to_head"]["standing_rank"] == 1
+    assert report["signals"]["self_play_sampling_preflight"] == {
+        "available": True,
+        "passed": True,
+        "historical_samples": 18,
+        "historical_sample_rate": 0.28125,
+        "latest_samples": 46,
+        "unique_maps_seen": 4,
+        "failed_checks": [],
+    }
+    assert report["source_artifacts"]["self_play_sampling_preflight"] == str(
+        artifact_dir / "preflight-sampling.json"
+    )
     assert report["signals"]["long_run"]["failed_required_checks"] == [
         "no_candidate_bad_strategy_issues"
     ]
@@ -4874,6 +4980,53 @@ def test_build_league_health_blocks_on_failed_self_play_sampling_smoke(tmp_path)
     assert report["source_artifacts"]["self_play_sampling_smoke"] == str(
         artifact_dir / "sampling.json"
     )
+
+
+def test_build_league_health_blocks_on_failed_self_play_preflight(tmp_path):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    long_run_status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "candidate_evidence_ready": True,
+        "latest_manifest": {
+            "run_id": "status-run",
+            "self_play_sampling_preflight": {
+                "available": True,
+                "path": str(artifact_dir / "preflight-sampling.json"),
+                "passed": False,
+                "historical_samples": 0,
+                "historical_sample_rate": 0.0,
+                "latest_samples": 64,
+                "unique_maps_seen": 4,
+                "failed_checks": ["historical_samples_meet_minimum"],
+            },
+        },
+    }
+    long_run_check = {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": True,
+        "candidate": {"label": "candidate", "score": 0.5},
+        "checks": [],
+    }
+    (artifact_dir / "strategy.json").write_text(
+        json.dumps({"artifact": artifact_metadata("strategy_report"), "issues": []})
+        + "\n"
+    )
+    (artifact_dir / "status.json").write_text(json.dumps(long_run_status) + "\n")
+    (artifact_dir / "rank.json").write_text(
+        json.dumps(_rank_summary(label="candidate", score=0.5)) + "\n"
+    )
+    (artifact_dir / "promotion.json").write_text(
+        json.dumps(_promotion_audit_summary()) + "\n"
+    )
+    (artifact_dir / "check.json").write_text(json.dumps(long_run_check) + "\n")
+
+    report = build_league_health_report(artifact_dir)
+
+    assert "self_play_sampling_preflight_failed" in report["health"]["blockers"]
+    assert report["signals"]["self_play_sampling_preflight"]["failed_checks"] == [
+        "historical_samples_meet_minimum"
+    ]
 
 
 def test_build_league_health_blocks_on_latest_long_run_status(tmp_path):

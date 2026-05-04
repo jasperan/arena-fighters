@@ -4351,6 +4351,46 @@ def _manifest_source_status(manifest_source: dict, current_source: dict) -> dict
     }
 
 
+def _preflight_self_play_sampling_status(preflight_dir: str | None) -> dict:
+    status = {
+        "available": False,
+        "path": None,
+        "passed": None,
+        "historical_samples": None,
+        "historical_sample_rate": None,
+        "latest_samples": None,
+        "unique_maps_seen": None,
+        "failed_checks": [],
+    }
+    if not preflight_dir:
+        return status
+
+    path = Path(preflight_dir) / "self-play-sampling-summary.json"
+    status["path"] = str(path)
+    if not path.exists():
+        return status
+
+    try:
+        summary = load_eval_summary(path)
+        validate_artifact(summary, "self_play_sampling_smoke")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        status["load_error"] = f"{type(exc).__name__}: {exc}"
+        return status
+
+    status.update(
+        {
+            "available": True,
+            "passed": summary.get("passed"),
+            "historical_samples": summary.get("historical_samples"),
+            "historical_sample_rate": summary.get("historical_sample_rate"),
+            "latest_samples": summary.get("latest_samples"),
+            "unique_maps_seen": summary.get("unique_maps_seen"),
+            "failed_checks": failed_smoke_check_ids(summary),
+        }
+    )
+    return status
+
+
 def _manifest_status_entry(
     manifest_path: Path,
     manifest: dict,
@@ -4364,6 +4404,9 @@ def _manifest_status_entry(
     replay_dir = cfg.get("replay_dir")
     replay_path = Path(replay_dir) if replay_dir else None
     preflight_dir = cfg.get("preflight_dir")
+    preflight_self_play_sampling = _preflight_self_play_sampling_status(
+        preflight_dir if isinstance(preflight_dir, str) else None
+    )
     launcher_path = _existing_launcher_path(manifest_path, manifest)
     preflight_launcher_path = _existing_preflight_launcher_path(
         manifest_path,
@@ -4401,6 +4444,7 @@ def _manifest_status_entry(
             if eval_path
             else False
         ),
+        "self_play_sampling_preflight": preflight_self_play_sampling,
         "preflight_exitcode_exists": (
             (eval_path / "preflight.exitcode").exists() if eval_path else False
         ),
@@ -4477,6 +4521,10 @@ def long_run_missing_evidence(
         and not latest_manifest.get("self_play_sampling_preflight_exitcode_exists")
     ):
         missing.append("self_play_sampling_preflight_exitcode")
+    if latest_manifest.get("expects_self_play_sampling_preflight"):
+        preflight_sampling = latest_manifest.get("self_play_sampling_preflight") or {}
+        if not preflight_sampling.get("available"):
+            missing.append("self_play_sampling_preflight_summary")
     if not latest_manifest.get("preflight_exitcode_exists"):
         missing.append("preflight_exitcode")
     if not latest_manifest.get("train_exitcode_exists"):
@@ -4824,6 +4872,11 @@ def build_league_health_report(
     checkpoint_pool = latest_manifest.get("checkpoint_opponent_pool") or {}
     if not isinstance(checkpoint_pool, dict):
         checkpoint_pool = {}
+    preflight_self_play_sampling = (
+        latest_manifest.get("self_play_sampling_preflight") or {}
+    )
+    if not isinstance(preflight_self_play_sampling, dict):
+        preflight_self_play_sampling = {}
     long_run_check_failed = failed_required_check_ids(long_run_check)
     self_play_sampling = latest["self_play_sampling_smoke"] or {}
     self_play_sampling_failed_checks = failed_smoke_check_ids(self_play_sampling)
@@ -4863,6 +4916,11 @@ def build_league_health_report(
         blockers.append("replay_strategy_issues")
     if smoke_strategy_issues:
         blockers.append("smoke_strategy_issues")
+    if (
+        preflight_self_play_sampling.get("available")
+        and preflight_self_play_sampling.get("passed") is False
+    ):
+        blockers.append("self_play_sampling_preflight_failed")
     if self_play_sampling and self_play_sampling.get("passed") is False:
         blockers.append("self_play_sampling_smoke_failed")
     missing_evidence = status.get("missing_evidence", [])
@@ -4880,6 +4938,9 @@ def build_league_health_report(
         artifact_type: entry.get("path") if entry else None
         for artifact_type, entry in latest_entries.items()
     }
+    source_artifacts["self_play_sampling_preflight"] = (
+        preflight_self_play_sampling.get("path")
+    )
     return {
         "artifact": artifact_metadata("league_health"),
         "health_config": {
@@ -4940,6 +5001,23 @@ def build_league_health_report(
                 ),
                 "unique_maps_seen": self_play_sampling.get("unique_maps_seen"),
                 "failed_checks": self_play_sampling_failed_checks,
+            },
+            "self_play_sampling_preflight": {
+                "available": bool(preflight_self_play_sampling.get("available")),
+                "passed": preflight_self_play_sampling.get("passed"),
+                "historical_samples": preflight_self_play_sampling.get(
+                    "historical_samples"
+                ),
+                "historical_sample_rate": preflight_self_play_sampling.get(
+                    "historical_sample_rate"
+                ),
+                "latest_samples": preflight_self_play_sampling.get("latest_samples"),
+                "unique_maps_seen": preflight_self_play_sampling.get(
+                    "unique_maps_seen"
+                ),
+                "failed_checks": preflight_self_play_sampling.get(
+                    "failed_checks", []
+                ),
             },
             "long_run": {
                 "status_candidate_evidence_ready": status.get(

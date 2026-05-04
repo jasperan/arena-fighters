@@ -373,11 +373,12 @@ machine-readable `missing_evidence` list such as `train_exitcode`,
 `checkpoint_historical_opponent_samples`, or `latest_run_long_run_check`.
 The latest manifest summary includes
 `source_safe_to_launch`, `source_stale_reasons`, and a checkpoint opponent-pool
-metadata summary. Checkpoint evidence counts only usable checkpoint artifacts,
-and replay evidence counts valid training replay JSON files, so sidecars or
-notes cannot make an incomplete run look ready. It is an audit aid only; a
-passing status still needs the underlying verifier artifacts to be inspected
-before promoting a checkpoint.
+metadata summary, plus the self-play sampling preflight summary when that
+artifact exists. Checkpoint evidence counts only usable checkpoint artifacts, and
+replay evidence counts valid training replay JSON files, so sidecars or notes
+cannot make an incomplete run look ready. It is an audit aid only; a passing
+status still needs the underlying verifier artifacts to be inspected before
+promoting a checkpoint.
 
 League health mode recursively scans the same artifact directory and combines the
 latest strategy report, long-run status, rank/head-to-head standings,
@@ -386,8 +387,8 @@ uses the latest long-run status artifact to scope those source artifacts to the
 latest run's eval directory when available, so older or unrelated runs do not
 pollute triage. It reports blockers such as blocked long-run status, failed
 promotion audit, candidate or replay strategy issues, failed self-play sampling
-smokes, missing historical-opponent sampling, or a failed long-run check, plus
-warnings for missing source artifacts.
+preflights or smokes, missing historical-opponent sampling, or a failed long-run
+check, plus warnings for missing source artifacts.
 Use it as a triage dashboard before spending time on deeper replay inspection or
 new training runs.
 

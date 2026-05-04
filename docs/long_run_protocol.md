@@ -49,7 +49,9 @@ self-play sampling and tiny train/eval/verifier preflight in a sibling directory
 next to `$EVAL_DIR` before the expensive training command, so broken
 historical-opponent sampling, a stale environment, or broken verifier path fails
 before real compute is spent without contaminating the real run's recursive
-artifact scans. Add
+artifact scans. The self-play sampling preflight writes its compact summary to
+that sibling preflight directory and its exit code to the real run eval
+directory. Add
 `--replay-save-interval N` for
 diagnostic runs that should capture training replays more frequently than the
 default config. Add `--opponent-pool-seed N` when generating the manifest to
@@ -305,13 +307,14 @@ many verifier artifacts are under that run, whether any latest-run verifier
 passed, and the next preflight/full launcher commands when the latest plan has
 not been executed and the manifest source snapshot still matches the current
 clean checkout. It also emits a `missing_evidence` list for automation and human
-triage, including missing self-play sampling preflight exit codes, aggregate
-preflight exit codes, usable checkpoint files, valid training replay files, or
-latest-run verifier artifacts. The latest manifest summary also scans checkpoint
-metadata sidecars for opponent-pool
-historical-sample evidence, and `missing_evidence` includes
-`checkpoint_historical_opponent_samples` when a real-run manifest requires that
-evidence but no checkpoint metadata satisfies it.
+triage, including missing self-play sampling preflight exit codes or summaries,
+aggregate preflight exit codes, usable checkpoint files, valid training replay
+files, or latest-run verifier artifacts. The latest manifest summary includes
+the self-play sampling preflight's pass/fail flag, latest-vs-historical sample
+counts, map coverage, and failed checks when that summary is available. It also
+scans checkpoint metadata sidecars for opponent-pool historical-sample evidence,
+and `missing_evidence` includes `checkpoint_historical_opponent_samples` when a
+real-run manifest requires that evidence but no checkpoint metadata satisfies it.
 Treat this as a quick triage artifact, not as promotion proof by itself.
 
 League health mode then combines the latest strategy report, long-run status,
@@ -319,9 +322,10 @@ rank/head-to-head standings, promotion audit, and long-run check into a compact
 triage artifact. When the latest status points at a run eval directory, league
 health reads strategy, rank, promotion, and verifier artifacts from that run
 instead of mixing in older runs. Its `health.blockers` list highlights candidate
-strategy issues, blocked long-run status, failed promotion audits, missing
-historical-opponent sampling, and failed long-run checks in one place, while
-`health.warnings` records missing source artifacts.
+strategy issues, blocked long-run status, failed promotion audits, failed
+self-play sampling preflights or smokes, missing historical-opponent sampling,
+and failed long-run checks in one place, while `health.warnings` records missing
+source artifacts.
 
 ## 9. Promotion Criteria
 
