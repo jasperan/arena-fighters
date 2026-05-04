@@ -495,6 +495,16 @@ def test_score_baseline_suite_combines_wins_and_draws():
     assert score["mean_no_damage_rate"] == 0.0
     assert score["mean_low_engagement_rate"] == 0.0
     assert score["mean_avg_length"] == 15.0
+    assert score["per_map_scores"] == [
+        {
+            "map_name": "classic",
+            "mean_score": 0.5625,
+            "matchup_count": 2,
+            "episode_count": 4,
+        }
+    ]
+    assert score["worst_map_name"] == "classic"
+    assert score["worst_map_score"] == 0.5625
     assert [item["episodes"] for item in score["matchup_scores"]] == [2, 2]
 
 

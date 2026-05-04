@@ -134,7 +134,8 @@ opponents and maps. The default formula is
 `mean(win_rate_agent_0 + 0.5 * draw_rate - 0.25 * no_damage_rate - 0.25 * low_engagement_rate)`.
 Use `--rank-draw-weight`, `--rank-no-damage-penalty`, and
 `--rank-low-engagement-penalty` to tune it. The output also includes checkpoint
-metadata, per-matchup scores, and nested suite summaries. Use
+metadata, per-matchup scores, per-map mean scores, worst-map fields, and nested
+suite summaries. Use
 `--rank-checkpoints path_a.zip,path_b.zip` to compare an explicit list. Add
 `--rank-head-to-head` to include checkpoint-vs-checkpoint forward/reverse
 matchups and standings in the same artifact. Head-to-head standings include

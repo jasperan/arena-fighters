@@ -186,7 +186,8 @@ and penalizes no-damage or low-engagement episodes. The default formula is
 `mean(win_rate_agent_0 + 0.5 * draw_rate - 0.25 * no_damage_rate - 0.25 * low_engagement_rate)`.
 Tune the weights with `--rank-draw-weight`, `--rank-no-damage-penalty`, and
 `--rank-low-engagement-penalty`. The output includes checkpoint metadata,
-per-matchup scores, and full nested suite summaries. Add
+per-matchup scores, per-map mean scores, worst-map fields, and full nested
+suite summaries. Add
 `--rank-head-to-head` to include pairwise checkpoint-vs-checkpoint matchups with
 both forward and reverse sides plus standings. Head-to-head standings include
 Elo-style ratings; tune them with `--rank-initial-elo` and `--rank-elo-k`.

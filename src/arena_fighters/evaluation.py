@@ -813,6 +813,12 @@ def score_baseline_suite(
                 }
             )
 
+    per_map_scores = ranking_per_map_scores({"matchup_scores": matchup_scores})
+    worst_map = min(
+        per_map_scores,
+        key=lambda item: (item["mean_score"], item["map_name"]),
+        default=None,
+    )
     return {
         "score": (
             float(np.mean([item["score"] for item in matchup_scores]))
@@ -838,6 +844,9 @@ def score_baseline_suite(
             float(np.mean([item["avg_length"] for item in matchup_scores]))
             if matchup_scores else 0.0
         ),
+        "per_map_scores": per_map_scores,
+        "worst_map_name": worst_map["map_name"] if worst_map else None,
+        "worst_map_score": worst_map["mean_score"] if worst_map else None,
         "matchup_scores": matchup_scores,
     }
 
