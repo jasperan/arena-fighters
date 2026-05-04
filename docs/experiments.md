@@ -388,8 +388,10 @@ python scripts/long_run_artifact_smoke.py --summary-output /tmp/arena-long-run-a
 Use `--summary-output` when an autonomous run should archive the no-training
 manifest/status/health/index smoke as an indexable `long_run_artifact_smoke`
 JSON artifact. The summary records explicit validation checks so expected
-no-training long-run blockers do not become strategy blockers by themselves.
-Use `--command-timeout-seconds` to bound each child command.
+no-training long-run blockers do not become strategy blockers by themselves. It
+also reports `self_play_sampling_preflight_state` and fails if indexed
+status/health artifacts report a failed self-play preflight. Use
+`--command-timeout-seconds` to bound each child command.
 
 To run the cheap smoke bundle in compute-cost order, use:
 

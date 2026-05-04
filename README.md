@@ -500,8 +500,10 @@ health artifacts, recursively index the bundle, and verify the health artifact
 is scoped to the generated run eval directory. Use `--summary-output` to save an
 indexable `long_run_artifact_smoke` summary artifact. Its summary records
 explicit validation checks so expected no-training long-run blockers do not
-become strategy blockers by themselves. Use `--command-timeout-seconds` to
-bound each child command.
+become strategy blockers by themselves. It also reports
+`self_play_sampling_preflight_state` and fails the smoke if an indexed status or
+league-health artifact reports a failed self-play preflight. Use
+`--command-timeout-seconds` to bound each child command.
 
 ### Self-Play Sampling Smoke
 

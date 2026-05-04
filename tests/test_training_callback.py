@@ -1609,6 +1609,11 @@ def test_build_artifact_index_summarizes_long_run_artifact_smoke_artifacts(tmp_p
                 "health_blockers": ["long_run_status_blocked"],
                 "health_warnings": ["missing_rank"],
                 "health_artifact_scope_dir": "/tmp/evals/artifact-smoke",
+                "self_play_sampling_preflight_state": "failed",
+                "status_self_play_sampling_preflight": {
+                    "passed": False,
+                    "failed_checks": ["historical_samples_meet_minimum"],
+                },
                 "indexed_artifact_counts": {
                     "long_run_manifest": 1,
                     "long_run_status": 1,
@@ -1633,6 +1638,11 @@ def test_build_artifact_index_summarizes_long_run_artifact_smoke_artifacts(tmp_p
         "health_blockers": ["long_run_status_blocked"],
         "health_warnings": ["missing_rank"],
         "health_artifact_scope_dir": "/tmp/evals/artifact-smoke",
+        "self_play_sampling_preflight_state": "failed",
+        "self_play_sampling_preflight_passed": False,
+        "self_play_sampling_preflight_failed_checks": [
+            "historical_samples_meet_minimum"
+        ],
         "indexed_artifact_count": 3,
         "indexed_long_run_manifest_count": 1,
         "indexed_long_run_status_count": 1,

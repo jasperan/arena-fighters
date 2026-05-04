@@ -72,6 +72,31 @@ def build_artifact_smoke_summary(
     status_data = json.loads(status.read_text())
     health_data = json.loads(health.read_text())
     index_data = json.loads(artifact_index.read_text())
+    latest_manifest = status_data.get("latest_manifest") or {}
+    if not isinstance(latest_manifest, dict):
+        latest_manifest = {}
+    status_preflight = latest_manifest.get("self_play_sampling_preflight") or {}
+    if not isinstance(status_preflight, dict):
+        status_preflight = {}
+    health_signals = health_data.get("signals") or {}
+    if not isinstance(health_signals, dict):
+        health_signals = {}
+    health_preflight = health_signals.get("self_play_sampling_preflight") or {}
+    if not isinstance(health_preflight, dict):
+        health_preflight = {}
+    health_blockers = health_data.get("health", {}).get("blockers", [])
+    if not isinstance(health_blockers, list):
+        health_blockers = []
+    preflight_state = "missing"
+    if status_preflight.get("available"):
+        preflight_state = "available"
+        if status_preflight.get("passed") is True:
+            preflight_state = "passed"
+        if (
+            status_preflight.get("passed") is False
+            or "self_play_sampling_preflight_failed" in health_blockers
+        ):
+            preflight_state = "failed"
     summary = {
         "artifact": artifact_metadata("long_run_artifact_smoke"),
         "output_dir": str(output_dir),
@@ -84,11 +109,14 @@ def build_artifact_smoke_summary(
         "status_blocked_reason": status_data.get("blocked_reason"),
         "status_missing_evidence": status_data.get("missing_evidence", []),
         "health_ready": health_data.get("health", {}).get("ready"),
-        "health_blockers": health_data.get("health", {}).get("blockers", []),
+        "health_blockers": health_blockers,
         "health_warnings": health_data.get("health", {}).get("warnings", []),
         "health_artifact_scope_dir": health_data.get("health_config", {}).get(
             "artifact_scope_dir"
         ),
+        "self_play_sampling_preflight_state": preflight_state,
+        "status_self_play_sampling_preflight": status_preflight,
+        "health_self_play_sampling_preflight": health_preflight,
         "indexed_artifact_counts": index_data.get("artifact_counts", {}),
         "indexed_artifact_count": index_data.get("index_config", {}).get(
             "artifact_count"
@@ -142,6 +170,14 @@ def artifact_smoke_checks(summary: dict, eval_dir: Path) -> list[dict]:
                 "allowed": sorted(ALLOWED_NO_TRAINING_BLOCKED_REASONS),
             },
         ),
+        _check_result(
+            "self_play_preflight_not_failed",
+            summary.get("self_play_sampling_preflight_state") != "failed",
+            {
+                "state": summary.get("self_play_sampling_preflight_state"),
+                "health_blockers": summary.get("health_blockers", []),
+            },
+        ),
     ]
 
 
@@ -179,6 +215,9 @@ def validate_artifact_smoke_summary(summary: dict, eval_dir: Path) -> None:
             "Expected no-training status to stop before launcher execution, got "
             f"{reason!r}"
         )
+    raise RuntimeError(
+        "Long-run artifact smoke failed checks: " + ", ".join(failed_ids)
+    )
 
 
 def write_artifact_smoke_summary(summary: dict, path: str | Path) -> Path:

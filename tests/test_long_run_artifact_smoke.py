@@ -23,6 +23,26 @@ def test_build_artifact_smoke_summary_reads_expected_artifacts(tmp_path):
         "artifact": artifact_metadata("long_run_status"),
         "blocked_reason": "latest_launcher_not_executed",
         "missing_evidence": ["train_exitcode"],
+        "latest_manifest": {
+            "self_play_sampling_preflight": {
+                "available": True,
+                "passed": True,
+                "historical_samples": 18,
+                "historical_sample_rate": 0.28125,
+                "latest_samples": 46,
+                "unique_maps_seen": 4,
+                "failed_checks": [],
+            },
+        },
+    }
+    preflight_signal = {
+        "available": True,
+        "passed": True,
+        "historical_samples": 18,
+        "historical_sample_rate": 0.28125,
+        "latest_samples": 46,
+        "unique_maps_seen": 4,
+        "failed_checks": [],
     }
     health = {
         "artifact": artifact_metadata("league_health"),
@@ -31,6 +51,9 @@ def test_build_artifact_smoke_summary_reads_expected_artifacts(tmp_path):
             "ready": False,
             "blockers": ["long_run_status_blocked"],
             "warnings": ["missing_rank"],
+        },
+        "signals": {
+            "self_play_sampling_preflight": preflight_signal,
         },
     }
     index = {
@@ -78,6 +101,9 @@ def test_build_artifact_smoke_summary_reads_expected_artifacts(tmp_path):
         "health_blockers": ["long_run_status_blocked"],
         "health_warnings": ["missing_rank"],
         "health_artifact_scope_dir": str(eval_dir),
+        "self_play_sampling_preflight_state": "passed",
+        "status_self_play_sampling_preflight": preflight_signal,
+        "health_self_play_sampling_preflight": preflight_signal,
         "indexed_artifact_counts": {
             "long_run_manifest": 1,
             "long_run_status": 1,
@@ -114,6 +140,14 @@ def test_build_artifact_smoke_summary_reads_expected_artifacts(tmp_path):
                         "latest_launcher_not_executed",
                         "latest_manifest_source_stale",
                     ],
+                },
+            },
+            {
+                "id": "self_play_preflight_not_failed",
+                "passed": True,
+                "details": {
+                    "state": "passed",
+                    "health_blockers": ["long_run_status_blocked"],
                 },
             },
         ],
@@ -188,3 +222,24 @@ def test_validate_artifact_smoke_summary_rejects_wrong_health_scope(tmp_path):
         assert "scope artifacts" in str(exc)
     else:
         raise AssertionError("Expected wrong league health scope to fail")
+
+
+def test_validate_artifact_smoke_summary_rejects_failed_self_play_preflight(tmp_path):
+    summary = {
+        "indexed_artifact_counts": {
+            "long_run_manifest": 1,
+            "long_run_status": 1,
+            "league_health": 1,
+        },
+        "health_artifact_scope_dir": str(tmp_path),
+        "status_blocked_reason": "latest_launcher_not_executed",
+        "self_play_sampling_preflight_state": "failed",
+        "health_blockers": ["self_play_sampling_preflight_failed"],
+    }
+
+    try:
+        validate_artifact_smoke_summary(summary, tmp_path)
+    except RuntimeError as exc:
+        assert "self_play_preflight_not_failed" in str(exc)
+    else:
+        raise AssertionError("Expected failed self-play preflight to fail")

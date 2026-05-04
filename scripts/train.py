@@ -2045,6 +2045,9 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
         }
     if artifact_type == "long_run_artifact_smoke":
         counts = data.get("indexed_artifact_counts", {})
+        preflight = data.get("status_self_play_sampling_preflight") or {}
+        if not isinstance(preflight, dict):
+            preflight = {}
         return {
             "run_id": data.get("run_id"),
             "status_blocked_reason": data.get("status_blocked_reason"),
@@ -2053,6 +2056,13 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "health_blockers": data.get("health_blockers", []),
             "health_warnings": data.get("health_warnings", []),
             "health_artifact_scope_dir": data.get("health_artifact_scope_dir"),
+            "self_play_sampling_preflight_state": data.get(
+                "self_play_sampling_preflight_state"
+            ),
+            "self_play_sampling_preflight_passed": preflight.get("passed"),
+            "self_play_sampling_preflight_failed_checks": preflight.get(
+                "failed_checks", []
+            ),
             "indexed_artifact_count": data.get("indexed_artifact_count"),
             "indexed_long_run_manifest_count": counts.get("long_run_manifest"),
             "indexed_long_run_status_count": counts.get("long_run_status"),
