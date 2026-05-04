@@ -1729,6 +1729,21 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "compute_classes": data.get("compute_classes", {}),
             "reward_strategy_issue_count": reward.get("strategy_issue_count"),
             "reward_indexed_artifact_count": reward.get("indexed_artifact_count"),
+            "reward_idle_rate_delta_agent_0": reward.get(
+                "idle_rate_delta_agent_0"
+            ),
+            "reward_dominant_action_rate_delta_agent_0": reward.get(
+                "dominant_action_rate_delta_agent_0"
+            ),
+            "reward_no_damage_episodes_delta": reward.get(
+                "no_damage_episodes_delta"
+            ),
+            "reward_low_engagement_episodes_delta": reward.get(
+                "low_engagement_episodes_delta"
+            ),
+            "reward_damage_events_delta_agent_0": reward.get(
+                "damage_events_delta_agent_0"
+            ),
             "long_run_artifact_health_ready": long_run_artifact.get("health_ready"),
             "long_run_artifact_health_blockers": long_run_artifact.get(
                 "health_blockers",

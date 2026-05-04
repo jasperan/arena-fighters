@@ -163,7 +163,7 @@ All source lives in `src/arena_fighters/`:
 - Artifact index scans saved JSON, `.exitcode`, `.sh`, and `.out` artifacts and emits a lightweight manifest with type counts, compact summaries, command-log tails, and links between related artifacts
 - Strategy report scans saved eval/rank/audit artifacts, flags all-draw, no-damage, low-engagement, idle, or action-spam behavior, and ranks weakest map-opponent matchups
 - Long-run check validates promotion-audit, strategy-report, and artifact-index artifacts against documented promotion criteria
-- `scripts/reward_shaping_smoke.py` runs deterministic idle-vs-idle reward-shaping eval/compare/suite/report/index artifacts in `/tmp`
+- `scripts/reward_shaping_smoke.py` runs deterministic idle-vs-idle reward-shaping eval/compare/suite/report/index artifacts and summarizes anti-stall behavior deltas
 - `scripts/train_eval_smoke.py` runs tiny train-to-checkpoint-to-suite/promotion/report/index wiring checks in `/tmp`
 - Reward presets: `default` and `anti_stall`; anti-stall adds a no-damage timeout penalty, and eval behavior diagnostics should be used to judge reward-shaping experiments
 - `docs/long_run_protocol.md` contains the conservative real-compute training and promotion workflow; do not run it by default

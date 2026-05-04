@@ -1264,6 +1264,11 @@ def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
                     "reward_shaping": {
                         "strategy_issue_count": 15,
                         "indexed_artifact_count": 11,
+                        "idle_rate_delta_agent_0": -0.25,
+                        "dominant_action_rate_delta_agent_0": -0.1,
+                        "no_damage_episodes_delta": -1,
+                        "low_engagement_episodes_delta": -1,
+                        "damage_events_delta_agent_0": 2,
                     },
                     "long_run_artifact": {
                         "health_ready": False,
@@ -1290,6 +1295,11 @@ def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
         },
         "reward_strategy_issue_count": 15,
         "reward_indexed_artifact_count": 11,
+        "reward_idle_rate_delta_agent_0": -0.25,
+        "reward_dominant_action_rate_delta_agent_0": -0.1,
+        "reward_no_damage_episodes_delta": -1,
+        "reward_low_engagement_episodes_delta": -1,
+        "reward_damage_events_delta_agent_0": 2,
         "long_run_artifact_health_ready": False,
         "long_run_artifact_health_blockers": ["long_run_status_blocked"],
         "long_run_artifact_health_warnings": ["missing_rank"],

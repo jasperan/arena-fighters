@@ -451,9 +451,12 @@ python scripts/reward_shaping_smoke.py --output-dir /tmp/arena-reward-smoke --ro
 ```
 
 The smoke script runs deterministic idle-vs-idle default and anti-stall evals,
-compares reward deltas, runs an anti-stall suite, runs a strategy report, and
-builds an artifact index. It writes all generated JSON and command output to a
-timestamped `/tmp` directory by default.
+compares reward and anti-stall behavior deltas, runs an anti-stall suite, runs a
+strategy report, and builds an artifact index. Its compact summary includes
+reward, draw-rate, idle-rate, dominant-action, no-damage, low-engagement, and
+damage-event deltas so reward tuning has an explicit evaluation signal. It
+writes all generated JSON and command output to a timestamped system temp
+directory by default.
 
 ### Long-Run Artifact Smoke
 

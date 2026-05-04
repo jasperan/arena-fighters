@@ -306,9 +306,10 @@ artifact index, use:
 python scripts/reward_shaping_smoke.py
 ```
 
-By default the script writes artifacts and command logs to a timestamped `/tmp`
-directory and prints a compact JSON summary with reward deltas, strategy issue
-count, and indexed artifact count.
+By default the script writes artifacts and command logs to a timestamped system
+temp directory and prints a compact JSON summary with reward, draw-rate,
+idle-rate, dominant-action, no-damage, low-engagement, and damage-event deltas
+plus strategy issue and indexed artifact counts.
 
 For a short training-to-evaluation wiring check, use:
 

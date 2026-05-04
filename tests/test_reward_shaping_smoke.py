@@ -13,6 +13,11 @@ def test_build_smoke_summary_reads_expected_artifacts(tmp_path):
                     "avg_rewards.agent_0": -13.5,
                     "avg_rewards.agent_1": -13.5,
                     "draw_rate": 0.0,
+                    "behavior.avg_idle_rate.agent_0": 0.0,
+                    "behavior.avg_dominant_action_rate.agent_0": 0.0,
+                    "behavior.no_damage_episodes": 0,
+                    "behavior.low_engagement_episodes": 0,
+                    "behavior.damage_events.agent_0": 0,
                 }
             }
         )
@@ -34,6 +39,11 @@ def test_build_smoke_summary_reads_expected_artifacts(tmp_path):
         "reward_delta_agent_0": -13.5,
         "reward_delta_agent_1": -13.5,
         "draw_rate_delta": 0.0,
+        "idle_rate_delta_agent_0": 0.0,
+        "dominant_action_rate_delta_agent_0": 0.0,
+        "no_damage_episodes_delta": 0,
+        "low_engagement_episodes_delta": 0,
+        "damage_events_delta_agent_0": 0,
         "strategy_issue_count": 15,
         "indexed_artifact_count": 5,
     }

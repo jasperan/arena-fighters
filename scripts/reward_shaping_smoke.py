@@ -47,13 +47,23 @@ def build_smoke_summary(output_dir: Path) -> dict:
     artifact_index = json.loads(
         latest_artifact(output_dir, "artifact-index").read_text()
     )
+    deltas = comparison["deltas"]
     return {
         "output_dir": str(output_dir),
         "default_eval": str(default_eval),
         "anti_stall_eval": str(anti_eval),
-        "reward_delta_agent_0": comparison["deltas"].get("avg_rewards.agent_0"),
-        "reward_delta_agent_1": comparison["deltas"].get("avg_rewards.agent_1"),
-        "draw_rate_delta": comparison["deltas"].get("draw_rate"),
+        "reward_delta_agent_0": deltas.get("avg_rewards.agent_0"),
+        "reward_delta_agent_1": deltas.get("avg_rewards.agent_1"),
+        "draw_rate_delta": deltas.get("draw_rate"),
+        "idle_rate_delta_agent_0": deltas.get("behavior.avg_idle_rate.agent_0"),
+        "dominant_action_rate_delta_agent_0": deltas.get(
+            "behavior.avg_dominant_action_rate.agent_0"
+        ),
+        "no_damage_episodes_delta": deltas.get("behavior.no_damage_episodes"),
+        "low_engagement_episodes_delta": deltas.get(
+            "behavior.low_engagement_episodes"
+        ),
+        "damage_events_delta_agent_0": deltas.get("behavior.damage_events.agent_0"),
         "strategy_issue_count": strategy_report["issue_count"],
         "indexed_artifact_count": artifact_index["index_config"]["artifact_count"],
     }
