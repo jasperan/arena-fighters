@@ -59,13 +59,14 @@ python scripts/train.py --mode train --checkpoint-dir ./my_checkpoints
 python scripts/train.py --mode train --randomize-maps --map-choices classic,flat,split,tower
 python scripts/train.py --mode train --reward-preset anti_stall
 python scripts/train.py --mode train --curriculum map_progression
+python scripts/train.py --mode train --opponent-pool-seed 123
 ```
 
 Training logs go to `./tb_logs/` (viewable with `tensorboard --logdir tb_logs`).
 Saved checkpoints also get companion `.meta.json` files recording map settings,
-reward config, active curriculum stage, opponent-pool stats, file size, and
-SHA-256 digest. Eval mode can find this metadata even when you pass the Stable
-Baselines `.zip` checkpoint path.
+reward config, active curriculum stage, opponent-pool config and stats, file
+size, and SHA-256 digest. Eval mode can find this metadata even when you pass
+the Stable Baselines `.zip` checkpoint path.
 Training also writes sampled episode replays to `--replay-dir` every
 `Config.training.replay_save_interval` episodes so long-run artifact analysis can
 inspect real training behavior without saving every rollout.

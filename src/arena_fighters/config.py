@@ -47,6 +47,7 @@ class TrainingConfig:
     snapshot_interval: int = 50
     opponent_pool_size: int = 20
     latest_opponent_prob: float = 0.8
+    opponent_pool_seed: int | None = None
     curriculum_name: str | None = None
     replay_save_interval: int = 100
 

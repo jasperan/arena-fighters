@@ -396,12 +396,23 @@ def test_build_training_wrapper_wires_replay_logger(tmp_path):
     cfg = Config()
     cfg = replace(
         cfg,
-        training=replace(cfg.training, replay_save_interval=7),
+        training=replace(
+            cfg.training,
+            replay_save_interval=7,
+            opponent_pool_seed=123,
+        ),
     )
 
     wrapper, pool = build_training_wrapper(cfg, str(tmp_path))
+    expected_pool = OpponentPool(max_size=cfg.training.opponent_pool_size, seed=123)
+    for i in range(5):
+        pool.add({"weight": i})
+        expected_pool.add({"weight": i})
 
     assert isinstance(pool, OpponentPool)
+    assert [pool.sample(latest_prob=0.4)["weight"] for _ in range(10)] == [
+        expected_pool.sample(latest_prob=0.4)["weight"] for _ in range(10)
+    ]
     assert wrapper.replay_logger is not None
     assert wrapper.replay_logger.replay_dir == tmp_path
     assert wrapper.replay_logger.save_every_n == 7
@@ -452,7 +463,11 @@ def test_checkpoint_metadata_includes_curriculum_state():
     cfg = Config()
     cfg = replace(
         cfg,
-        training=replace(cfg.training, curriculum_name="map_progression"),
+        training=replace(
+            cfg.training,
+            curriculum_name="map_progression",
+            opponent_pool_seed=123,
+        ),
     )
 
     metadata = checkpoint_metadata(cfg, num_timesteps=3_000_000)
@@ -461,6 +476,11 @@ def test_checkpoint_metadata_includes_curriculum_state():
     assert metadata["curriculum"]["stage"]["name"] == "full_map_pool"
     assert metadata["curriculum"]["active_reward_preset"] == "anti_stall"
     assert metadata["reward"] == reward_config_for_preset("anti_stall").__dict__
+    assert metadata["opponent_pool_config"] == {
+        "max_size": cfg.training.opponent_pool_size,
+        "latest_opponent_prob": cfg.training.latest_opponent_prob,
+        "seed": 123,
+    }
 
 
 def test_checkpoint_metadata_can_include_opponent_pool_stats():
@@ -3495,6 +3515,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
         rounds=3,
         replay_samples_per_bucket=2,
         replay_save_interval=5,
+        opponent_pool_seed=123,
         rank_min_score=0.2,
         rank_min_win_rate=0.1,
         rank_max_draw_rate=0.8,
@@ -3559,6 +3580,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert "--eval-label preflight-artifact-index" in manifest["shell_script"]
     assert "preflight-artifact-index.out" in manifest["shell_script"]
     assert "--replay-save-interval 5" in manifest["shell_script"]
+    assert "--opponent-pool-seed 123" in manifest["shell_script"]
     assert "TRAIN_EXIT=$?" in manifest["shell_script"]
     assert "train.exitcode" in manifest["shell_script"]
     assert "train.out" in manifest["shell_script"]
@@ -3632,6 +3654,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert manifest["manifest_config"]["preflight_rounds"] == 1
     assert manifest["manifest_config"]["replay_save_interval"] == 5
     assert manifest["manifest_config"]["replay_save_interval_source"] == "user"
+    assert manifest["manifest_config"]["opponent_pool_seed"] == 123
     assert manifest["manifest_config"]["rank_gate"] == {
         "min_score": 0.2,
         "min_win_rate": 0.1,
@@ -3675,6 +3698,10 @@ def test_build_long_run_manifest_rejects_shell_injection_values():
         (
             {"suite_opponents": "idle; echo injected >&2"},
             "Unknown opponent names",
+        ),
+        (
+            {"opponent_pool_seed": -1},
+            "opponent_pool_seed must be non-negative",
         ),
     ]
 
@@ -3759,6 +3786,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
         rounds=3,
         replay_samples_per_bucket=1,
         replay_save_interval=5,
+        opponent_pool_seed=123,
         rank_min_score=0.2,
         rank_min_win_rate=0.1,
         rank_max_draw_rate=0.8,
@@ -3822,6 +3850,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     assert manifest_entry["summary"]["run_id"] == "arena-test"
     assert manifest_entry["summary"]["replay_save_interval"] == 5
     assert manifest_entry["summary"]["replay_save_interval_source"] == "user"
+    assert manifest_entry["summary"]["opponent_pool_seed"] == 123
     assert manifest_entry["summary"]["min_eval_episodes"] == 12
     assert manifest_entry["summary"]["min_map_episodes"] == 6
     assert manifest_entry["summary"]["min_replay_combat_maps"] == 2
@@ -3850,6 +3879,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     )
     assert script_entry["summary"]["starts_with_shebang"] is True
     assert saved["manifest_config"]["replay_save_interval"] == 5
+    assert saved["manifest_config"]["opponent_pool_seed"] == 123
     assert saved["manifest_config"]["min_map_episodes"] == 6
     assert saved["manifest_config"]["min_replay_combat_maps"] == 2
     assert saved["manifest_config"]["min_opponent_historical_samples"] == 0

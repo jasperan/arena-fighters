@@ -207,6 +207,11 @@ def checkpoint_metadata(
         "map_choices": list(cfg.arena.map_choices),
         "reward": effective_reward_config(cfg, num_timesteps).__dict__,
         "curriculum": curriculum_metadata(cfg, num_timesteps),
+        "opponent_pool_config": {
+            "max_size": cfg.training.opponent_pool_size,
+            "latest_opponent_prob": cfg.training.latest_opponent_prob,
+            "seed": cfg.training.opponent_pool_seed,
+        },
     }
     if opponent_pool_stats is not None:
         metadata["opponent_pool"] = opponent_pool_stats
@@ -669,7 +674,10 @@ def build_training_wrapper(
     cfg: Config,
     replay_dir: str,
 ) -> tuple[SelfPlayWrapper, OpponentPool]:
-    pool = OpponentPool(max_size=cfg.training.opponent_pool_size)
+    pool = OpponentPool(
+        max_size=cfg.training.opponent_pool_size,
+        seed=cfg.training.opponent_pool_seed,
+    )
     replay_logger = ReplayLogger(
         replay_dir=replay_dir,
         save_every_n=cfg.training.replay_save_interval,
@@ -1838,6 +1846,7 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "replay_dir": cfg.get("replay_dir"),
             "replay_save_interval": cfg.get("replay_save_interval"),
             "replay_save_interval_source": cfg.get("replay_save_interval_source"),
+            "opponent_pool_seed": cfg.get("opponent_pool_seed"),
             "min_eval_episodes": cfg.get("min_eval_episodes"),
             "min_map_episodes": cfg.get("min_map_episodes"),
             "min_replay_combat_maps": cfg.get("min_replay_combat_maps"),
@@ -4864,6 +4873,7 @@ def build_long_run_manifest(
     rounds: int = 20,
     replay_samples_per_bucket: int = 2,
     replay_save_interval: int | None = None,
+    opponent_pool_seed: int | None = None,
     rank_min_score: float = 0.1,
     rank_min_win_rate: float = 0.0,
     rank_max_draw_rate: float = 0.9,
@@ -4894,6 +4904,8 @@ def build_long_run_manifest(
 ) -> dict:
     if replay_save_interval is not None and replay_save_interval < 1:
         raise ValueError("replay_save_interval must be at least 1")
+    if opponent_pool_seed is not None and opponent_pool_seed < 0:
+        raise ValueError("opponent_pool_seed must be non-negative")
     if min_map_episodes is not None and min_map_episodes < 0:
         raise ValueError("min_map_episodes must be non-negative")
     if min_replay_combat_maps is not None and min_replay_combat_maps < 0:
@@ -5078,6 +5090,10 @@ def build_long_run_manifest(
     if effective_replay_save_interval is not None:
         train_parts.append(
             f"  --replay-save-interval {_shell_arg(effective_replay_save_interval)} \\"
+        )
+    if opponent_pool_seed is not None:
+        train_parts.append(
+            f"  --opponent-pool-seed {_shell_arg(opponent_pool_seed)} \\"
         )
     train_parts.append('  --replay-dir "$REPLAY_DIR"')
 
@@ -5415,6 +5431,7 @@ def build_long_run_manifest(
             "replay_samples_per_bucket": replay_samples_per_bucket,
             "replay_save_interval": effective_replay_save_interval,
             "replay_save_interval_source": replay_save_interval_source,
+            "opponent_pool_seed": opponent_pool_seed,
             "rank_gate": rank_gate_config,
             "strategy_report": strategy_report_config,
             "source_control": source_control_snapshot(),
@@ -5462,6 +5479,7 @@ def run_long_run_manifest(
     rounds: int,
     replay_samples_per_bucket: int,
     replay_save_interval: int | None = None,
+    opponent_pool_seed: int | None = None,
     rank_min_score: float = 0.1,
     rank_min_win_rate: float = 0.0,
     rank_max_draw_rate: float = 0.9,
@@ -5505,6 +5523,7 @@ def run_long_run_manifest(
         rounds=rounds,
         replay_samples_per_bucket=replay_samples_per_bucket,
         replay_save_interval=replay_save_interval,
+        opponent_pool_seed=opponent_pool_seed,
         rank_min_score=rank_min_score,
         rank_min_win_rate=rank_min_win_rate,
         rank_max_draw_rate=rank_max_draw_rate,
@@ -5634,6 +5653,12 @@ def main():
         type=int,
         default=None,
         help="Save one training replay every N completed episodes (default: config value)",
+    )
+    parser.add_argument(
+        "--opponent-pool-seed",
+        type=int,
+        default=None,
+        help="Seed for reproducible opponent-pool sampling in train/manifest modes",
     )
     parser.add_argument(
         "--rounds",
@@ -6067,6 +6092,16 @@ def main():
                 replay_save_interval=args.replay_save_interval,
             ),
         )
+    if args.opponent_pool_seed is not None:
+        if args.opponent_pool_seed < 0:
+            parser.error("--opponent-pool-seed must be non-negative")
+        cfg = replace(
+            cfg,
+            training=replace(
+                cfg.training,
+                opponent_pool_seed=args.opponent_pool_seed,
+            ),
+        )
     if (
         args.long_run_min_opponent_historical_samples is not None
         and args.long_run_min_opponent_historical_samples < 0
@@ -6311,6 +6346,7 @@ def main():
                 rounds=args.rounds or 20,
                 replay_samples_per_bucket=args.replay_samples_per_bucket,
                 replay_save_interval=args.replay_save_interval,
+                opponent_pool_seed=args.opponent_pool_seed,
                 rank_min_score=args.rank_min_score,
                 rank_min_win_rate=args.rank_min_win_rate,
                 rank_max_draw_rate=args.rank_max_draw_rate,
