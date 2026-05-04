@@ -28,14 +28,24 @@ class OpponentPool:
     def __init__(self, max_size: int = 20):
         self.max_size = max_size
         self._snapshots: list[dict] = []
+        self._snapshot_ids: list[int] = []
+        self._snapshot_sample_counts: dict[int, int] = {}
+        self._next_snapshot_id = 0
         self.last_sample_index: int | None = None
+        self.last_sample_id: int | None = None
         self.last_sample_kind: str | None = None
         self.sample_counts = {"latest": 0, "historical": 0}
 
     def add(self, state_dict: dict) -> None:
+        snapshot_id = self._next_snapshot_id
+        self._next_snapshot_id += 1
         self._snapshots.append(copy.deepcopy(state_dict))
+        self._snapshot_ids.append(snapshot_id)
+        self._snapshot_sample_counts[snapshot_id] = 0
         if len(self._snapshots) > self.max_size:
             self._snapshots.pop(0)
+            evicted_id = self._snapshot_ids.pop(0)
+            self._snapshot_sample_counts.pop(evicted_id, None)
 
     def sample(self, latest_prob: float = 0.8) -> dict:
         assert not self.is_empty(), "Cannot sample from empty pool"
@@ -46,20 +56,43 @@ class OpponentPool:
             # Pick from all except the latest
             idx = random.randint(0, len(self._snapshots) - 2)
             kind = "historical"
+        snapshot_id = self._snapshot_ids[idx]
         self.last_sample_index = idx
+        self.last_sample_id = snapshot_id
         self.last_sample_kind = kind
         self.sample_counts[kind] += 1
+        self._snapshot_sample_counts[snapshot_id] += 1
         return copy.deepcopy(self._snapshots[idx])
 
     def is_empty(self) -> bool:
         return len(self._snapshots) == 0
 
     def stats(self) -> dict:
+        total_samples = self.sample_counts["latest"] + self.sample_counts["historical"]
+        snapshots = [
+            {
+                "id": snapshot_id,
+                "index": idx,
+                "sample_count": self._snapshot_sample_counts[snapshot_id],
+                "is_latest": idx == len(self._snapshot_ids) - 1,
+            }
+            for idx, snapshot_id in enumerate(self._snapshot_ids)
+        ]
         return {
             "size": len(self),
             "latest_samples": self.sample_counts["latest"],
             "historical_samples": self.sample_counts["historical"],
+            "historical_sample_rate": (
+                self.sample_counts["historical"] / total_samples
+                if total_samples
+                else 0.0
+            ),
+            "snapshot_ids": list(self._snapshot_ids),
+            "oldest_snapshot_id": self._snapshot_ids[0] if self._snapshot_ids else None,
+            "latest_snapshot_id": self._snapshot_ids[-1] if self._snapshot_ids else None,
+            "snapshots": snapshots,
             "last_sample_index": self.last_sample_index,
+            "last_sample_id": self.last_sample_id,
             "last_sample_kind": self.last_sample_kind,
         }
 

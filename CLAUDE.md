@@ -118,6 +118,7 @@ All source lives in `src/arena_fighters/`:
 - Named maps: classic, flat, split, tower; `--randomize-maps` samples one on each reset
 - Curriculum: `map_progression` stages from flat/default rewards to full map pool/anti-stall rewards through training callback updates
 - Opponent pool (max 20 snapshots): sample frozen historical snapshots, 80% latest and 20% random older; reset info and training logger expose latest-vs-historical sampling telemetry
+- Opponent pool telemetry includes active snapshot ids, per-snapshot sample counts, last sampled snapshot id, and historical sample rate so league collapse is easier to spot
 - Checkpoints get companion `.meta.json` files with map settings, reward config, active curriculum stage, file size, and SHA-256 digest
 - Eval JSON includes average cumulative rewards and behavior diagnostics for idle rate, action spam, no-damage episodes, low-engagement episodes, and damage events
 - Evaluation winner inference treats timeouts as draws and knockouts by terminal HP; shaped rewards do not create timeout wins

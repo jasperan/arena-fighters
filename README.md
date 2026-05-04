@@ -11,7 +11,7 @@ Two agents spawn on a multi-platform arena, shoot projectiles, swing melee attac
 - **Self-play training**: single network plays both agents via observation mirroring
 - **Named arena maps**: classic, flat, split, and tower layouts with reset-time randomization
 - **Curriculum training**: named map-progression stages update the active training map pool and reward preset over time
-- **Opponent pool**: samples frozen historical snapshots (80% latest, 20% random older) and logs latest-vs-historical sampling telemetry to prevent silent strategy cycling
+- **Opponent pool**: samples frozen historical snapshots (80% latest, 20% random older) and logs latest-vs-historical plus per-snapshot telemetry to prevent silent strategy cycling
 - **Evaluation harness**: checkpoint-vs-baseline matchups with win rate, draw rate, episode length, action counts, damage metrics, and behavior diagnostics
 - **Checkpoint metadata**: saved checkpoints get companion `.meta.json` files with map, reward, curriculum state, size, and SHA-256 digest
 - **Combat event counters**: env infos expose shots fired, melee attempts/hits, projectile hits, and damage totals

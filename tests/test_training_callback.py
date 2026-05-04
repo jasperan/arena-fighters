@@ -410,6 +410,9 @@ def test_self_play_callback_records_opponent_pool_stats():
         "self_play/opponent_pool_size": 2,
         "self_play/latest_opponent_samples": 1,
         "self_play/historical_opponent_samples": 1,
+        "self_play/historical_sample_rate": 0.5,
+        "self_play/latest_opponent_snapshot_id": 1,
+        "self_play/last_opponent_snapshot_id": 0,
         "self_play/last_sample_was_historical": 1.0,
     }
 

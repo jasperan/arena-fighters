@@ -249,8 +249,11 @@ During training, reset info includes opponent-pool telemetry so smoke runs or
 custom callbacks can confirm whether the league is sampling latest and
 historical frozen snapshots. The training logger also records
 `self_play/opponent_pool_size`, `self_play/latest_opponent_samples`,
-`self_play/historical_opponent_samples`, and
-`self_play/last_sample_was_historical`.
+`self_play/historical_opponent_samples`, `self_play/historical_sample_rate`,
+`self_play/latest_opponent_snapshot_id`, `self_play/last_opponent_snapshot_id`,
+and `self_play/last_sample_was_historical`. Reset info also includes active
+snapshot ids and per-snapshot sample counts under `opponent_pool`, which helps
+detect silent collapse to only the latest policy.
 
 Current stages:
 

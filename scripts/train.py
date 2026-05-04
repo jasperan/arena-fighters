@@ -386,6 +386,7 @@ class SelfPlayCallback(BaseCallback):
                     f"pool_size={len(self.opponent_pool)}  "
                     f"latest_samples={pool_stats['latest_samples']}  "
                     f"historical_samples={pool_stats['historical_samples']}  "
+                    f"last_snapshot_id={pool_stats['last_sample_id']}  "
                     f"saved={ckpt_path}"
                 )
         self._record_self_play_stats()
@@ -400,6 +401,26 @@ class SelfPlayCallback(BaseCallback):
         self.logger.record(
             "self_play/historical_opponent_samples",
             pool_stats["historical_samples"],
+        )
+        self.logger.record(
+            "self_play/historical_sample_rate",
+            pool_stats["historical_sample_rate"],
+        )
+        self.logger.record(
+            "self_play/latest_opponent_snapshot_id",
+            (
+                pool_stats["latest_snapshot_id"]
+                if pool_stats["latest_snapshot_id"] is not None
+                else -1
+            ),
+        )
+        self.logger.record(
+            "self_play/last_opponent_snapshot_id",
+            (
+                pool_stats["last_sample_id"]
+                if pool_stats["last_sample_id"] is not None
+                else -1
+            ),
         )
         self.logger.record(
             "self_play/last_sample_was_historical",

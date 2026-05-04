@@ -38,6 +38,7 @@ def test_opponent_pool_evicts_oldest():
         pool.add({"weight": i})
     assert len(pool) == 3
     assert pool._snapshots[0]["weight"] == 2
+    assert pool.stats()["snapshot_ids"] == [2, 3, 4]
 
 
 def test_opponent_pool_random_sample():
@@ -61,13 +62,37 @@ def test_opponent_pool_tracks_latest_and_historical_samples():
     assert latest["weight"] == 2
     assert historical["weight"] in {0, 1}
     assert pool.last_sample_index in {0, 1}
-    assert pool.stats() == {
-        "size": 3,
-        "latest_samples": 1,
-        "historical_samples": 1,
-        "last_sample_index": pool.last_sample_index,
-        "last_sample_kind": "historical",
-    }
+    stats = pool.stats()
+    assert stats["size"] == 3
+    assert stats["latest_samples"] == 1
+    assert stats["historical_samples"] == 1
+    assert stats["historical_sample_rate"] == 0.5
+    assert stats["snapshot_ids"] == [0, 1, 2]
+    assert stats["oldest_snapshot_id"] == 0
+    assert stats["latest_snapshot_id"] == 2
+    assert stats["last_sample_index"] == pool.last_sample_index
+    assert stats["last_sample_id"] in {0, 1}
+    assert stats["last_sample_kind"] == "historical"
+    assert stats["snapshots"] == [
+        {
+            "id": 0,
+            "index": 0,
+            "sample_count": 1 if stats["last_sample_id"] == 0 else 0,
+            "is_latest": False,
+        },
+        {
+            "id": 1,
+            "index": 1,
+            "sample_count": 1 if stats["last_sample_id"] == 1 else 0,
+            "is_latest": False,
+        },
+        {
+            "id": 2,
+            "index": 2,
+            "sample_count": 1,
+            "is_latest": True,
+        },
+    ]
 
 
 def test_opponent_pool_sample_returns_frozen_snapshot_copy():
@@ -145,6 +170,8 @@ def test_self_play_wrapper_loads_opponent_pool_snapshot_on_reset():
     assert wrapper._opponent_snapshot_loaded is True
     assert info["opponent_snapshot_loaded"] is True
     assert info["opponent_pool"]["last_sample_kind"] == "latest"
+    assert info["opponent_pool"]["last_sample_id"] == 0
+    assert info["opponent_pool"]["latest_snapshot_id"] == 0
     assert info["opponent_pool"]["latest_samples"] == 1
 
 
