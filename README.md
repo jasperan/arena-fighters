@@ -24,7 +24,7 @@ Two agents spawn on a multi-platform arena, shoot projectiles, swing melee attac
 - **Promotion audit**: run rank plus rank gate in one command and save the rank, gate, and audit artifacts
 - **Audit summary**: skim saved promotion-audit JSON into candidate, pass/fail, failures, and artifact paths
 - **Artifact index**: scan ignored eval directories and create a lightweight manifest of JSON artifact types, summaries, and links
-- **Strategy report**: scan saved artifacts for no-damage, low-engagement, all-draw, idle, or action-spam behavior
+- **Strategy report**: scan saved artifacts for no-damage, low-engagement, all-draw, idle, action-spam, or missing historical-opponent evidence
 - **Long-run manifest**: emit a reproducible real-compute command bundle and launcher script without executing training
 - **Long-run check**: validate promotion-audit, strategy-report, and artifact-index outputs against documented promotion criteria
 - **Built-in baselines**: random, idle, scripted, aggressive, and evasive evaluation opponents
@@ -246,9 +246,10 @@ python scripts/train.py --mode strategy_report --artifact-dir evals --recursive-
 ```
 
 Strategy report scans saved eval, suite, rank, rank-gate, promotion-audit,
-audit-summary, and replay-analysis artifacts and flags likely bad strategies:
-all-draw behavior, no-damage episodes/replays, low engagement, high agent 0
-idle rate, or high dominant action rate. Tune thresholds with
+audit-summary, replay-analysis, and long-run-status artifacts and flags likely
+bad strategies: all-draw behavior, no-damage episodes/replays, low engagement,
+high agent 0 idle rate, high dominant action rate, or checkpoint metadata that
+still lacks required historical-opponent samples. Tune thresholds with
 `--strategy-max-draw-rate`,
 `--strategy-max-no-damage-rate`, `--strategy-max-low-engagement-rate`,
 `--strategy-max-idle-rate`, and `--strategy-max-dominant-action-rate`. The

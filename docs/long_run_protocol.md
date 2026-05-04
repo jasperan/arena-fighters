@@ -153,7 +153,8 @@ python scripts/train.py --mode artifact_index \
 ```
 
 The strategy report should be treated as a blocker when it flags no-damage,
-low-engagement, all-draw, idle, or dominant-action behavior for the candidate.
+low-engagement, all-draw, idle, dominant-action behavior, or missing
+historical-opponent sampling evidence for the candidate.
 The training command in the generated launcher writes sampled episode replays to
 `$REPLAY_DIR` every `Config.training.replay_save_interval` episodes.
 Sampled replay analysis selects representative agent 0 wins, agent 1 wins,

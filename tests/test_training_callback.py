@@ -1711,6 +1711,37 @@ def test_build_strategy_report_flags_candidate_draw_rate(tmp_path):
     }.items() <= report["issues"][0].items()
 
 
+def test_build_strategy_report_flags_long_run_status_missing_historical_samples(
+    tmp_path,
+):
+    status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "missing_evidence": ["checkpoint_historical_opponent_samples"],
+        "latest_manifest": {
+            "run_id": "status-run",
+            "min_opponent_historical_samples": 1,
+            "checkpoint_opponent_pool": {
+                "min_opponent_historical_samples": 1,
+                "max_historical_samples": 0,
+                "meets_min_opponent_historical_samples": False,
+            },
+        },
+    }
+    (tmp_path / "status.json").write_text(json.dumps(status) + "\n")
+
+    report = build_strategy_report(tmp_path)
+
+    assert report["issue_count"] == 1
+    assert {
+        "artifact_type": "long_run_status",
+        "scope": "candidate:status-run:checkpoint_opponent_pool",
+        "metric": "checkpoint_historical_opponent_samples",
+        "value": 0,
+        "threshold": 1,
+        "reason": "checkpoint_historical_opponent_samples_below_min",
+    }.items() <= report["issues"][0].items()
+
+
 def test_build_strategy_report_allows_values_at_max_thresholds(tmp_path):
     eval_summary = _eval_summary(
         "threshold",
@@ -1923,6 +1954,31 @@ def test_build_long_run_check_treats_candidate_idle_as_bad_strategy():
             "scope": "candidate:candidate:rank_suite:classic/idle",
             "metric": "idle_rate_agent_0",
             "value": 0.9,
+        }
+    ]
+
+    result = build_long_run_check(
+        _long_run_promotion_audit(),
+        strategy_report,
+        _long_run_artifact_index(),
+        min_maps=2,
+        require_replay_analysis=True,
+    )
+
+    failed = {check["id"] for check in result["checks"] if not check["passed"]}
+    assert result["passed"] is False
+    assert "no_candidate_bad_strategy_issues" in failed
+
+
+def test_build_long_run_check_treats_candidate_historical_status_as_bad_strategy():
+    strategy_report = _long_run_strategy_report()
+    strategy_report["issue_count"] = 1
+    strategy_report["issues"] = [
+        {
+            "scope": "candidate:candidate:checkpoint_opponent_pool",
+            "metric": "checkpoint_historical_opponent_samples",
+            "value": 0,
+            "threshold": 1,
         }
     ]
 

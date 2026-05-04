@@ -234,8 +234,9 @@ python scripts/train.py --mode strategy_report \
 ```
 
 The report flags all-draw behavior, no-damage episodes or replay analyses, low
-engagement, high agent 0 idle rate, and high agent 0 dominant-action rate. Tune
-thresholds with
+engagement, high agent 0 idle rate, high agent 0 dominant-action rate, and saved
+long-run-status artifacts whose checkpoint metadata still lacks required
+historical-opponent samples. Tune thresholds with
 `--strategy-max-draw-rate`, `--strategy-max-no-damage-rate`,
 `--strategy-max-low-engagement-rate`, `--strategy-max-idle-rate`, and
 `--strategy-max-dominant-action-rate`. It also reports the weakest suite/rank

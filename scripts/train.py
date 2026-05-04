@@ -1997,6 +1997,70 @@ def replay_analysis_strategy_issues(
     return issues
 
 
+def long_run_status_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+) -> list[dict]:
+    latest = summary.get("latest_manifest")
+    if not isinstance(latest, dict):
+        latest = {}
+    checkpoint_opponent_pool = latest.get("checkpoint_opponent_pool")
+    if not isinstance(checkpoint_opponent_pool, dict):
+        checkpoint_opponent_pool = {}
+    min_historical_samples = json_non_negative_int(
+        latest.get("min_opponent_historical_samples")
+    )
+    if min_historical_samples is None:
+        min_historical_samples = (
+            json_non_negative_int(
+                checkpoint_opponent_pool.get("min_opponent_historical_samples")
+            )
+            or 0
+        )
+    max_historical_samples = json_non_negative_int(
+        checkpoint_opponent_pool.get("max_historical_samples")
+    )
+    missing_evidence = summary.get("missing_evidence", [])
+    if not isinstance(missing_evidence, list):
+        missing_evidence = []
+    missing_historical_samples = (
+        "checkpoint_historical_opponent_samples" in missing_evidence
+    )
+    ready = checkpoint_opponent_pool.get("meets_min_opponent_historical_samples")
+
+    if min_historical_samples <= 0:
+        return []
+    if ready is not False and not missing_historical_samples:
+        return []
+
+    latest_check = latest.get("latest_long_run_check") or {}
+    latest_candidate = (
+        latest_check.get("candidate") if isinstance(latest_check, dict) else None
+    )
+    scope_label = (
+        latest_candidate.get("label")
+        if isinstance(latest_candidate, dict)
+        else None
+    )
+    scope_label = scope_label or latest.get("run_id") or "latest_manifest"
+    return [
+        {
+            "path": path,
+            "relative_path": relative_path,
+            "artifact_type": artifact_type,
+            "scope": f"candidate:{scope_label}:checkpoint_opponent_pool",
+            "metric": "checkpoint_historical_opponent_samples",
+            "value": max_historical_samples,
+            "threshold": min_historical_samples,
+            "reason": "checkpoint_historical_opponent_samples_below_min",
+            "missing_evidence": missing_evidence,
+        }
+    ]
+
+
 def strategy_issues_for_artifact(
     data: dict,
     *,
@@ -2052,6 +2116,13 @@ def strategy_issues_for_artifact(
             relative_path=relative_path,
             artifact_type=artifact_type,
             thresholds=thresholds,
+        )
+    if artifact_type == "long_run_status":
+        return long_run_status_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
         )
     return []
 
@@ -2387,6 +2458,7 @@ def candidate_strategy_issues_for_check(
         "mean_low_engagement_rate",
         "idle_rate_agent_0",
         "dominant_action_rate_agent_0",
+        "checkpoint_historical_opponent_samples",
     }
 
     def matches_candidate_scope(issue: dict) -> bool:
