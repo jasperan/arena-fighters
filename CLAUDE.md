@@ -13,8 +13,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 conda activate arena-fighters
 pip install -e ".[dev]"
 
-# Run tests (env, network, self-play, evaluation, renderer, replay, training metadata)
+# Cheap smoke bundle (no training by default)
+python scripts/smoke_suite.py
+
+# Run full tests (env, network, self-play, evaluation, renderer, replay, training metadata)
 pytest tests/ -v
+
+# Optional tiny training smoke
+python scripts/smoke_suite.py --include-train-eval
 
 # Run single test
 pytest tests/test_env.py::test_name -v

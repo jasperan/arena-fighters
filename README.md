@@ -515,10 +515,22 @@ Dict observation with two components:
 ## Testing
 
 ```bash
+# Cheap smoke bundle: no training by default
+python scripts/smoke_suite.py
+
+# Full test suite
 pytest tests/ -v
+
+# Optional tiny training smoke
+python scripts/smoke_suite.py --include-train-eval
 ```
 
-The test suite covers the environment, network, self-play wrapper, evaluation harness, renderer, replay system, and training metadata.
+Use the default smoke suite for quick pre-commit artifact plumbing checks. It
+runs reward-shaping and long-run artifact smokes without training. Use full
+pytest as the broader gate before pushing code changes, and opt into
+`--include-train-eval` when you need to verify the tiny train-to-eval path.
+The test suite covers the environment, network, self-play wrapper, evaluation
+harness, renderer, replay system, and training metadata.
 
 For repeatable evaluation workflows, see `docs/experiments.md`.
 For real compute runs, see `docs/long_run_protocol.md`.
