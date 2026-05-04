@@ -1,5 +1,7 @@
 """Tests for ArenaFightersEnv: grid physics, movement, combat mechanics."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -12,10 +14,12 @@ from arena_fighters.config import (
     MOVE_RIGHT,
     NUM_CHANNELS,
     NUM_VECTOR_OBS,
+    PLATFORM_LAYOUTS,
     SHOOT_DIAG_DOWN,
     SHOOT_DIAG_UP,
     SHOOT_FORWARD,
     Config,
+    reward_config_for_preset,
 )
 from arena_fighters.env import ArenaFightersEnv, Bullet
 
@@ -72,6 +76,77 @@ def test_agents_start_on_ground():
     # Both should be on ground (y=19 is solid ground)
     assert env._on_ground(st0)
     assert env._on_ground(st1)
+
+
+def test_can_select_named_map():
+    cfg = Config()
+    cfg = replace(cfg, arena=replace(cfg.arena, map_name="flat"))
+    env = ArenaFightersEnv(config=cfg)
+    obs, infos = env.reset()
+
+    assert infos["agent_0"]["map_name"] == "flat"
+    assert env.get_state()["map_name"] == "flat"
+    assert env._platform_layout == PLATFORM_LAYOUTS["flat"]
+    assert obs["agent_0"]["grid"][0, 12, 14] == 0.0
+
+
+def test_randomized_map_selection_is_seeded():
+    cfg = Config()
+    cfg = replace(
+        cfg,
+        arena=replace(
+            cfg.arena,
+            randomize_maps=True,
+            map_choices=("flat", "tower"),
+        ),
+    )
+    env = ArenaFightersEnv(config=cfg)
+
+    _, infos_a = env.reset(seed=7)
+    _, infos_b = env.reset(seed=7)
+
+    assert infos_a["agent_0"]["map_name"] == infos_b["agent_0"]["map_name"]
+    assert infos_a["agent_0"]["map_name"] in {"flat", "tower"}
+
+
+def test_unknown_map_raises_error():
+    cfg = Config()
+    cfg = replace(cfg, arena=replace(cfg.arena, map_name="missing"))
+
+    with pytest.raises(ValueError, match="Unknown arena map"):
+        ArenaFightersEnv(config=cfg)
+
+
+def test_map_pool_overrides_reset_map_selection():
+    env = ArenaFightersEnv(config=Config())
+    env.set_map_pool(("flat",))
+    _, infos = env.reset(seed=123)
+
+    assert infos["agent_0"]["map_name"] == "flat"
+    assert infos["agent_0"]["map_pool"] == ("flat",)
+    assert env.get_state()["map_pool"] == ("flat",)
+
+
+def test_map_pool_validates_choices():
+    env = ArenaFightersEnv(config=Config())
+
+    with pytest.raises(ValueError, match="at least one map"):
+        env.set_map_pool(())
+    with pytest.raises(ValueError, match="Unknown arena map"):
+        env.set_map_pool(("missing",))
+
+
+def test_reward_config_can_be_updated():
+    env = ArenaFightersEnv(config=Config())
+    anti_stall = reward_config_for_preset("anti_stall")
+    env.set_reward_config(anti_stall)
+    env.reset()
+
+    _, rewards, _, _, _ = _step_idle(env)
+
+    assert env.cfg.reward == anti_stall
+    assert rewards["agent_0"] == pytest.approx(anti_stall.idle_penalty)
+    assert rewards["agent_1"] == pytest.approx(anti_stall.idle_penalty)
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +303,12 @@ def test_bullet_hits_opponent():
     env._agent_states["agent_1"].y = 18
 
     hp_before = env._agent_states["agent_1"].hp
-    _step_one(env, "agent_0", SHOOT_FORWARD)
+    _, _, _, _, infos = _step_one(env, "agent_0", SHOOT_FORWARD)
     assert env._agent_states["agent_1"].hp == hp_before - cfg.agent.bullet_damage
+    assert infos["agent_0"]["events"]["shots_fired"] == 1
+    assert infos["agent_0"]["events"]["projectile_hits"] == 1
+    assert infos["agent_0"]["events"]["damage_dealt"] == cfg.agent.bullet_damage
+    assert infos["agent_1"]["events"]["damage_taken"] == cfg.agent.bullet_damage
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +345,28 @@ def test_melee_hits_adjacent():
     env._agent_states["agent_1"].y = 18
 
     hp_before = env._agent_states["agent_1"].hp
-    _step_one(env, "agent_0", MELEE)
+    _, _, _, _, infos = _step_one(env, "agent_0", MELEE)
     assert env._agent_states["agent_1"].hp == hp_before - env.cfg.agent.melee_damage
+    assert infos["agent_0"]["events"]["melee_attempts"] == 1
+    assert infos["agent_0"]["events"]["melee_hits"] == 1
+    assert infos["agent_0"]["events"]["damage_dealt"] == env.cfg.agent.melee_damage
+    assert infos["agent_1"]["events"]["damage_taken"] == env.cfg.agent.melee_damage
+
+
+def test_event_counters_are_cumulative_in_state():
+    env = _make_env()
+    env.reset()
+    env._agent_states["agent_0"].x = 10
+    env._agent_states["agent_0"].y = 18
+    env._agent_states["agent_0"].facing = 1
+    env._agent_states["agent_1"].x = 11
+    env._agent_states["agent_1"].y = 18
+
+    _step_one(env, "agent_0", MELEE)
+    state = env.get_state()
+
+    assert state["events"]["agent_0"]["melee_hits"] == 1
+    assert state["episode_events"]["agent_0"]["melee_hits"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +417,37 @@ def test_episode_truncates_at_max_ticks():
     assert not terms["agent_1"]
     assert rewards["agent_0"] == pytest.approx(
         env.cfg.reward.draw + env.cfg.reward.idle_penalty
+    )
+
+
+def test_anti_stall_adds_no_damage_timeout_penalty():
+    cfg = replace(Config(), reward=reward_config_for_preset("anti_stall"))
+    env = ArenaFightersEnv(config=cfg)
+    env.reset()
+    env._tick = env.cfg.arena.max_ticks - 1
+
+    _, rewards, _, truncs, _ = _step_idle(env)
+
+    assert truncs["agent_0"] is True
+    assert rewards["agent_0"] == pytest.approx(
+        cfg.reward.draw
+        + cfg.reward.no_damage_draw_penalty
+        + cfg.reward.idle_penalty
+    )
+
+
+def test_no_damage_timeout_penalty_skips_after_damage():
+    cfg = replace(Config(), reward=reward_config_for_preset("anti_stall"))
+    env = ArenaFightersEnv(config=cfg)
+    env.reset()
+    env._episode_events["agent_0"]["damage_dealt"] = 1
+    env._tick = env.cfg.arena.max_ticks - 1
+
+    _, rewards, _, truncs, _ = _step_idle(env)
+
+    assert truncs["agent_0"] is True
+    assert rewards["agent_0"] == pytest.approx(
+        cfg.reward.draw + cfg.reward.idle_penalty
     )
 
 

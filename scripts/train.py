@@ -4,18 +4,65 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import json
 import os
+import re
+import shlex
+import subprocess
 import sys
 import time
 from dataclasses import replace
 from pathlib import Path
 
-from arena_fighters.config import Config, IDLE, NUM_ACTIONS
+from arena_fighters.config import (
+    Config,
+    CURRICULUMS,
+    IDLE,
+    NUM_ACTIONS,
+    PLATFORM_LAYOUTS,
+    REWARD_PRESET_ALIASES,
+    REWARD_PRESETS,
+    curriculum_stage_for_step,
+    reward_config_for_preset,
+)
 from arena_fighters.env import ArenaFightersEnv
+from arena_fighters.evaluation import (
+    artifact_metadata,
+    BUILTIN_POLICY_NAMES,
+    ModelPolicy,
+    compare_eval_summaries,
+    evaluate_baseline_suite,
+    evaluate_matchup,
+    evaluate_pairwise_suite,
+    gate_eval_comparison,
+    gate_rank_summary,
+    load_eval_summary,
+    make_builtin_policy,
+    rank_baseline_suites,
+    validate_artifact,
+    write_eval_summary,
+)
 from arena_fighters.network import ArenaFeaturesExtractor
-from arena_fighters.replay import load_replay
+from arena_fighters.replay import ReplayLogger, analyze_replay, load_replay
 from arena_fighters.self_play import OpponentPool, SelfPlayWrapper
 from stable_baselines3.common.callbacks import BaseCallback
+
+
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\b(\s*[:=]\s*)[^\s]+"
+)
+_BEARER_TOKEN_RE = re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)[^\s]+")
+
+
+def clone_policy_for_opponent(model):
+    """Return a detached policy copy used only for frozen opponent snapshots."""
+    policy = copy.deepcopy(model.policy)
+    if hasattr(policy, "set_training_mode"):
+        policy.set_training_mode(False)
+    elif hasattr(policy, "eval"):
+        policy.eval()
+    return policy
 
 
 def mirror_obs(obs: dict) -> dict:
@@ -41,6 +88,142 @@ def mirror_obs(obs: dict) -> dict:
     return {"grid": grid, "vector": vector}
 
 
+def curriculum_metadata(cfg: Config, step: int = 0) -> dict | None:
+    if cfg.training.curriculum_name is None:
+        return None
+
+    stage = curriculum_stage_for_step(cfg.training.curriculum_name, step)
+    return {
+        "name": cfg.training.curriculum_name,
+        "step": step,
+        "stage": {
+            "name": stage.name,
+            "start_step": stage.start_step,
+            "map_choices": list(stage.map_choices),
+            "reward_preset": stage.reward_preset,
+        },
+        "active_map_pool": list(stage.map_choices),
+        "active_reward_preset": stage.reward_preset,
+    }
+
+
+def effective_reward_config(cfg: Config, step: int = 0):
+    if cfg.training.curriculum_name is None:
+        return cfg.reward
+
+    stage = curriculum_stage_for_step(cfg.training.curriculum_name, step)
+    return reward_config_for_preset(stage.reward_preset)
+
+
+def checkpoint_metadata(cfg: Config, num_timesteps: int) -> dict:
+    return {
+        "num_timesteps": num_timesteps,
+        "map_name": cfg.arena.map_name,
+        "randomize_maps": cfg.arena.randomize_maps,
+        "map_choices": list(cfg.arena.map_choices),
+        "reward": effective_reward_config(cfg, num_timesteps).__dict__,
+        "curriculum": curriculum_metadata(cfg, num_timesteps),
+    }
+
+
+def write_checkpoint_metadata(path: str | Path, cfg: Config, num_timesteps: int) -> Path:
+    metadata_path = Path(f"{path}.meta.json")
+    metadata_path.write_text(
+        json.dumps(checkpoint_metadata(cfg, num_timesteps), indent=2, sort_keys=True)
+        + "\n"
+    )
+    return metadata_path
+
+
+def read_checkpoint_metadata(path: str | Path | None) -> dict | None:
+    if path is None:
+        return None
+
+    checkpoint_path = Path(path)
+    candidates = [Path(f"{checkpoint_path}.meta.json")]
+    if checkpoint_path.suffix == ".zip":
+        candidates.append(Path(f"{checkpoint_path.with_suffix('')}.meta.json"))
+    else:
+        candidates.append(Path(f"{checkpoint_path}.zip.meta.json"))
+
+    seen = set()
+    for metadata_path in candidates:
+        if metadata_path in seen:
+            continue
+        seen.add(metadata_path)
+        if metadata_path.exists():
+            return json.loads(metadata_path.read_text())
+    return None
+
+
+def load_trusted_ppo_checkpoint(path: str | Path):
+    """Load a trusted SB3 checkpoint.
+
+    Stable-Baselines3 checkpoints may deserialize cloudpickle payloads, so callers
+    must only pass checkpoints produced locally or obtained from trusted sources.
+    """
+    from stable_baselines3 import PPO
+
+    return PPO.load(str(path))
+
+
+def discover_checkpoints(checkpoint_dir: str | Path) -> tuple[str, ...]:
+    root = Path(checkpoint_dir)
+    if not root.exists():
+        return ()
+
+    candidates = []
+    for path in root.iterdir():
+        if not path.is_file() or path.name.endswith(".meta.json"):
+            continue
+        if path.suffix == ".zip" or (path.suffix == "" and path.name.startswith("ppo_")):
+            metadata = read_checkpoint_metadata(path) or {}
+            candidates.append(
+                (
+                    int(metadata.get("num_timesteps", -1)),
+                    path.name,
+                    str(path),
+                )
+            )
+
+    return tuple(item[2] for item in sorted(candidates))
+
+
+def parse_csv_tuple(value: str, flag_name: str) -> tuple[str, ...]:
+    items = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not items:
+        raise ValueError(f"{flag_name} must include at least one value")
+    return items
+
+
+def parse_builtin_opponents(value: str | None) -> tuple[str, ...]:
+    if value is None:
+        return BUILTIN_POLICY_NAMES
+
+    opponents = parse_csv_tuple(value, "--suite-opponents")
+    unknown = [name for name in opponents if name not in BUILTIN_POLICY_NAMES]
+    if unknown:
+        raise ValueError(f"Unknown opponent names: {', '.join(unknown)}")
+    return opponents
+
+
+def parse_suite_maps(value: str | None, cfg: Config) -> tuple[str, ...]:
+    if value is None:
+        return cfg.arena.map_choices if cfg.arena.randomize_maps else (cfg.arena.map_name,)
+
+    maps = parse_csv_tuple(value, "--suite-maps")
+    unknown = [name for name in maps if name not in PLATFORM_LAYOUTS]
+    if unknown:
+        raise ValueError(f"Unknown map names: {', '.join(unknown)}")
+    return maps
+
+
+def parse_rank_checkpoints(value: str | None) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    return parse_csv_tuple(value, "--rank-checkpoints")
+
+
 class SelfPlayCallback(BaseCallback):
     """Snapshots weights into the opponent pool at regular intervals."""
 
@@ -48,22 +231,29 @@ class SelfPlayCallback(BaseCallback):
         self,
         wrapper: SelfPlayWrapper,
         opponent_pool: OpponentPool,
+        cfg: Config,
         snapshot_interval: int = 50,
         checkpoint_dir: str = "checkpoints",
+        curriculum_name: str | None = None,
         verbose: int = 0,
     ):
         super().__init__(verbose=verbose)
         self.wrapper = wrapper
         self.opponent_pool = opponent_pool
+        self.cfg = cfg
         self.snapshot_interval = snapshot_interval
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.curriculum_name = curriculum_name
+        self._curriculum_stage_name: str | None = None
         self._rollout_count = 0
         self._milestones = {100_000, 500_000, 1_000_000, 5_000_000, 10_000_000,
                             50_000_000, 100_000_000}
         self._milestones_hit: set[int] = set()
 
     def _on_step(self) -> bool:
+        self._apply_curriculum()
+
         # Check for milestone checkpoints based on total timesteps
         steps = self.num_timesteps
         for m in self._milestones:
@@ -72,40 +262,94 @@ class SelfPlayCallback(BaseCallback):
                 label = f"{m // 1_000_000}M" if m >= 1_000_000 else f"{m // 1_000}K"
                 path = self.checkpoint_dir / f"ppo_{label}"
                 self.model.save(str(path))
+                write_checkpoint_metadata(path, self.cfg, steps)
                 if self.verbose:
                     print(f"[Milestone] {label} steps reached, saved to {path}")
         return True
 
     def _on_rollout_end(self) -> None:
         self._rollout_count += 1
-        if self._rollout_count % self.snapshot_interval != 0:
+        if self._rollout_count % self.snapshot_interval == 0:
+            # Snapshot current weights into the pool
+            state_dict = self.model.policy.state_dict()
+            self.opponent_pool.add(state_dict)
+
+            # Save checkpoint
+            ckpt_path = self.checkpoint_dir / f"ppo_snap_{self._rollout_count}"
+            self.model.save(str(ckpt_path))
+            write_checkpoint_metadata(ckpt_path, self.cfg, self.num_timesteps)
+
+            if self.wrapper.opponent_policy is None:
+                self.wrapper.opponent_policy = clone_policy_for_opponent(self.model)
+
+            if self.verbose:
+                pool_stats = self.opponent_pool.stats()
+                print(
+                    f"[Snapshot] rollout={self._rollout_count}  "
+                    f"pool_size={len(self.opponent_pool)}  "
+                    f"latest_samples={pool_stats['latest_samples']}  "
+                    f"historical_samples={pool_stats['historical_samples']}  "
+                    f"saved={ckpt_path}"
+                )
+        self._record_self_play_stats()
+
+    def _record_self_play_stats(self) -> None:
+        pool_stats = self.opponent_pool.stats()
+        self.logger.record("self_play/opponent_pool_size", pool_stats["size"])
+        self.logger.record(
+            "self_play/latest_opponent_samples",
+            pool_stats["latest_samples"],
+        )
+        self.logger.record(
+            "self_play/historical_opponent_samples",
+            pool_stats["historical_samples"],
+        )
+        self.logger.record(
+            "self_play/last_sample_was_historical",
+            1.0 if pool_stats["last_sample_kind"] == "historical" else 0.0,
+        )
+
+    def _apply_curriculum(self) -> None:
+        if self.curriculum_name is None:
             return
 
-        # Snapshot current weights into the pool
-        state_dict = self.model.policy.state_dict()
-        self.opponent_pool.add(state_dict)
+        stage = curriculum_stage_for_step(self.curriculum_name, self.num_timesteps)
+        if stage.name == self._curriculum_stage_name:
+            return
 
-        # Save checkpoint
-        ckpt_path = self.checkpoint_dir / f"ppo_snap_{self._rollout_count}"
-        self.model.save(str(ckpt_path))
-
-        # Update the wrapper's opponent policy to the current model
-        self.wrapper.opponent_policy = self.model
-
+        self.wrapper.set_map_pool(stage.map_choices)
+        self.wrapper.set_reward_config(reward_config_for_preset(stage.reward_preset))
+        self._curriculum_stage_name = stage.name
         if self.verbose:
+            maps = ",".join(stage.map_choices)
             print(
-                f"[Snapshot] rollout={self._rollout_count}  "
-                f"pool_size={len(self.opponent_pool)}  "
-                f"saved={ckpt_path}"
+                f"[Curriculum] step={self.num_timesteps} "
+                f"stage={stage.name} maps={maps} reward={stage.reward_preset}"
             )
+
+
+def build_training_wrapper(
+    cfg: Config,
+    replay_dir: str,
+) -> tuple[SelfPlayWrapper, OpponentPool]:
+    pool = OpponentPool(max_size=cfg.training.opponent_pool_size)
+    replay_logger = ReplayLogger(
+        replay_dir=replay_dir,
+        save_every_n=cfg.training.replay_save_interval,
+    )
+    wrapper = SelfPlayWrapper(
+        config=cfg,
+        opponent_pool=pool,
+        replay_logger=replay_logger,
+    )
+    return wrapper, pool
 
 
 def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
     """Headless PPO self-play training."""
     from stable_baselines3 import PPO
 
-    pool = OpponentPool(max_size=cfg.training.opponent_pool_size)
-    wrapper = SelfPlayWrapper(config=cfg, opponent_pool=pool)
+    wrapper, pool = build_training_wrapper(cfg, replay_dir)
 
     policy_kwargs = {
         "features_extractor_class": ArenaFeaturesExtractor,
@@ -129,13 +373,19 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
 
     # Seed the pool with the initial (random) weights
     pool.add(model.policy.state_dict())
-    wrapper.opponent_policy = model
+    wrapper.opponent_policy = clone_policy_for_opponent(model)
+    if cfg.training.curriculum_name is not None:
+        stage = curriculum_stage_for_step(cfg.training.curriculum_name, 0)
+        wrapper.set_map_pool(stage.map_choices)
+        wrapper.set_reward_config(reward_config_for_preset(stage.reward_preset))
 
     callback = SelfPlayCallback(
         wrapper=wrapper,
         opponent_pool=pool,
+        cfg=cfg,
         snapshot_interval=cfg.training.snapshot_interval,
         checkpoint_dir=checkpoint_dir,
+        curriculum_name=cfg.training.curriculum_name,
         verbose=1,
     )
 
@@ -143,6 +393,7 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
 
     final_path = os.path.join(checkpoint_dir, "ppo_final")
     model.save(final_path)
+    write_checkpoint_metadata(final_path, cfg, model.num_timesteps)
     print(f"Training complete. Final model saved to {final_path}")
 
 
@@ -156,9 +407,7 @@ def run_watch(cfg: Config, checkpoint: str | None, num_rounds: int = 0) -> None:
 
     model = None
     if checkpoint and Path(checkpoint).exists():
-        from stable_baselines3 import PPO
-
-        model = PPO.load(checkpoint)
+        model = load_trusted_ppo_checkpoint(checkpoint)
 
     score = [0, 0]  # [agent_0 wins, agent_1 wins]
     draws = 0
@@ -261,8 +510,15 @@ def run_replay(cfg: Config, episode_path: str) -> None:
     frames = data["frames"]
     winner = data.get("winner", "unknown")
     length = data.get("length", len(frames))
+    map_name = data.get("map_name", "classic")
+    event_totals = data.get("event_totals", {})
 
-    print(f"Replay: {path.name}  Winner: {winner}  Length: {length} ticks")
+    print(
+        f"Replay: {path.name}  Winner: {winner}  "
+        f"Length: {length} ticks  Map: {map_name}"
+    )
+    if event_totals:
+        print(f"Event totals: {json.dumps(event_totals, sort_keys=True)}")
     time.sleep(1)
 
     h = cfg.arena.height
@@ -273,9 +529,11 @@ def run_replay(cfg: Config, episode_path: str) -> None:
         display = [["." for _ in range(w)] for _ in range(h)]
 
         # Draw platforms
-        from arena_fighters.config import PLATFORM_LAYOUT
+        from arena_fighters.config import PLATFORM_LAYOUT, PLATFORM_LAYOUTS
 
-        for x_start, x_end, y in PLATFORM_LAYOUT:
+        map_name = frame.get("map_name", "classic")
+        layout = PLATFORM_LAYOUTS.get(map_name, PLATFORM_LAYOUT)
+        for x_start, x_end, y in layout:
             for x in range(x_start, x_end + 1):
                 if 0 <= y < h and 0 <= x < w:
                     display[y][x] = "="
@@ -312,13 +570,3309 @@ def run_replay(cfg: Config, episode_path: str) -> None:
     print(f"\nReplay complete. Winner: {winner}")
 
 
+def run_analyze_replay(
+    episode_path: str,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    path = Path(episode_path)
+    if not path.exists():
+        print(f"Replay file not found: {episode_path}")
+        sys.exit(1)
+
+    data = load_replay(path)
+    analysis = analyze_replay(data)
+    analysis["artifact"] = artifact_metadata("replay_analysis")
+    print(json.dumps(analysis, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or f"replay-analysis-{path.stem}"
+        saved_path = write_eval_summary(analysis, output_dir, label=label)
+        print(f"Saved replay analysis to {saved_path}")
+
+
+REPLAY_SAMPLE_BUCKETS = (
+    "agent_0_win",
+    "agent_1_win",
+    "draw",
+    "combat",
+    "no_damage",
+    "no_attacks",
+)
+
+
+def replay_analysis_buckets(analysis: dict) -> list[str]:
+    buckets = []
+    winner = analysis.get("winner")
+    if winner == "agent_0":
+        buckets.append("agent_0_win")
+    elif winner == "agent_1":
+        buckets.append("agent_1_win")
+    elif winner == "draw":
+        buckets.append("draw")
+
+    flags = analysis.get("flags", {})
+    if flags.get("no_damage") is True:
+        buckets.append("no_damage")
+    elif flags.get("no_damage") is False:
+        buckets.append("combat")
+        map_name = analysis.get("map_name")
+        if map_name:
+            buckets.append(f"combat_map:{map_name}")
+    if flags.get("no_attacks") is True:
+        buckets.append("no_attacks")
+    return buckets
+
+
+def _relative_to_root(path: Path, root: Path) -> str | None:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return None
+
+
+def build_replay_analysis_batch(
+    replay_dir: str | Path,
+    samples_per_bucket: int = 1,
+) -> dict:
+    root = Path(replay_dir)
+    bucket_counts = {bucket: 0 for bucket in REPLAY_SAMPLE_BUCKETS}
+    selected_by_path: dict[str, dict] = {}
+    skipped = []
+    scanned = 0
+
+    for path in sorted(root.glob("*.json")):
+        if not path.is_file():
+            continue
+        relative_path = _relative_to_root(path, root)
+        try:
+            analysis = analyze_replay(load_replay(path))
+        except Exception as exc:
+            skipped.append(
+                {
+                    "path": str(path),
+                    "relative_path": relative_path,
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+
+        scanned += 1
+        buckets = replay_analysis_buckets(analysis)
+        needed_buckets = [
+            bucket
+            for bucket in buckets
+            if bucket_counts.get(bucket, 0) < samples_per_bucket
+        ]
+        if not needed_buckets:
+            continue
+
+        analysis["artifact"] = artifact_metadata("replay_analysis")
+        entry = selected_by_path.setdefault(
+            str(path),
+            {
+                "path": str(path),
+                "relative_path": relative_path,
+                "buckets": buckets,
+                "selected_for": [],
+                "analysis": analysis,
+            },
+        )
+        for bucket in needed_buckets:
+            if bucket not in entry["selected_for"]:
+                entry["selected_for"].append(bucket)
+                bucket_counts.setdefault(bucket, 0)
+                bucket_counts[bucket] += 1
+
+    return {
+        "artifact": artifact_metadata("replay_analysis_batch"),
+        "batch_config": {
+            "replay_dir": str(root),
+            "samples_per_bucket": samples_per_bucket,
+            "bucket_names": list(REPLAY_SAMPLE_BUCKETS),
+            "dynamic_bucket_prefixes": ["combat_map:"],
+        },
+        "scanned_replays": scanned,
+        "selected_count": len(selected_by_path),
+        "bucket_counts": bucket_counts,
+        "selected": list(selected_by_path.values()),
+        "skipped_replays": skipped,
+    }
+
+
+def run_analyze_replay_dir(
+    replay_dir: str,
+    samples_per_bucket: int,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    if samples_per_bucket < 1:
+        raise ValueError("--replay-samples-per-bucket must be at least 1")
+
+    batch = build_replay_analysis_batch(
+        replay_dir,
+        samples_per_bucket=samples_per_bucket,
+    )
+    if output_dir is not None:
+        base_label = output_label or "replay-sample"
+        for item in batch["selected"]:
+            replay_stem = Path(item["path"]).stem
+            label = f"{base_label}-{replay_stem}"
+            saved_path = write_eval_summary(item["analysis"], output_dir, label=label)
+            item["analysis_artifact_path"] = str(saved_path)
+        batch_path = write_eval_summary(
+            batch,
+            output_dir,
+            label=f"{base_label}-batch",
+        )
+        batch["batch_artifact_path"] = str(batch_path)
+
+    print(json.dumps(batch, indent=2, sort_keys=True))
+    if output_dir is not None:
+        print(f"Saved replay analysis batch to {batch['batch_artifact_path']}")
+
+
+def run_eval(
+    cfg: Config,
+    checkpoint: str | None,
+    opponent: str,
+    num_rounds: int,
+    seed: int | None,
+    deterministic: bool,
+    reward_preset: str,
+    output_dir: str | None,
+    output_label: str | None,
+    agent_policy: str = "random",
+) -> None:
+    """Evaluate a checkpoint or built-in policy against a built-in baseline."""
+    if checkpoint:
+        path = Path(checkpoint)
+        if not path.exists():
+            print(f"Checkpoint not found: {checkpoint}")
+            sys.exit(1)
+        model = load_trusted_ppo_checkpoint(path)
+        agent0_policy = ModelPolicy(model=model, deterministic=deterministic)
+        agent0_label = str(path)
+    else:
+        agent0_policy = make_builtin_policy(agent_policy, seed=seed)
+        agent0_label = agent_policy
+
+    opponent_seed = None if seed is None else seed + 100_000
+    agent1_policy = make_builtin_policy(opponent, seed=opponent_seed)
+    episodes = num_rounds if num_rounds > 0 else 20
+    summary = evaluate_matchup(
+        cfg=cfg,
+        agent0_policy=agent0_policy,
+        agent1_policy=agent1_policy,
+        episodes=episodes,
+        seed=seed,
+    )
+    summary["agent_0_policy"] = agent0_label
+    summary["agent_1_policy"] = opponent
+    summary["artifact"] = artifact_metadata("eval")
+    summary["eval_config"] = {
+        "checkpoint": checkpoint,
+        "checkpoint_metadata": read_checkpoint_metadata(checkpoint),
+        "agent_policy": agent_policy if checkpoint is None else "checkpoint",
+        "opponent": opponent,
+        "episodes": episodes,
+        "seed": seed,
+        "deterministic": deterministic,
+        "map_name": cfg.arena.map_name,
+        "randomize_maps": cfg.arena.randomize_maps,
+        "map_choices": list(cfg.arena.map_choices),
+        "reward_preset": reward_preset,
+        "curriculum": curriculum_metadata(cfg, 0),
+    }
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or f"{opponent}_{episodes}ep"
+        path = write_eval_summary(summary, output_dir, label=label)
+        print(f"Saved eval summary to {path}")
+
+
+def run_compare(
+    before_path: str,
+    after_path: str,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    before = load_eval_summary(before_path)
+    after = load_eval_summary(after_path)
+    validate_artifact(before, "eval")
+    validate_artifact(after, "eval")
+    comparison = compare_eval_summaries(before, after)
+    comparison["before_path"] = before_path
+    comparison["after_path"] = after_path
+    print(json.dumps(comparison, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "comparison"
+        path = write_eval_summary(comparison, output_dir, label=label)
+        print(f"Saved comparison summary to {path}")
+
+
+def run_gate(
+    before_path: str,
+    after_path: str,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    before = load_eval_summary(before_path)
+    after = load_eval_summary(after_path)
+    validate_artifact(before, "eval")
+    validate_artifact(after, "eval")
+    comparison = compare_eval_summaries(before, after)
+    gate = gate_eval_comparison(comparison)
+    gate["comparison"] = comparison
+    gate["before_path"] = before_path
+    gate["after_path"] = after_path
+    print(json.dumps(gate, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "gate"
+        path = write_eval_summary(gate, output_dir, label=label)
+        print(f"Saved gate summary to {path}")
+    if not gate["passed"]:
+        sys.exit(1)
+
+
+def run_rank_gate(
+    rank_summary_path: str,
+    min_score: float,
+    min_win_rate: float,
+    max_draw_rate: float,
+    max_no_damage_rate: float,
+    max_low_engagement_rate: float,
+    min_head_to_head_elo: float | None,
+    min_head_to_head_score: float | None,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    summary = load_eval_summary(rank_summary_path)
+    validate_artifact(summary, "rank")
+    gate = gate_rank_summary(
+        summary,
+        min_score=min_score,
+        min_win_rate=min_win_rate,
+        max_draw_rate=max_draw_rate,
+        max_no_damage_rate=max_no_damage_rate,
+        max_low_engagement_rate=max_low_engagement_rate,
+        min_head_to_head_elo=min_head_to_head_elo,
+        min_head_to_head_score=min_head_to_head_score,
+    )
+    gate["rank_summary_path"] = rank_summary_path
+    print(json.dumps(gate, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "rank-gate"
+        path = write_eval_summary(gate, output_dir, label=label)
+        print(f"Saved rank gate summary to {path}")
+    if not gate["passed"]:
+        sys.exit(1)
+
+
+def run_suite(
+    cfg: Config,
+    checkpoint: str | None,
+    agent_policy: str,
+    opponents: tuple[str, ...],
+    maps: tuple[str, ...],
+    num_rounds: int,
+    seed: int | None,
+    deterministic: bool,
+    reward_preset: str,
+    output_dir: str | None,
+    output_label: str | None,
+) -> None:
+    agent0_label = agent_policy
+    model = None
+    if checkpoint:
+        path = Path(checkpoint)
+        if not path.exists():
+            print(f"Checkpoint not found: {checkpoint}")
+            sys.exit(1)
+        model = load_trusted_ppo_checkpoint(path)
+        agent0_label = str(path)
+
+    def agent0_policy_factory(policy_seed: int | None):
+        if model is not None:
+            return ModelPolicy(model=model, deterministic=deterministic)
+        return make_builtin_policy(agent_policy, seed=policy_seed)
+
+    episodes = num_rounds if num_rounds > 0 else 5
+    suite = evaluate_baseline_suite(
+        cfg=cfg,
+        agent0_policy_factory=agent0_policy_factory,
+        agent0_label=agent0_label,
+        opponents=opponents,
+        maps=maps,
+        episodes=episodes,
+        seed=seed,
+        reward_preset=reward_preset,
+    )
+    suite["suite_config"]["checkpoint_metadata"] = read_checkpoint_metadata(checkpoint)
+    suite["suite_config"]["curriculum"] = curriculum_metadata(cfg, 0)
+    suite["artifact"] = artifact_metadata("suite")
+    print(json.dumps(suite, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or f"suite_{episodes}ep"
+        path = write_eval_summary(suite, output_dir, label=label)
+        print(f"Saved suite summary to {path}")
+
+
+def build_rank_summary(
+    cfg: Config,
+    checkpoints: tuple[str, ...] | None,
+    checkpoint_dir: str,
+    opponents: tuple[str, ...],
+    maps: tuple[str, ...],
+    num_rounds: int,
+    seed: int | None,
+    deterministic: bool,
+    reward_preset: str,
+    draw_weight: float,
+    no_damage_penalty: float,
+    low_engagement_penalty: float,
+    include_head_to_head: bool,
+    initial_elo: float,
+    elo_k_factor: float,
+) -> dict:
+    checkpoint_paths = checkpoints or discover_checkpoints(checkpoint_dir)
+    if not checkpoint_paths:
+        print(f"No checkpoints found in {checkpoint_dir}")
+        sys.exit(1)
+
+    episodes = num_rounds if num_rounds > 0 else 5
+    entries = []
+    loaded_models = {}
+    used_labels = set()
+    for checkpoint_idx, checkpoint in enumerate(checkpoint_paths):
+        path = Path(checkpoint)
+        if not path.exists():
+            print(f"Checkpoint not found: {checkpoint}")
+            sys.exit(1)
+
+        model = load_trusted_ppo_checkpoint(path)
+        label = path.stem if path.suffix == ".zip" else path.name
+        if label in used_labels:
+            label = f"{label}_{checkpoint_idx}"
+        used_labels.add(label)
+        loaded_models[label] = model
+
+        def agent0_policy_factory(policy_seed: int | None, model=model):
+            return ModelPolicy(model=model, deterministic=deterministic)
+
+        checkpoint_seed = None if seed is None else seed + checkpoint_idx * 1_000_000
+        suite = evaluate_baseline_suite(
+            cfg=cfg,
+            agent0_policy_factory=agent0_policy_factory,
+            agent0_label=str(path),
+            opponents=opponents,
+            maps=maps,
+            episodes=episodes,
+            seed=checkpoint_seed,
+            reward_preset=reward_preset,
+        )
+        checkpoint_metadata = read_checkpoint_metadata(path)
+        suite["suite_config"]["checkpoint_metadata"] = checkpoint_metadata
+        suite["suite_config"]["curriculum"] = curriculum_metadata(cfg, 0)
+        entries.append(
+            {
+                "label": label,
+                "checkpoint": str(path),
+                "checkpoint_metadata": checkpoint_metadata,
+                "suite": suite,
+            }
+        )
+
+    result = {
+        "artifact": artifact_metadata("rank"),
+        "rank_config": {
+            "checkpoints": list(checkpoint_paths),
+            "checkpoint_dir": checkpoint_dir,
+            "opponents": list(opponents),
+            "maps": list(maps),
+            "episodes_per_matchup": episodes,
+            "seed": seed,
+            "deterministic": deterministic,
+            "reward_preset": reward_preset,
+            "draw_weight": draw_weight,
+            "no_damage_penalty": no_damage_penalty,
+            "low_engagement_penalty": low_engagement_penalty,
+            "include_head_to_head": include_head_to_head,
+            "initial_elo": initial_elo,
+            "elo_k_factor": elo_k_factor,
+            "curriculum": curriculum_metadata(cfg, 0),
+        },
+        **rank_baseline_suites(
+            entries,
+            draw_weight=draw_weight,
+            no_damage_penalty=no_damage_penalty,
+            low_engagement_penalty=low_engagement_penalty,
+        ),
+        "suites": entries,
+    }
+    if include_head_to_head and len(entries) >= 2:
+        policy_factories = {
+            label: (
+                lambda policy_seed, model=model: ModelPolicy(
+                    model=model,
+                    deterministic=deterministic,
+                )
+            )
+            for label, model in loaded_models.items()
+        }
+        result["head_to_head"] = evaluate_pairwise_suite(
+            cfg=cfg,
+            policy_factories=policy_factories,
+            maps=maps,
+            episodes=episodes,
+            seed=seed,
+            initial_elo=initial_elo,
+            elo_k_factor=elo_k_factor,
+        )
+    elif include_head_to_head:
+        result["head_to_head"] = {
+            "skipped": "requires_at_least_two_checkpoints",
+            "checkpoint_count": len(entries),
+        }
+    return result
+
+
+def run_rank(
+    cfg: Config,
+    checkpoints: tuple[str, ...] | None,
+    checkpoint_dir: str,
+    opponents: tuple[str, ...],
+    maps: tuple[str, ...],
+    num_rounds: int,
+    seed: int | None,
+    deterministic: bool,
+    reward_preset: str,
+    draw_weight: float,
+    no_damage_penalty: float,
+    low_engagement_penalty: float,
+    include_head_to_head: bool,
+    initial_elo: float,
+    elo_k_factor: float,
+    output_dir: str | None,
+    output_label: str | None,
+) -> dict:
+    result = build_rank_summary(
+        cfg=cfg,
+        checkpoints=checkpoints,
+        checkpoint_dir=checkpoint_dir,
+        opponents=opponents,
+        maps=maps,
+        num_rounds=num_rounds,
+        seed=seed,
+        deterministic=deterministic,
+        reward_preset=reward_preset,
+        draw_weight=draw_weight,
+        no_damage_penalty=no_damage_penalty,
+        low_engagement_penalty=low_engagement_penalty,
+        include_head_to_head=include_head_to_head,
+        initial_elo=initial_elo,
+        elo_k_factor=elo_k_factor,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if output_dir is not None:
+        checkpoint_paths = result["rank_config"]["checkpoints"]
+        episodes = result["rank_config"]["episodes_per_matchup"]
+        label = output_label or f"rank_{len(checkpoint_paths)}ckpt_{episodes}ep"
+        path = write_eval_summary(result, output_dir, label=label)
+        print(f"Saved rank summary to {path}")
+    return result
+
+
+def run_promotion_audit(
+    cfg: Config,
+    checkpoints: tuple[str, ...] | None,
+    checkpoint_dir: str,
+    opponents: tuple[str, ...],
+    maps: tuple[str, ...],
+    num_rounds: int,
+    seed: int | None,
+    deterministic: bool,
+    reward_preset: str,
+    draw_weight: float,
+    no_damage_penalty: float,
+    low_engagement_penalty: float,
+    include_head_to_head: bool,
+    initial_elo: float,
+    elo_k_factor: float,
+    min_score: float,
+    min_win_rate: float,
+    max_draw_rate: float,
+    max_no_damage_rate: float,
+    max_low_engagement_rate: float,
+    min_head_to_head_elo: float | None,
+    min_head_to_head_score: float | None,
+    output_dir: str | None,
+    output_label: str | None,
+    include_nested: bool = False,
+) -> None:
+    base_label = output_label or "promotion-audit"
+    rank_summary = build_rank_summary(
+        cfg=cfg,
+        checkpoints=checkpoints,
+        checkpoint_dir=checkpoint_dir,
+        opponents=opponents,
+        maps=maps,
+        num_rounds=num_rounds,
+        seed=seed,
+        deterministic=deterministic,
+        reward_preset=reward_preset,
+        draw_weight=draw_weight,
+        no_damage_penalty=no_damage_penalty,
+        low_engagement_penalty=low_engagement_penalty,
+        include_head_to_head=include_head_to_head,
+        initial_elo=initial_elo,
+        elo_k_factor=elo_k_factor,
+    )
+    validate_artifact(rank_summary, "rank")
+
+    rank_path = None
+    if output_dir is not None:
+        rank_path = write_eval_summary(rank_summary, output_dir, f"{base_label}-rank")
+        print(f"Saved promotion audit rank summary to {rank_path}")
+
+    gate = gate_rank_summary(
+        rank_summary,
+        min_score=min_score,
+        min_win_rate=min_win_rate,
+        max_draw_rate=max_draw_rate,
+        max_no_damage_rate=max_no_damage_rate,
+        max_low_engagement_rate=max_low_engagement_rate,
+        min_head_to_head_elo=min_head_to_head_elo,
+        min_head_to_head_score=min_head_to_head_score,
+    )
+    gate["rank_summary_path"] = str(rank_path) if rank_path is not None else None
+
+    gate_path = None
+    if output_dir is not None:
+        gate_path = write_eval_summary(gate, output_dir, f"{base_label}-rank-gate")
+        print(f"Saved promotion audit rank gate summary to {gate_path}")
+
+    rankings = rank_summary.get("rankings", [])
+    audit = {
+        "artifact": artifact_metadata("promotion_audit"),
+        "passed": gate["passed"],
+        "audit_config": {
+            "include_nested": include_nested,
+        },
+        "rank_artifact_path": str(rank_path) if rank_path is not None else None,
+        "rank_gate_artifact_path": str(gate_path) if gate_path is not None else None,
+        "rank_config": rank_summary.get("rank_config", {}),
+        "ranking_metric": rank_summary.get("ranking_metric"),
+        "ranking_labels": [row.get("label") for row in rankings],
+        "rules": gate["rules"],
+        "candidate": gate["candidate"],
+        "failures": gate["failures"],
+    }
+    if include_nested:
+        audit["rank"] = rank_summary
+        audit["rank_gate"] = gate
+    print(json.dumps(audit, indent=2, sort_keys=True))
+
+    if output_dir is not None:
+        audit_path = write_eval_summary(audit, output_dir, base_label)
+        print(f"Saved promotion audit summary to {audit_path}")
+
+    if not gate["passed"]:
+        sys.exit(1)
+
+
+def summarize_promotion_audit(summary: dict) -> dict:
+    validate_artifact(summary, "promotion_audit")
+    candidate = summary.get("candidate") or {}
+    return {
+        "artifact": artifact_metadata("audit_summary"),
+        "source_artifact": summary["artifact"],
+        "passed": bool(summary.get("passed")),
+        "candidate": {
+            "label": candidate.get("label"),
+            "checkpoint": candidate.get("checkpoint"),
+            "rank": candidate.get("rank"),
+            "score": candidate.get("score"),
+            "mean_win_rate_agent_0": candidate.get("mean_win_rate_agent_0"),
+            "mean_no_damage_rate": candidate.get("mean_no_damage_rate"),
+            "mean_low_engagement_rate": candidate.get("mean_low_engagement_rate"),
+        },
+        "failures": summary.get("failures", []),
+        "rank_artifact_path": summary.get("rank_artifact_path"),
+        "rank_gate_artifact_path": summary.get("rank_gate_artifact_path"),
+        "ranking_labels": summary.get("ranking_labels", []),
+        "rules": summary.get("rules", {}),
+    }
+
+
+def run_audit_summary(
+    audit_summary_path: str,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    summary = load_eval_summary(audit_summary_path)
+    audit_summary = summarize_promotion_audit(summary)
+    audit_summary["audit_summary_path"] = audit_summary_path
+    print(json.dumps(audit_summary, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "audit-summary"
+        path = write_eval_summary(audit_summary, output_dir, label=label)
+        print(f"Saved audit summary to {path}")
+
+
+def summarize_artifact_file(path: str | Path, root: str | Path | None = None) -> dict:
+    artifact_path = Path(path)
+    relative_path = None
+    if root is not None:
+        try:
+            relative_path = str(artifact_path.relative_to(Path(root)))
+        except ValueError:
+            relative_path = None
+
+    entry = {
+        "path": str(artifact_path),
+        "relative_path": relative_path,
+        "file_size_bytes": artifact_path.stat().st_size,
+        "artifact_type": "unknown",
+        "schema_version": None,
+        "summary": {},
+        "links": {},
+    }
+    if artifact_path.suffix == ".exitcode":
+        raw_code = artifact_path.read_text().strip()
+        exit_code = None
+        try:
+            exit_code = int(raw_code)
+        except ValueError:
+            pass
+        entry["artifact_type"] = "exit_code"
+        entry["summary"] = {
+            "exit_code": exit_code,
+            "passed": exit_code == 0 if exit_code is not None else None,
+            "raw": raw_code,
+        }
+        return entry
+
+    if artifact_path.suffix == ".sh":
+        text = artifact_path.read_text()
+        entry["artifact_type"] = "shell_script"
+        entry["summary"] = {
+            "line_count": len(text.splitlines()),
+            "executable": bool(artifact_path.stat().st_mode & 0o111),
+            "starts_with_shebang": text.startswith("#!"),
+        }
+        return entry
+
+    if artifact_path.suffix == ".out":
+        tail_byte_limit = 8192
+        size = artifact_path.stat().st_size
+        with artifact_path.open("rb") as log_file:
+            if size > tail_byte_limit:
+                log_file.seek(size - tail_byte_limit)
+            raw_tail = log_file.read()
+        tail_text = raw_tail.decode("utf-8", errors="replace")
+        tail_lines = tail_text.splitlines()
+        if size > tail_byte_limit and tail_lines:
+            tail_lines = tail_lines[1:]
+        entry["artifact_type"] = "command_log"
+        entry["summary"] = {
+            "tail_byte_limit": tail_byte_limit,
+            "tail_truncated": size > tail_byte_limit,
+            "tail_lines": [redact_log_line(line) for line in tail_lines[-20:]],
+        }
+        return entry
+
+    try:
+        data = load_eval_summary(artifact_path)
+    except Exception as exc:
+        entry["error"] = f"{type(exc).__name__}: {exc}"
+        return entry
+
+    artifact = data.get("artifact", {})
+    if isinstance(artifact, dict):
+        entry["artifact_type"] = artifact.get("artifact_type") or "unknown"
+        entry["schema_version"] = artifact.get("schema_version")
+
+    artifact_type = entry["artifact_type"]
+    entry["summary"] = compact_artifact_summary(data, artifact_type)
+    entry["links"] = artifact_links(data, artifact_type)
+    return entry
+
+
+def redact_log_line(line: str) -> str:
+    redacted = _BEARER_TOKEN_RE.sub(r"\1<redacted>", line)
+    return _SECRET_ASSIGNMENT_RE.sub(r"\1\2<redacted>", redacted)
+
+
+def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
+    if artifact_type == "eval":
+        cfg = data.get("eval_config", {})
+        return {
+            "checkpoint": cfg.get("checkpoint"),
+            "opponent": cfg.get("opponent"),
+            "episodes": cfg.get("episodes"),
+            "seed": cfg.get("seed"),
+            "map_name": cfg.get("map_name"),
+            "randomize_maps": cfg.get("randomize_maps"),
+            "win_rate_agent_0": data.get("win_rate_agent_0"),
+            "draw_rate": data.get("draw_rate"),
+            "avg_length": data.get("avg_length"),
+            "avg_rewards": data.get("avg_rewards"),
+        }
+    if artifact_type == "suite":
+        cfg = data.get("suite_config", {})
+        return {
+            "agent_0_policy": cfg.get("agent_0_policy"),
+            "opponents": cfg.get("opponents"),
+            "maps": cfg.get("maps"),
+            "episodes_per_matchup": cfg.get("episodes_per_matchup"),
+            "overview": data.get("overview", {}),
+        }
+    if artifact_type == "rank":
+        rankings = data.get("rankings", [])
+        return {
+            "checkpoint_count": len(rankings),
+            "top_label": rankings[0].get("label") if rankings else None,
+            "top_score": rankings[0].get("score") if rankings else None,
+            "ranking_labels": [row.get("label") for row in rankings],
+            "rank_config": data.get("rank_config", {}),
+        }
+    if artifact_type == "comparison":
+        return {
+            "delta_count": len(data.get("deltas", {})),
+            "win_rate_delta": data.get("deltas", {}).get("win_rate_agent_0"),
+            "draw_rate_delta": data.get("deltas", {}).get("draw_rate"),
+        }
+    if artifact_type == "gate":
+        return {
+            "passed": data.get("passed"),
+            "failure_count": len(data.get("failures", [])),
+            "failed_metrics": [
+                failure.get("metric") for failure in data.get("failures", [])
+            ],
+        }
+    if artifact_type == "rank_gate":
+        candidate = data.get("candidate") or {}
+        return {
+            "passed": data.get("passed"),
+            "candidate_label": candidate.get("label"),
+            "candidate_score": candidate.get("score"),
+            "failure_count": len(data.get("failures", [])),
+            "failed_metrics": [
+                failure.get("metric") for failure in data.get("failures", [])
+            ],
+        }
+    if artifact_type in {"promotion_audit", "audit_summary"}:
+        candidate = data.get("candidate") or {}
+        return {
+            "passed": data.get("passed"),
+            "candidate_label": candidate.get("label"),
+            "candidate_score": candidate.get("score"),
+            "failure_count": len(data.get("failures", [])),
+            "ranking_labels": data.get("ranking_labels", []),
+        }
+    if artifact_type == "strategy_report":
+        issues = data.get("issues", [])
+        return {
+            "issue_count": data.get("issue_count", len(issues)),
+            "candidate_issue_count": len(
+                [
+                    issue
+                    for issue in issues
+                    if str(issue.get("scope", "")).startswith("candidate:")
+                ]
+            ),
+            "issue_metrics": sorted(
+                {issue.get("metric") for issue in issues if issue.get("metric")}
+            ),
+            "scanned_artifacts": data.get("scanned_artifacts"),
+        }
+    if artifact_type == "replay_analysis":
+        return {
+            "episode_id": data.get("episode_id"),
+            "winner": data.get("winner"),
+            "length": data.get("length"),
+            "map_name": data.get("map_name"),
+            "flags": data.get("flags", {}),
+            "totals": data.get("totals", {}),
+        }
+    if artifact_type == "replay_analysis_batch":
+        return {
+            "scanned_replays": data.get("scanned_replays"),
+            "selected_count": data.get("selected_count"),
+            "bucket_counts": data.get("bucket_counts", {}),
+            "skipped_count": len(data.get("skipped_replays", [])),
+        }
+    if artifact_type == "long_run_manifest":
+        cfg = data.get("manifest_config", {})
+        commands = data.get("commands", [])
+        source_control = cfg.get("source_control", {})
+        return {
+            "run_id": cfg.get("run_id"),
+            "timesteps": cfg.get("timesteps"),
+            "checkpoint_dir": cfg.get("checkpoint_dir"),
+            "eval_dir": cfg.get("eval_dir"),
+            "replay_dir": cfg.get("replay_dir"),
+            "replay_save_interval": cfg.get("replay_save_interval"),
+            "replay_save_interval_source": cfg.get("replay_save_interval_source"),
+            "min_eval_episodes": cfg.get("min_eval_episodes"),
+            "min_map_episodes": cfg.get("min_map_episodes"),
+            "min_replay_combat_maps": cfg.get("min_replay_combat_maps"),
+            "min_head_to_head_episodes": cfg.get("min_head_to_head_episodes"),
+            "min_head_to_head_map_episodes": cfg.get(
+                "min_head_to_head_map_episodes"
+            ),
+            "require_candidate_checkpoint": cfg.get("require_candidate_checkpoint"),
+            "require_candidate_metadata": cfg.get("require_candidate_metadata"),
+            "required_curriculum_stage": cfg.get("required_curriculum_stage"),
+            "required_reward_preset": cfg.get("required_reward_preset"),
+            "require_head_to_head": cfg.get("require_head_to_head"),
+            "source_commit": source_control.get("commit"),
+            "source_dirty": source_control.get("dirty"),
+            "source_status_short_count": source_control.get(
+                "status_short_count"
+            ),
+            "preflight_shell_script_path": data.get("preflight_shell_script_path"),
+            "has_preflight_shell_script": bool(data.get("preflight_shell_script")),
+            "rank_gate": cfg.get("rank_gate", {}),
+            "strategy_report": cfg.get("strategy_report", {}),
+            "command_count": len(commands),
+            "expensive_command_ids": [
+                command.get("id")
+                for command in commands
+                if command.get("expensive")
+            ],
+        }
+    if artifact_type == "long_run_check":
+        candidate = data.get("candidate") or {}
+        checks = data.get("checks", [])
+        required_checks = [check for check in checks if check.get("required", True)]
+        failed_required_checks = [
+            check for check in required_checks if not check.get("passed")
+        ]
+        return {
+            "passed": data.get("passed"),
+            "candidate_label": candidate.get("label"),
+            "candidate_score": candidate.get("score"),
+            "required_check_count": len(required_checks),
+            "failed_required_check_count": len(failed_required_checks),
+            "failed_required_checks": [
+                check.get("id") for check in failed_required_checks
+            ],
+        }
+    if artifact_type == "long_run_status":
+        latest = data.get("latest_manifest") or {}
+        return {
+            "latest_run_id": latest.get("run_id"),
+            "latest_launcher_path": latest.get("launcher_path"),
+            "latest_preflight_launcher_path": latest.get("preflight_launcher_path"),
+            "latest_eval_dir_exists": latest.get("eval_dir_exists"),
+            "latest_preflight_dir_exists": latest.get("preflight_dir_exists"),
+            "latest_passing_long_run_check_count": latest.get(
+                "passing_long_run_check_count"
+            ),
+            "candidate_evidence_ready": data.get("candidate_evidence_ready"),
+            "blocked_reason": data.get("blocked_reason"),
+            "missing_evidence": data.get("missing_evidence", []),
+            "next_command": data.get("next_command"),
+            "next_preflight_command": data.get("next_preflight_command"),
+        }
+    return {}
+
+
+def artifact_links(data: dict, artifact_type: str) -> dict:
+    if artifact_type in {"comparison", "gate"}:
+        return {
+            "before_path": data.get("before_path"),
+            "after_path": data.get("after_path"),
+        }
+    if artifact_type == "rank_gate":
+        return {"rank_summary_path": data.get("rank_summary_path")}
+    if artifact_type == "promotion_audit":
+        return {
+            "rank_artifact_path": data.get("rank_artifact_path"),
+            "rank_gate_artifact_path": data.get("rank_gate_artifact_path"),
+        }
+    if artifact_type == "audit_summary":
+        return {
+            "promotion_audit_path": data.get("audit_summary_path"),
+            "rank_artifact_path": data.get("rank_artifact_path"),
+            "rank_gate_artifact_path": data.get("rank_gate_artifact_path"),
+        }
+    return {}
+
+
+def build_artifact_index(artifact_dir: str | Path, recursive: bool = False) -> dict:
+    root = Path(artifact_dir)
+    patterns = (
+        ("**/*.json", "**/*.exitcode", "**/*.sh", "**/*.out")
+        if recursive
+        else ("*.json", "*.exitcode", "*.sh", "*.out")
+    )
+    paths = sorted(
+        {
+            path
+            for pattern in patterns
+            for path in root.glob(pattern)
+            if path.is_file()
+        }
+    )
+    artifacts = [summarize_artifact_file(path, root=root) for path in paths]
+    counts: dict[str, int] = {}
+    for entry in artifacts:
+        artifact_type = entry["artifact_type"]
+        counts[artifact_type] = counts.get(artifact_type, 0) + 1
+
+    return {
+        "artifact": artifact_metadata("artifact_index"),
+        "index_config": {
+            "artifact_dir": str(root),
+            "recursive": recursive,
+            "artifact_count": len(artifacts),
+        },
+        "artifact_counts": counts,
+        "artifacts": artifacts,
+    }
+
+
+def run_artifact_index(
+    artifact_dir: str,
+    recursive: bool,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    index = build_artifact_index(artifact_dir, recursive=recursive)
+    print(json.dumps(index, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "artifact-index"
+        path = write_eval_summary(index, output_dir, label=label)
+        print(f"Saved artifact index to {path}")
+
+
+def add_rate_issue(
+    issues: list[dict],
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    scope: str,
+    metric: str,
+    value,
+    threshold: float,
+    reason: str,
+) -> None:
+    if value is None:
+        return
+    value = float(value)
+    if value > threshold:
+        issues.append(
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": scope,
+                "metric": metric,
+                "value": value,
+                "threshold": threshold,
+                "reason": reason,
+            }
+        )
+
+
+def eval_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    scope: str,
+    thresholds: dict[str, float],
+) -> list[dict]:
+    episodes = int(summary.get("episodes", 0) or 0)
+    behavior = summary.get("behavior", {})
+    no_damage_rate = None
+    low_engagement_rate = None
+    if episodes > 0:
+        no_damage_rate = float(behavior.get("no_damage_episodes", 0)) / episodes
+        low_engagement_rate = (
+            float(behavior.get("low_engagement_episodes", 0)) / episodes
+        )
+
+    issues: list[dict] = []
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="draw_rate",
+        value=summary.get("draw_rate"),
+        threshold=thresholds["max_draw_rate"],
+        reason="draw_rate_above_threshold",
+    )
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="no_damage_rate",
+        value=no_damage_rate,
+        threshold=thresholds["max_no_damage_rate"],
+        reason="no_damage_rate_above_threshold",
+    )
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="low_engagement_rate",
+        value=low_engagement_rate,
+        threshold=thresholds["max_low_engagement_rate"],
+        reason="low_engagement_rate_above_threshold",
+    )
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="idle_rate_agent_0",
+        value=behavior.get("avg_idle_rate", {}).get("agent_0"),
+        threshold=thresholds["max_idle_rate"],
+        reason="agent_0_idle_rate_above_threshold",
+    )
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="dominant_action_rate_agent_0",
+        value=behavior.get("avg_dominant_action_rate", {}).get("agent_0"),
+        threshold=thresholds["max_dominant_action_rate"],
+        reason="agent_0_dominant_action_rate_above_threshold",
+    )
+    return issues
+
+
+def rank_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    thresholds: dict[str, float],
+) -> list[dict]:
+    issues: list[dict] = []
+    for ranking in summary.get("rankings", []):
+        scope = f"rank:{ranking.get('label')}"
+        add_rate_issue(
+            issues,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope=scope,
+            metric="mean_draw_rate",
+            value=ranking.get("mean_draw_rate"),
+            threshold=thresholds["max_draw_rate"],
+            reason="mean_draw_rate_above_threshold",
+        )
+        add_rate_issue(
+            issues,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope=scope,
+            metric="mean_no_damage_rate",
+            value=ranking.get("mean_no_damage_rate"),
+            threshold=thresholds["max_no_damage_rate"],
+            reason="mean_no_damage_rate_above_threshold",
+        )
+        add_rate_issue(
+            issues,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope=scope,
+            metric="mean_low_engagement_rate",
+            value=ranking.get("mean_low_engagement_rate"),
+            threshold=thresholds["max_low_engagement_rate"],
+            reason="mean_low_engagement_rate_above_threshold",
+        )
+    for entry in summary.get("suites", []):
+        label = entry.get("label")
+        suite = entry.get("suite") or {}
+        for map_name, opponents in suite.get("matchups", {}).items():
+            for opponent, matchup in opponents.items():
+                issues.extend(
+                    eval_strategy_issues(
+                        matchup,
+                        path=path,
+                        relative_path=relative_path,
+                        artifact_type=artifact_type,
+                        scope=f"candidate:{label}:rank_suite:{map_name}/{opponent}",
+                        thresholds=thresholds,
+                    )
+                )
+    return issues
+
+
+def candidate_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    thresholds: dict[str, float],
+) -> list[dict]:
+    candidate = summary.get("candidate") or {}
+    scope = f"candidate:{candidate.get('label')}"
+    issues: list[dict] = []
+    draw_metric = "mean_draw_rate"
+    draw_rate = candidate.get(draw_metric)
+    if draw_rate is None:
+        draw_metric = "draw_rate"
+        draw_rate = candidate.get(draw_metric)
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric=draw_metric,
+        value=draw_rate,
+        threshold=thresholds["max_draw_rate"],
+        reason=f"candidate_{draw_metric}_above_threshold",
+    )
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="mean_no_damage_rate",
+        value=candidate.get("mean_no_damage_rate"),
+        threshold=thresholds["max_no_damage_rate"],
+        reason="candidate_no_damage_rate_above_threshold",
+    )
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="mean_low_engagement_rate",
+        value=candidate.get("mean_low_engagement_rate"),
+        threshold=thresholds["max_low_engagement_rate"],
+        reason="candidate_low_engagement_rate_above_threshold",
+    )
+    return issues
+
+
+def replay_analysis_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    thresholds: dict[str, float],
+) -> list[dict]:
+    episode_id = summary.get("episode_id")
+    scope = f"replay:{episode_id if episode_id is not None else Path(path).stem}"
+    flags = summary.get("flags", {})
+    totals = summary.get("totals", {})
+    no_damage = flags.get("no_damage")
+    if no_damage is None and "damage_dealt" in totals:
+        no_damage = int(totals.get("damage_dealt", 0)) == 0
+
+    issues: list[dict] = []
+    if no_damage is not None:
+        add_rate_issue(
+            issues,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope=scope,
+            metric="replay_no_damage",
+            value=1.0 if no_damage else 0.0,
+            threshold=thresholds["max_no_damage_rate"],
+            reason="replay_no_damage",
+        )
+    if no_damage is True and summary.get("winner") == "draw":
+        add_rate_issue(
+            issues,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope=scope,
+            metric="replay_low_engagement",
+            value=1.0,
+            threshold=thresholds["max_low_engagement_rate"],
+            reason="replay_no_damage_draw",
+        )
+    if flags.get("no_attacks") is True and summary.get("winner") == "draw":
+        add_rate_issue(
+            issues,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope=scope,
+            metric="replay_no_attacks",
+            value=1.0,
+            threshold=thresholds["max_low_engagement_rate"],
+            reason="replay_no_attacks_draw",
+        )
+    return issues
+
+
+def strategy_issues_for_artifact(
+    data: dict,
+    *,
+    artifact_type: str,
+    path: str,
+    relative_path: str | None,
+    thresholds: dict[str, float],
+) -> list[dict]:
+    if artifact_type == "eval":
+        return eval_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope="eval",
+            thresholds=thresholds,
+        )
+    if artifact_type == "suite":
+        issues = []
+        for map_name, opponents in data.get("matchups", {}).items():
+            for opponent, matchup in opponents.items():
+                issues.extend(
+                    eval_strategy_issues(
+                        matchup,
+                        path=path,
+                        relative_path=relative_path,
+                        artifact_type=artifact_type,
+                        scope=f"suite:{map_name}/{opponent}",
+                        thresholds=thresholds,
+                    )
+                )
+        return issues
+    if artifact_type == "rank":
+        return rank_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            thresholds=thresholds,
+        )
+    if artifact_type in {"rank_gate", "promotion_audit", "audit_summary"}:
+        return candidate_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            thresholds=thresholds,
+        )
+    if artifact_type == "replay_analysis":
+        return replay_analysis_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            thresholds=thresholds,
+        )
+    return []
+
+
+def build_strategy_report(
+    artifact_dir: str | Path,
+    recursive: bool = False,
+    max_draw_rate: float = 0.9,
+    max_no_damage_rate: float = 0.75,
+    max_low_engagement_rate: float = 0.5,
+    max_idle_rate: float = 0.75,
+    max_dominant_action_rate: float = 0.95,
+) -> dict:
+    root = Path(artifact_dir)
+    thresholds = {
+        "max_draw_rate": max_draw_rate,
+        "max_no_damage_rate": max_no_damage_rate,
+        "max_low_engagement_rate": max_low_engagement_rate,
+        "max_idle_rate": max_idle_rate,
+        "max_dominant_action_rate": max_dominant_action_rate,
+    }
+    pattern = "**/*.json" if recursive else "*.json"
+    paths = sorted(path for path in root.glob(pattern) if path.is_file())
+    issues = []
+    scanned = 0
+    skipped = []
+    for path in paths:
+        relative_path = None
+        try:
+            relative_path = str(path.relative_to(root))
+            data = load_eval_summary(path)
+        except Exception as exc:
+            skipped.append(
+                {
+                    "path": str(path),
+                    "relative_path": relative_path,
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+
+        artifact = data.get("artifact", {})
+        artifact_type = "unknown"
+        if isinstance(artifact, dict):
+            artifact_type = artifact.get("artifact_type") or "unknown"
+        scanned += 1
+        issues.extend(
+            strategy_issues_for_artifact(
+                data,
+                artifact_type=artifact_type,
+                path=str(path),
+                relative_path=relative_path,
+                thresholds=thresholds,
+            )
+        )
+
+    return {
+        "artifact": artifact_metadata("strategy_report"),
+        "report_config": {
+            "artifact_dir": str(root),
+            "recursive": recursive,
+            **thresholds,
+        },
+        "scanned_artifacts": scanned,
+        "skipped_artifacts": skipped,
+        "issue_count": len(issues),
+        "issues": issues,
+    }
+
+
+def run_strategy_report(
+    artifact_dir: str,
+    recursive: bool,
+    max_draw_rate: float,
+    max_no_damage_rate: float,
+    max_low_engagement_rate: float,
+    max_idle_rate: float,
+    max_dominant_action_rate: float,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    report = build_strategy_report(
+        artifact_dir,
+        recursive=recursive,
+        max_draw_rate=max_draw_rate,
+        max_no_damage_rate=max_no_damage_rate,
+        max_low_engagement_rate=max_low_engagement_rate,
+        max_idle_rate=max_idle_rate,
+        max_dominant_action_rate=max_dominant_action_rate,
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "strategy-report"
+        path = write_eval_summary(report, output_dir, label=label)
+        print(f"Saved strategy report to {path}")
+
+
+def check_result(
+    check_id: str,
+    passed: bool,
+    details: dict,
+    required: bool = True,
+) -> dict:
+    return {
+        "id": check_id,
+        "required": required,
+        "passed": bool(passed),
+        "details": details,
+    }
+
+
+def candidate_map_names(candidate: dict) -> list[str]:
+    maps = {
+        item.get("map_name")
+        for item in candidate.get("matchup_scores", [])
+        if item.get("map_name")
+    }
+    return sorted(maps)
+
+
+def missing_required_maps(
+    candidate_maps: list[str],
+    required_maps: tuple[str, ...],
+) -> list[str]:
+    present = set(candidate_maps)
+    return [map_name for map_name in required_maps if map_name not in present]
+
+
+def checkpoint_metadata_maps(metadata: dict | None) -> list[str]:
+    if not isinstance(metadata, dict):
+        return []
+    maps = set()
+    if metadata.get("randomize_maps"):
+        maps.update(metadata.get("map_choices", []))
+    elif metadata.get("map_name"):
+        maps.add(metadata["map_name"])
+    curriculum = metadata.get("curriculum") or {}
+    maps.update(curriculum.get("active_map_pool", []))
+    stage = curriculum.get("stage") or {}
+    maps.update(stage.get("map_choices", []))
+    return sorted(maps)
+
+
+def candidate_per_map_scores(candidate: dict) -> list[dict]:
+    score_groups: dict[str, list[float]] = {}
+    episode_counts: dict[str, int] = {}
+    for item in candidate.get("matchup_scores", []):
+        map_name = item.get("map_name")
+        if not map_name or "score" not in item:
+            continue
+        score_groups.setdefault(map_name, []).append(float(item["score"]))
+        episode_counts[map_name] = episode_counts.get(map_name, 0) + int(
+            item.get("episodes", 0) or 0
+        )
+
+    return [
+        {
+            "map_name": map_name,
+            "mean_score": sum(scores) / len(scores),
+            "matchup_count": len(scores),
+            "episode_count": episode_counts.get(map_name, 0),
+        }
+        for map_name, scores in sorted(score_groups.items())
+        if scores
+    ]
+
+
+def candidate_strategy_issues_for_check(
+    strategy_report: dict,
+    candidate_label: str | None = None,
+) -> list[dict]:
+    candidate_metrics = {
+        "draw_rate",
+        "mean_draw_rate",
+        "no_damage_rate",
+        "low_engagement_rate",
+        "mean_no_damage_rate",
+        "mean_low_engagement_rate",
+        "idle_rate_agent_0",
+        "dominant_action_rate_agent_0",
+    }
+
+    def matches_candidate_scope(issue: dict) -> bool:
+        scope = str(issue.get("scope", ""))
+        if candidate_label is None:
+            return scope.startswith("candidate:")
+        candidate_scope = f"candidate:{candidate_label}"
+        return scope == candidate_scope or scope.startswith(f"{candidate_scope}:")
+
+    return [
+        issue
+        for issue in strategy_report.get("issues", [])
+        if matches_candidate_scope(issue)
+        and issue.get("metric") in candidate_metrics
+    ]
+
+
+def replay_analysis_has_combat(artifact_index: dict) -> bool:
+    return replay_analysis_combat_summary(artifact_index)["combat_replay_count"] > 0
+
+
+def replay_analysis_combat_summary(artifact_index: dict) -> dict:
+    combat_maps = set()
+    combat_replay_count = 0
+    replay_analysis_count = 0
+    for entry in artifact_index.get("artifacts", []):
+        if entry.get("artifact_type") != "replay_analysis":
+            continue
+        replay_analysis_count += 1
+        summary = entry.get("summary", {})
+        flags = summary.get("flags", {})
+        totals = summary.get("totals", {})
+        has_combat = flags.get("no_damage") is False or int(
+            totals.get("damage_dealt", 0)
+        ) > 0
+        if not has_combat:
+            continue
+        combat_replay_count += 1
+        map_name = summary.get("map_name")
+        if map_name:
+            combat_maps.add(map_name)
+    return {
+        "replay_analysis_count": replay_analysis_count,
+        "combat_replay_count": combat_replay_count,
+        "combat_maps": sorted(combat_maps),
+        "combat_map_count": len(combat_maps),
+    }
+
+
+def artifact_index_contains_path(artifact_index: dict, artifact_path: str | Path) -> bool:
+    target = Path(artifact_path).resolve()
+    root = artifact_index.get("index_config", {}).get("artifact_dir")
+    root_path = Path(root) if root else None
+
+    for entry in artifact_index.get("artifacts", []):
+        candidates = []
+        if entry.get("path"):
+            candidates.append(Path(entry["path"]))
+        if root_path is not None and entry.get("relative_path"):
+            candidates.append(root_path / entry["relative_path"])
+        for candidate in candidates:
+            if candidate.resolve() == target:
+                return True
+    return False
+
+
+def _summary_episode_count(summary: dict) -> int:
+    return int(summary.get("episodes", 0) or 0)
+
+
+def _suite_matchup_episode_count(suite: dict) -> tuple[int, int]:
+    total = 0
+    counted_matchups = 0
+    matchups = suite.get("matchups", {})
+    if not isinstance(matchups, dict):
+        return total, counted_matchups
+
+    for opponents in matchups.values():
+        if not isinstance(opponents, dict):
+            continue
+        for summary in opponents.values():
+            if not isinstance(summary, dict) or "episodes" not in summary:
+                continue
+            total += _summary_episode_count(summary)
+            counted_matchups += 1
+    return total, counted_matchups
+
+
+def _head_to_head_episode_count(
+    head_to_head: dict,
+) -> tuple[int, int, dict[str, int]]:
+    total = 0
+    counted_sides = 0
+    per_map: dict[str, int] = {}
+    matchups = head_to_head.get("matchups", {})
+    if not isinstance(matchups, dict):
+        return total, counted_sides, per_map
+
+    for map_name, map_matchups in matchups.items():
+        if not isinstance(map_matchups, dict):
+            continue
+        for pairing in map_matchups.values():
+            if not isinstance(pairing, dict):
+                continue
+            for side in ("forward", "reverse"):
+                summary = pairing.get(side)
+                if not isinstance(summary, dict) or "episodes" not in summary:
+                    continue
+                episodes = _summary_episode_count(summary)
+                total += episodes
+                per_map[map_name] = per_map.get(map_name, 0) + episodes
+                counted_sides += 1
+    return total, counted_sides, per_map
+
+
+def rank_evaluation_episode_counts(
+    rank_summary: dict | None,
+    candidate_label: str | None = None,
+) -> dict:
+    if rank_summary is None:
+        return {
+            "baseline_episodes": 0,
+            "candidate_baseline_episodes": 0,
+            "head_to_head_episodes": 0,
+            "total_episodes": 0,
+            "configured_baseline_episodes": 0,
+            "configured_head_to_head_episodes": 0,
+            "configured_total_episodes": 0,
+            "baseline_matchups_counted": 0,
+            "candidate_baseline_matchups_counted": 0,
+            "head_to_head_sides_counted": 0,
+            "head_to_head_map_episodes": {},
+        }
+
+    if candidate_label is None:
+        rankings = rank_summary.get("rankings", [])
+        if rankings:
+            candidate_label = rankings[0].get("label")
+
+    cfg = rank_summary.get("rank_config", {})
+    checkpoints = cfg.get("checkpoints", [])
+    checkpoint_count = len(checkpoints) or len(rank_summary.get("rankings", []))
+    map_count = len(cfg.get("maps", []))
+    opponent_count = len(cfg.get("opponents", []))
+    episodes_per_matchup = int(cfg.get("episodes_per_matchup", 0) or 0)
+    baseline_episodes = (
+        checkpoint_count * map_count * opponent_count * episodes_per_matchup
+    )
+    configured_head_to_head_episodes = int(
+        rank_summary.get("head_to_head", {})
+        .get("overview", {})
+        .get("total_episodes", 0)
+        or 0
+    )
+    actual_baseline_episodes = 0
+    candidate_baseline_episodes = 0
+    baseline_matchups_counted = 0
+    candidate_baseline_matchups_counted = 0
+    for entry in rank_summary.get("suites", []):
+        suite = entry.get("suite", {}) if isinstance(entry, dict) else {}
+        suite_episodes, suite_matchups = _suite_matchup_episode_count(suite)
+        actual_baseline_episodes += suite_episodes
+        baseline_matchups_counted += suite_matchups
+        if isinstance(entry, dict) and entry.get("label") == candidate_label:
+            candidate_baseline_episodes += suite_episodes
+            candidate_baseline_matchups_counted += suite_matchups
+
+    head_to_head = rank_summary.get("head_to_head", {})
+    (
+        actual_head_to_head_episodes,
+        head_to_head_sides_counted,
+        head_to_head_map_episodes,
+    ) = (
+        _head_to_head_episode_count(head_to_head)
+        if isinstance(head_to_head, dict)
+        else (0, 0, {})
+    )
+
+    return {
+        "baseline_episodes": actual_baseline_episodes,
+        "candidate_baseline_episodes": candidate_baseline_episodes,
+        "head_to_head_episodes": actual_head_to_head_episodes,
+        "total_episodes": actual_baseline_episodes + actual_head_to_head_episodes,
+        "configured_baseline_episodes": baseline_episodes,
+        "configured_head_to_head_episodes": configured_head_to_head_episodes,
+        "configured_total_episodes": (
+            baseline_episodes + configured_head_to_head_episodes
+        ),
+        "baseline_matchups_counted": baseline_matchups_counted,
+        "candidate_baseline_matchups_counted": candidate_baseline_matchups_counted,
+        "head_to_head_sides_counted": head_to_head_sides_counted,
+        "head_to_head_map_episodes": dict(sorted(head_to_head_map_episodes.items())),
+    }
+
+
+def load_rank_for_promotion(promotion_audit: dict) -> dict | None:
+    if "rank" in promotion_audit:
+        return promotion_audit["rank"]
+    rank_path = promotion_audit.get("rank_artifact_path")
+    if not rank_path:
+        return None
+    path = Path(rank_path)
+    if not path.exists():
+        return None
+    summary = load_eval_summary(path)
+    validate_artifact(summary, "rank")
+    return summary
+
+
+def build_long_run_check(
+    promotion_audit: dict,
+    strategy_report: dict,
+    artifact_index: dict,
+    *,
+    promotion_audit_path: str | None = None,
+    strategy_report_path: str | None = None,
+    min_maps: int = 2,
+    required_maps: tuple[str, ...] = (),
+    min_eval_episodes: int = 0,
+    min_map_episodes: int | None = None,
+    min_map_score: float | None = None,
+    require_replay_analysis: bool = False,
+    min_replay_combat_maps: int = 0,
+    require_candidate_checkpoint: bool = False,
+    require_candidate_metadata: bool = False,
+    required_curriculum_stage: str | None = None,
+    required_reward_preset: str | None = None,
+    require_head_to_head: bool = False,
+    min_head_to_head_episodes: int = 0,
+    min_head_to_head_map_episodes: int | None = None,
+) -> dict:
+    validate_artifact(promotion_audit, "promotion_audit")
+    validate_artifact(strategy_report, "strategy_report")
+    validate_artifact(artifact_index, "artifact_index")
+
+    candidate = promotion_audit.get("candidate") or {}
+    candidate_label = candidate.get("label")
+    map_names = candidate_map_names(candidate)
+    per_map_scores = candidate_per_map_scores(candidate)
+    counts = artifact_index.get("artifact_counts", {})
+    bad_strategy_issues = candidate_strategy_issues_for_check(
+        strategy_report,
+        candidate_label=candidate_label,
+    )
+    rank_summary = load_rank_for_promotion(promotion_audit)
+    eval_episode_counts = rank_evaluation_episode_counts(
+        rank_summary,
+        candidate_label=candidate_label,
+    )
+    replay_combat = replay_analysis_combat_summary(artifact_index)
+    candidate_checkpoint = candidate.get("checkpoint")
+    candidate_metadata = None
+    candidate_metadata_error = None
+    if candidate_checkpoint:
+        try:
+            candidate_metadata = read_checkpoint_metadata(candidate_checkpoint)
+        except (OSError, json.JSONDecodeError) as exc:
+            candidate_metadata_error = f"{type(exc).__name__}: {exc}"
+
+    checks = [
+        check_result(
+            "promotion_audit_passed",
+            bool(promotion_audit.get("passed")),
+            {
+                "failures": promotion_audit.get("failures", []),
+            },
+        ),
+        check_result(
+            "no_candidate_bad_strategy_issues",
+            not bad_strategy_issues,
+            {
+                "issue_count": len(bad_strategy_issues),
+                "issues": bad_strategy_issues,
+            },
+        ),
+        check_result(
+            "candidate_map_coverage",
+            len(map_names) >= min_maps,
+            {
+                "map_count": len(map_names),
+                "maps": map_names,
+                "min_maps": min_maps,
+            },
+        ),
+        check_result(
+            "artifact_index_has_required_artifacts",
+            all(
+                counts.get(artifact_type, 0) > 0
+                for artifact_type in (
+                    "promotion_audit",
+                    "strategy_report",
+                    "rank",
+                    "rank_gate",
+                )
+            ),
+            {
+                "artifact_counts": counts,
+                "required_types": [
+                    "promotion_audit",
+                    "strategy_report",
+                    "rank",
+                    "rank_gate",
+                ],
+            },
+        ),
+    ]
+
+    if required_maps:
+        missing_maps = missing_required_maps(map_names, required_maps)
+        checks.append(
+            check_result(
+                "candidate_required_maps",
+                not missing_maps,
+                {
+                    "maps": map_names,
+                    "required_maps": list(required_maps),
+                    "missing_maps": missing_maps,
+                },
+            )
+        )
+
+    input_paths = {
+        "promotion_audit": promotion_audit_path,
+        "strategy_report": strategy_report_path,
+    }
+    checked_inputs = {
+        artifact_type: path
+        for artifact_type, path in input_paths.items()
+        if path is not None
+    }
+    if checked_inputs:
+        missing_inputs = {
+            artifact_type: path
+            for artifact_type, path in checked_inputs.items()
+            if not artifact_index_contains_path(artifact_index, path)
+        }
+        checks.append(
+            check_result(
+                "artifact_index_contains_input_artifacts",
+                not missing_inputs,
+                {
+                    "checked_inputs": checked_inputs,
+                    "missing_inputs": missing_inputs,
+                },
+            )
+        )
+
+    if require_replay_analysis:
+        checks.append(
+            check_result(
+                "replay_analysis_has_combat",
+                counts.get("replay_analysis", 0) > 0
+                and replay_combat["combat_replay_count"] > 0,
+                {
+                    "replay_analysis_count": counts.get("replay_analysis", 0),
+                    **replay_combat,
+                },
+            )
+        )
+
+    if min_replay_combat_maps > 0:
+        required_map_set = set(required_maps)
+        eligible_combat_maps = [
+            map_name
+            for map_name in replay_combat["combat_maps"]
+            if not required_map_set or map_name in required_map_set
+        ]
+        ignored_combat_maps = [
+            map_name
+            for map_name in replay_combat["combat_maps"]
+            if required_map_set and map_name not in required_map_set
+        ]
+        checks.append(
+            check_result(
+                "replay_combat_map_coverage",
+                len(eligible_combat_maps) >= min_replay_combat_maps,
+                {
+                    **replay_combat,
+                    "eligible_combat_maps": eligible_combat_maps,
+                    "ignored_combat_maps": ignored_combat_maps,
+                    "required_maps": list(required_maps),
+                    "min_replay_combat_maps": min_replay_combat_maps,
+                },
+            )
+        )
+
+    if min_eval_episodes > 0:
+        checks.append(
+            check_result(
+                "minimum_rank_eval_episodes",
+                eval_episode_counts["candidate_baseline_episodes"]
+                >= min_eval_episodes,
+                {
+                    **eval_episode_counts,
+                    "min_eval_episodes": min_eval_episodes,
+                },
+            )
+        )
+
+    if min_head_to_head_episodes > 0:
+        checks.append(
+            check_result(
+                "minimum_head_to_head_episodes",
+                eval_episode_counts["head_to_head_episodes"]
+                >= min_head_to_head_episodes,
+                {
+                    **eval_episode_counts,
+                    "min_head_to_head_episodes": min_head_to_head_episodes,
+                },
+            )
+        )
+
+    if min_head_to_head_map_episodes is not None:
+        head_to_head_map_episodes = eval_episode_counts[
+            "head_to_head_map_episodes"
+        ]
+        target_maps = required_maps or tuple(sorted(head_to_head_map_episodes))
+        low_head_to_head_maps = [
+            {
+                "map_name": map_name,
+                "episode_count": head_to_head_map_episodes.get(map_name, 0),
+            }
+            for map_name in target_maps
+            if head_to_head_map_episodes.get(map_name, 0)
+            < min_head_to_head_map_episodes
+        ]
+        checks.append(
+            check_result(
+                "head_to_head_min_map_episodes",
+                bool(target_maps) and not low_head_to_head_maps,
+                {
+                    **eval_episode_counts,
+                    "required_maps": list(required_maps),
+                    "target_maps": list(target_maps),
+                    "min_head_to_head_map_episodes": (
+                        min_head_to_head_map_episodes
+                    ),
+                    "low_head_to_head_maps": low_head_to_head_maps,
+                },
+            )
+        )
+
+    if min_map_episodes is not None:
+        low_episode_maps = [
+            item
+            for item in per_map_scores
+            if item["episode_count"] < min_map_episodes
+        ]
+        checks.append(
+            check_result(
+                "candidate_min_map_episodes",
+                bool(per_map_scores) and not low_episode_maps,
+                {
+                    "min_map_episodes": min_map_episodes,
+                    "per_map_scores": per_map_scores,
+                    "low_episode_maps": low_episode_maps,
+                },
+            )
+        )
+
+    if min_map_score is not None:
+        low_score_maps = [
+            item
+            for item in per_map_scores
+            if item["mean_score"] < min_map_score
+        ]
+        checks.append(
+            check_result(
+                "candidate_min_map_score",
+                bool(per_map_scores) and not low_score_maps,
+                {
+                    "min_map_score": min_map_score,
+                    "per_map_scores": per_map_scores,
+                    "low_score_maps": low_score_maps,
+                },
+            )
+        )
+
+    if require_candidate_checkpoint:
+        candidate_checkpoint_exists = bool(
+            candidate_checkpoint and Path(candidate_checkpoint).exists()
+        )
+        checks.append(
+            check_result(
+                "candidate_checkpoint_exists",
+                candidate_checkpoint_exists,
+                {
+                    "checkpoint": candidate_checkpoint,
+                },
+            )
+        )
+
+    if require_candidate_metadata:
+        checks.append(
+            check_result(
+                "candidate_checkpoint_metadata_exists",
+                isinstance(candidate_metadata, dict),
+                {
+                    "checkpoint": candidate_checkpoint,
+                    "metadata_present": isinstance(candidate_metadata, dict),
+                    "metadata_keys": (
+                        sorted(candidate_metadata)
+                        if isinstance(candidate_metadata, dict)
+                        else []
+                    ),
+                    "metadata_error": candidate_metadata_error,
+                },
+            )
+        )
+
+    if require_candidate_metadata and required_maps:
+        metadata_maps = checkpoint_metadata_maps(candidate_metadata)
+        missing_metadata_maps = missing_required_maps(metadata_maps, required_maps)
+        checks.append(
+            check_result(
+                "candidate_metadata_required_maps",
+                isinstance(candidate_metadata, dict) and not missing_metadata_maps,
+                {
+                    "metadata_maps": metadata_maps,
+                    "required_maps": list(required_maps),
+                    "missing_maps": missing_metadata_maps,
+                },
+            )
+        )
+
+    if required_curriculum_stage is not None:
+        curriculum = candidate_metadata.get("curriculum") if isinstance(
+            candidate_metadata, dict
+        ) else None
+        stage = (curriculum or {}).get("stage") or {}
+        actual_stage = stage.get("name")
+        checks.append(
+            check_result(
+                "candidate_metadata_curriculum_stage",
+                actual_stage == required_curriculum_stage,
+                {
+                    "required_curriculum_stage": required_curriculum_stage,
+                    "actual_curriculum_stage": actual_stage,
+                    "metadata_present": isinstance(candidate_metadata, dict),
+                },
+            )
+        )
+
+    if required_reward_preset is not None:
+        curriculum = candidate_metadata.get("curriculum") if isinstance(
+            candidate_metadata, dict
+        ) else None
+        actual_reward_preset = (curriculum or {}).get("active_reward_preset")
+        checks.append(
+            check_result(
+                "candidate_metadata_reward_preset",
+                actual_reward_preset == required_reward_preset,
+                {
+                    "required_reward_preset": required_reward_preset,
+                    "actual_reward_preset": actual_reward_preset,
+                    "metadata_present": isinstance(candidate_metadata, dict),
+                },
+            )
+        )
+
+    if rank_summary is None:
+        checks.append(
+            check_result(
+                "head_to_head_candidate_not_worse",
+                False,
+                {"reason": "missing_rank_artifact"},
+                required=require_head_to_head,
+            )
+        )
+    else:
+        head_to_head = rank_summary.get("head_to_head", {})
+        standings = head_to_head.get("standings", [])
+        if standings:
+            checks.append(
+                check_result(
+                    "head_to_head_candidate_not_worse",
+                    standings[0].get("label") == candidate_label,
+                    {
+                        "candidate_label": candidate_label,
+                        "top_head_to_head_label": standings[0].get("label"),
+                    },
+                )
+            )
+        else:
+            checks.append(
+                check_result(
+                "head_to_head_candidate_not_worse",
+                False,
+                {
+                    "reason": head_to_head.get(
+                        "skipped",
+                        "missing_head_to_head_standings",
+                    ),
+                },
+                required=require_head_to_head,
+            )
+        )
+
+    passed = all(check["passed"] for check in checks if check["required"])
+    return {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": passed,
+        "candidate": {
+            "label": candidate_label,
+            "checkpoint": candidate.get("checkpoint"),
+            "score": candidate.get("score"),
+            "rank": candidate.get("rank"),
+        },
+        "check_config": {
+            "min_maps": min_maps,
+            "required_maps": list(required_maps),
+            "min_eval_episodes": min_eval_episodes,
+            "min_map_episodes": min_map_episodes,
+            "min_map_score": min_map_score,
+            "require_replay_analysis": require_replay_analysis,
+            "min_replay_combat_maps": min_replay_combat_maps,
+            "min_head_to_head_episodes": min_head_to_head_episodes,
+            "min_head_to_head_map_episodes": min_head_to_head_map_episodes,
+            "require_candidate_checkpoint": require_candidate_checkpoint,
+            "require_candidate_metadata": require_candidate_metadata,
+            "required_curriculum_stage": required_curriculum_stage,
+            "required_reward_preset": required_reward_preset,
+            "require_head_to_head": require_head_to_head,
+        },
+        "checks": checks,
+    }
+
+
+def build_long_run_input_error_check(
+    input_errors: list[dict],
+    *,
+    min_maps: int,
+    required_maps: tuple[str, ...],
+    min_eval_episodes: int,
+    min_map_episodes: int | None,
+    min_map_score: float | None = None,
+    require_replay_analysis: bool,
+    min_replay_combat_maps: int = 0,
+    require_candidate_checkpoint: bool = False,
+    require_candidate_metadata: bool = False,
+    required_curriculum_stage: str | None = None,
+    required_reward_preset: str | None = None,
+    require_head_to_head: bool = False,
+    min_head_to_head_episodes: int = 0,
+    min_head_to_head_map_episodes: int | None = None,
+) -> dict:
+    return {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": False,
+        "candidate": {
+            "label": None,
+            "checkpoint": None,
+            "score": None,
+            "rank": None,
+        },
+        "check_config": {
+            "min_maps": min_maps,
+            "required_maps": list(required_maps),
+            "min_eval_episodes": min_eval_episodes,
+            "min_map_episodes": min_map_episodes,
+            "min_map_score": min_map_score,
+            "require_replay_analysis": require_replay_analysis,
+            "min_replay_combat_maps": min_replay_combat_maps,
+            "min_head_to_head_episodes": min_head_to_head_episodes,
+            "min_head_to_head_map_episodes": min_head_to_head_map_episodes,
+            "require_candidate_checkpoint": require_candidate_checkpoint,
+            "require_candidate_metadata": require_candidate_metadata,
+            "required_curriculum_stage": required_curriculum_stage,
+            "required_reward_preset": required_reward_preset,
+            "require_head_to_head": require_head_to_head,
+        },
+        "checks": [
+            check_result(
+                "input_artifacts_loadable",
+                False,
+                {"errors": input_errors},
+            )
+        ],
+    }
+
+
+def load_long_run_check_input(
+    name: str,
+    path: str,
+    expected_artifact_type: str,
+) -> tuple[dict | None, dict | None]:
+    try:
+        summary = load_eval_summary(path)
+        validate_artifact(summary, expected_artifact_type)
+    except json.JSONDecodeError as exc:
+        return None, {
+            "name": name,
+            "path": path,
+            "error_type": type(exc).__name__,
+            "message": f"{exc.msg} at line {exc.lineno} column {exc.colno}",
+        }
+    except (OSError, ValueError) as exc:
+        return None, {
+            "name": name,
+            "path": path,
+            "error_type": type(exc).__name__,
+            "message": str(exc),
+        }
+    return summary, None
+
+
+def run_long_run_check(
+    promotion_audit_path: str,
+    strategy_report_path: str,
+    artifact_index_path: str,
+    min_maps: int,
+    required_maps: tuple[str, ...],
+    min_eval_episodes: int,
+    min_map_score: float | None,
+    require_replay_analysis: bool,
+    min_map_episodes: int | None = None,
+    min_replay_combat_maps: int = 0,
+    require_candidate_checkpoint: bool = False,
+    require_candidate_metadata: bool = False,
+    required_curriculum_stage: str | None = None,
+    required_reward_preset: str | None = None,
+    require_head_to_head: bool = False,
+    min_head_to_head_episodes: int = 0,
+    min_head_to_head_map_episodes: int | None = None,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    input_specs = (
+        ("promotion_audit", promotion_audit_path, "promotion_audit"),
+        ("strategy_report", strategy_report_path, "strategy_report"),
+        ("artifact_index", artifact_index_path, "artifact_index"),
+    )
+    summaries = {}
+    input_errors = []
+    for name, path, expected_type in input_specs:
+        summary, error = load_long_run_check_input(name, path, expected_type)
+        if error is not None:
+            input_errors.append(error)
+        else:
+            summaries[name] = summary
+
+    if input_errors:
+        result = build_long_run_input_error_check(
+            input_errors,
+            min_maps=min_maps,
+            required_maps=required_maps,
+            min_eval_episodes=min_eval_episodes,
+            min_map_episodes=min_map_episodes,
+            min_map_score=min_map_score,
+            require_replay_analysis=require_replay_analysis,
+            min_replay_combat_maps=min_replay_combat_maps,
+            require_candidate_checkpoint=require_candidate_checkpoint,
+            require_candidate_metadata=require_candidate_metadata,
+            required_curriculum_stage=required_curriculum_stage,
+            required_reward_preset=required_reward_preset,
+            require_head_to_head=require_head_to_head,
+            min_head_to_head_episodes=min_head_to_head_episodes,
+            min_head_to_head_map_episodes=min_head_to_head_map_episodes,
+        )
+    else:
+        result = build_long_run_check(
+            summaries["promotion_audit"],
+            summaries["strategy_report"],
+            summaries["artifact_index"],
+            promotion_audit_path=promotion_audit_path,
+            strategy_report_path=strategy_report_path,
+            min_maps=min_maps,
+            required_maps=required_maps,
+            min_eval_episodes=min_eval_episodes,
+            min_map_episodes=min_map_episodes,
+            min_map_score=min_map_score,
+            require_replay_analysis=require_replay_analysis,
+            min_replay_combat_maps=min_replay_combat_maps,
+            require_candidate_checkpoint=require_candidate_checkpoint,
+            require_candidate_metadata=require_candidate_metadata,
+            required_curriculum_stage=required_curriculum_stage,
+            required_reward_preset=required_reward_preset,
+            require_head_to_head=require_head_to_head,
+            min_head_to_head_episodes=min_head_to_head_episodes,
+            min_head_to_head_map_episodes=min_head_to_head_map_episodes,
+        )
+    result["inputs"] = {
+        "promotion_audit": promotion_audit_path,
+        "strategy_report": strategy_report_path,
+        "artifact_index": artifact_index_path,
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "long-run-check"
+        path = write_eval_summary(result, output_dir, label=label)
+        print(f"Saved long-run check to {path}")
+    if not result["passed"]:
+        sys.exit(1)
+
+
+def failed_required_check_ids(long_run_check: dict) -> list[str]:
+    return [
+        check.get("id")
+        for check in long_run_check.get("checks", [])
+        if check.get("required", True) and not check.get("passed")
+    ]
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _existing_launcher_path(manifest_path: Path, manifest: dict) -> str | None:
+    explicit_path = manifest.get("shell_script_path")
+    if explicit_path:
+        return explicit_path
+    sibling_path = manifest_path.with_suffix(".sh")
+    if sibling_path.exists():
+        return str(sibling_path)
+    return None
+
+
+def _existing_preflight_launcher_path(
+    manifest_path: Path,
+    manifest: dict,
+) -> str | None:
+    explicit_path = manifest.get("preflight_shell_script_path")
+    if explicit_path:
+        return explicit_path
+    sibling_path = manifest_path.with_suffix(".preflight.sh")
+    if sibling_path.exists():
+        return str(sibling_path)
+    return None
+
+
+def _directory_file_count(path: Path | None) -> int:
+    if path is None or not path.exists():
+        return 0
+    return sum(1 for child in path.iterdir() if child.is_file())
+
+
+def _manifest_status_entry(manifest_path: Path, manifest: dict) -> dict:
+    cfg = manifest.get("manifest_config", {})
+    eval_dir = cfg.get("eval_dir")
+    eval_path = Path(eval_dir) if eval_dir else None
+    checkpoint_dir = cfg.get("checkpoint_dir")
+    checkpoint_path = Path(checkpoint_dir) if checkpoint_dir else None
+    replay_dir = cfg.get("replay_dir")
+    replay_path = Path(replay_dir) if replay_dir else None
+    preflight_dir = cfg.get("preflight_dir")
+    launcher_path = _existing_launcher_path(manifest_path, manifest)
+    preflight_launcher_path = _existing_preflight_launcher_path(
+        manifest_path,
+        manifest,
+    )
+    source_control = cfg.get("source_control", {})
+    return {
+        "path": str(manifest_path),
+        "run_id": cfg.get("run_id"),
+        "timesteps": cfg.get("timesteps"),
+        "eval_dir": eval_dir,
+        "eval_dir_exists": eval_path.exists() if eval_path else False,
+        "eval_file_count": _directory_file_count(eval_path),
+        "preflight_exitcode_exists": (
+            (eval_path / "preflight.exitcode").exists() if eval_path else False
+        ),
+        "train_exitcode_exists": (
+            (eval_path / "train.exitcode").exists() if eval_path else False
+        ),
+        "promotion_audit_exitcode_exists": (
+            (eval_path / "promotion-audit.exitcode").exists() if eval_path else False
+        ),
+        "long_run_check_exitcode_exists": (
+            (eval_path / "long-run-check.exitcode").exists() if eval_path else False
+        ),
+        "checkpoint_dir": checkpoint_dir,
+        "checkpoint_dir_exists": checkpoint_path.exists() if checkpoint_path else False,
+        "checkpoint_file_count": _directory_file_count(checkpoint_path),
+        "replay_dir": replay_dir,
+        "replay_dir_exists": replay_path.exists() if replay_path else False,
+        "replay_file_count": _directory_file_count(replay_path),
+        "preflight_dir": preflight_dir,
+        "preflight_dir_exists": (
+            Path(preflight_dir).exists() if preflight_dir else False
+        ),
+        "launcher_path": launcher_path,
+        "launcher_exists": Path(launcher_path).exists() if launcher_path else False,
+        "preflight_launcher_path": preflight_launcher_path,
+        "preflight_launcher_exists": (
+            Path(preflight_launcher_path).exists()
+            if preflight_launcher_path
+            else False
+        ),
+        "required_maps": cfg.get("required_maps", []),
+        "min_eval_episodes": cfg.get("min_eval_episodes"),
+        "min_map_episodes": cfg.get("min_map_episodes"),
+        "min_replay_combat_maps": cfg.get("min_replay_combat_maps"),
+        "require_head_to_head": cfg.get("require_head_to_head"),
+        "min_head_to_head_episodes": cfg.get("min_head_to_head_episodes"),
+        "min_head_to_head_map_episodes": cfg.get("min_head_to_head_map_episodes"),
+        "source_commit": source_control.get("commit"),
+        "source_dirty": source_control.get("dirty"),
+        "source_status_short_count": source_control.get("status_short_count"),
+    }
+
+
+def _long_run_check_status_entry(check_path: Path, check: dict) -> dict:
+    return {
+        "path": str(check_path),
+        "passed": bool(check.get("passed")),
+        "candidate": check.get("candidate", {}),
+        "failed_required_checks": failed_required_check_ids(check),
+    }
+
+
+def long_run_missing_evidence(
+    latest_manifest: dict | None,
+    latest_checks: list[dict],
+    latest_passing_checks: list[dict],
+) -> list[str]:
+    if latest_manifest is None:
+        return ["long_run_manifest"]
+
+    missing = []
+    if not latest_manifest.get("launcher_exists"):
+        missing.append("long_run_launcher")
+    if not latest_manifest.get("preflight_launcher_exists"):
+        missing.append("long_run_preflight_launcher")
+    if not latest_manifest.get("preflight_exitcode_exists"):
+        missing.append("preflight_exitcode")
+    if not latest_manifest.get("train_exitcode_exists"):
+        missing.append("train_exitcode")
+    if not latest_manifest.get("promotion_audit_exitcode_exists"):
+        missing.append("promotion_audit_exitcode")
+    if not latest_manifest.get("long_run_check_exitcode_exists"):
+        missing.append("long_run_check_exitcode")
+    if latest_manifest.get("checkpoint_file_count", 0) == 0:
+        missing.append("candidate_checkpoint_files")
+    if latest_manifest.get("replay_file_count", 0) == 0:
+        missing.append("real_training_replay_files")
+    if not latest_checks:
+        missing.append("latest_run_long_run_check")
+    elif not latest_passing_checks:
+        missing.append("passing_latest_long_run_check")
+        failed_ids = sorted(
+            {
+                failed_check
+                for check in latest_checks
+                for failed_check in check.get("failed_required_checks", [])
+                if failed_check
+            }
+        )
+        missing.extend(f"failed_check:{failed_id}" for failed_id in failed_ids)
+    return missing
+
+
+def build_long_run_status(
+    artifact_dir: str | Path,
+    *,
+    recursive: bool = True,
+) -> dict:
+    root = Path(artifact_dir)
+    index = build_artifact_index(root, recursive=recursive)
+    manifests = []
+    long_run_checks = []
+
+    for entry in index.get("artifacts", []):
+        artifact_path = Path(entry["path"])
+        if entry.get("artifact_type") == "long_run_manifest":
+            try:
+                manifest = load_eval_summary(artifact_path)
+                validate_artifact(manifest, "long_run_manifest")
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                manifests.append(
+                    {
+                        "path": str(artifact_path),
+                        "load_error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                continue
+            status_entry = _manifest_status_entry(artifact_path, manifest)
+            status_entry["mtime"] = artifact_path.stat().st_mtime
+            manifests.append(status_entry)
+        elif entry.get("artifact_type") == "long_run_check":
+            try:
+                check = load_eval_summary(artifact_path)
+                validate_artifact(check, "long_run_check")
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            status_entry = _long_run_check_status_entry(artifact_path, check)
+            status_entry["mtime"] = artifact_path.stat().st_mtime
+            long_run_checks.append(status_entry)
+
+    manifests.sort(key=lambda item: (item.get("mtime", 0), item.get("path", "")))
+    long_run_checks.sort(key=lambda item: (item.get("mtime", 0), item["path"]))
+    latest_manifest = manifests[-1] if manifests else None
+
+    latest_checks = []
+    if latest_manifest and latest_manifest.get("eval_dir"):
+        latest_eval_dir = Path(latest_manifest["eval_dir"])
+        latest_checks = [
+            check
+            for check in long_run_checks
+            if _path_is_relative_to(Path(check["path"]), latest_eval_dir)
+        ]
+
+    passing_checks = [check for check in long_run_checks if check["passed"]]
+    latest_passing_checks = [check for check in latest_checks if check["passed"]]
+    missing_evidence = long_run_missing_evidence(
+        latest_manifest,
+        latest_checks,
+        latest_passing_checks,
+    )
+
+    blocked_reason = None
+    next_command = None
+    next_preflight_command = None
+    if latest_manifest is None:
+        blocked_reason = "no_long_run_manifest_found"
+    elif not latest_manifest.get("eval_dir_exists"):
+        blocked_reason = "latest_launcher_not_executed"
+    elif not latest_checks and not latest_manifest.get("train_exitcode_exists"):
+        blocked_reason = "latest_preflight_only"
+    elif not latest_checks:
+        blocked_reason = "latest_long_run_check_missing"
+    elif not latest_passing_checks:
+        blocked_reason = "latest_long_run_check_not_passing"
+
+    if (
+        latest_manifest
+        and blocked_reason
+        in {"latest_launcher_not_executed", "latest_preflight_only"}
+        and latest_manifest.get("launcher_exists")
+    ):
+        next_command = f"bash {latest_manifest['launcher_path']}"
+    if (
+        latest_manifest
+        and blocked_reason == "latest_launcher_not_executed"
+        and not latest_manifest.get("preflight_dir_exists")
+        and latest_manifest.get("preflight_launcher_exists")
+    ):
+        next_preflight_command = (
+            f"bash {latest_manifest['preflight_launcher_path']}"
+        )
+
+    latest_manifest_summary = dict(latest_manifest) if latest_manifest else None
+    if latest_manifest_summary is not None:
+        latest_manifest_summary.pop("mtime", None)
+        latest_manifest_summary["long_run_check_count"] = len(latest_checks)
+        latest_manifest_summary["passing_long_run_check_count"] = len(
+            latest_passing_checks
+        )
+        latest_manifest_summary["latest_long_run_check"] = (
+            {key: value for key, value in latest_checks[-1].items() if key != "mtime"}
+            if latest_checks
+            else None
+        )
+
+    return {
+        "artifact": artifact_metadata("long_run_status"),
+        "status_config": {
+            "artifact_dir": str(root),
+            "recursive": recursive,
+        },
+        "manifest_count": len(manifests),
+        "long_run_check_count": len(long_run_checks),
+        "passing_long_run_check_count": len(passing_checks),
+        "latest_manifest": latest_manifest_summary,
+        "passing_long_run_checks": [
+            {key: value for key, value in check.items() if key != "mtime"}
+            for check in passing_checks
+        ],
+        "candidate_evidence_ready": bool(latest_passing_checks),
+        "missing_evidence": missing_evidence,
+        "blocked_reason": blocked_reason,
+        "next_command": next_command,
+        "next_preflight_command": next_preflight_command,
+    }
+
+
+def run_long_run_status(
+    artifact_dir: str,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    status = build_long_run_status(artifact_dir, recursive=True)
+    print(json.dumps(status, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "long-run-status"
+        path = write_eval_summary(status, output_dir, label=label)
+        print(f"Saved long-run status to {path}")
+
+
+def _shell_assign(name: str, value: str) -> str:
+    return f"{name}={shlex.quote(value)}"
+
+
+def _shell_arg(value: object) -> str:
+    return shlex.quote(str(value))
+
+
+def _with_output_redirect(parts: list[str], output_path: str) -> list[str]:
+    redirected = list(parts)
+    redirected[-1] = f"{redirected[-1]} > {output_path} 2>&1"
+    return redirected
+
+
+def _run_git_metadata(args: list[str]) -> tuple[str | None, str | None]:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+    if result.returncode != 0:
+        return None, result.stderr.strip() or f"git exited {result.returncode}"
+    return result.stdout.strip(), None
+
+
+def source_control_snapshot() -> dict:
+    root, root_error = _run_git_metadata(["rev-parse", "--show-toplevel"])
+    if root_error is not None:
+        return {
+            "vcs": "git",
+            "available": False,
+            "error": root_error,
+        }
+
+    commit, commit_error = _run_git_metadata(["rev-parse", "HEAD"])
+    branch, branch_error = _run_git_metadata(["rev-parse", "--abbrev-ref", "HEAD"])
+    status, status_error = _run_git_metadata(["status", "--short"])
+    status_lines = status.splitlines() if status is not None else []
+    return {
+        "vcs": "git",
+        "available": True,
+        "root": root,
+        "commit": commit,
+        "commit_error": commit_error,
+        "branch": branch,
+        "branch_error": branch_error,
+        "dirty": bool(status_lines) if status_error is None else None,
+        "status_short_count": len(status_lines),
+        "status_short_sample": status_lines[:20],
+        "status_error": status_error,
+    }
+
+
+def build_long_run_manifest(
+    *,
+    run_id: str,
+    checkpoint_root: str | Path = "checkpoints",
+    eval_root: str | Path = "evals",
+    replay_root: str | Path = "replays",
+    timesteps: int = 5_000_000,
+    suite_opponents: str = "idle,scripted,evasive",
+    suite_maps: str = "classic,flat,split,tower",
+    rounds: int = 20,
+    replay_samples_per_bucket: int = 2,
+    replay_save_interval: int | None = None,
+    rank_min_score: float = 0.1,
+    rank_min_win_rate: float = 0.0,
+    rank_max_draw_rate: float = 0.9,
+    rank_max_no_damage_rate: float = 0.75,
+    rank_max_low_engagement_rate: float = 0.5,
+    strategy_max_draw_rate: float = 0.9,
+    strategy_max_no_damage_rate: float = 0.75,
+    strategy_max_low_engagement_rate: float = 0.5,
+    strategy_max_idle_rate: float = 0.75,
+    strategy_max_dominant_action_rate: float = 0.95,
+    require_replay_analysis: bool = True,
+    min_maps: int = 2,
+    required_maps: tuple[str, ...] | None = None,
+    min_eval_episodes: int | None = None,
+    min_map_episodes: int | None = None,
+    min_map_score: float | None = 0.0,
+    min_replay_combat_maps: int | None = None,
+    min_head_to_head_episodes: int | None = None,
+    min_head_to_head_map_episodes: int | None = None,
+    require_candidate_checkpoint: bool = True,
+    require_candidate_metadata: bool = True,
+    required_curriculum_stage: str | None = "full_map_pool",
+    required_reward_preset: str | None = "anti_stall",
+    require_head_to_head: bool | None = None,
+) -> dict:
+    if replay_save_interval is not None and replay_save_interval < 1:
+        raise ValueError("replay_save_interval must be at least 1")
+    if min_map_episodes is not None and min_map_episodes < 0:
+        raise ValueError("min_map_episodes must be non-negative")
+    if min_replay_combat_maps is not None and min_replay_combat_maps < 0:
+        raise ValueError("min_replay_combat_maps must be non-negative")
+    if min_head_to_head_episodes is not None and min_head_to_head_episodes < 0:
+        raise ValueError("min_head_to_head_episodes must be non-negative")
+    if (
+        min_head_to_head_map_episodes is not None
+        and min_head_to_head_map_episodes < 0
+    ):
+        raise ValueError("min_head_to_head_map_episodes must be non-negative")
+
+    suite_opponent_names = parse_builtin_opponents(suite_opponents)
+    suite_map_names = parse_suite_maps(suite_maps, Config())
+    if required_maps is None:
+        effective_required_maps = suite_map_names
+    else:
+        unknown_required_maps = [
+            name for name in required_maps if name not in PLATFORM_LAYOUTS
+        ]
+        if unknown_required_maps:
+            raise ValueError(
+                f"Unknown required map names: {', '.join(unknown_required_maps)}"
+            )
+        effective_required_maps = required_maps
+
+    if required_curriculum_stage is not None:
+        allowed_stages = {
+            stage.name for stages in CURRICULUMS.values() for stage in stages
+        }
+        if required_curriculum_stage not in allowed_stages:
+            raise ValueError(f"Unknown curriculum stage: {required_curriculum_stage}")
+    if required_reward_preset is not None:
+        reward_config_for_preset(required_reward_preset)
+
+    suite_opponents_csv = ",".join(suite_opponent_names)
+    suite_maps_csv = ",".join(suite_map_names)
+    required_maps_csv = ",".join(effective_required_maps)
+
+    effective_replay_save_interval = replay_save_interval
+    replay_save_interval_source = "user" if replay_save_interval is not None else "config"
+    if effective_replay_save_interval is None and timesteps <= 10_000:
+        effective_replay_save_interval = 1
+        replay_save_interval_source = "auto_small_run"
+    rank_gate_config = {
+        "min_score": rank_min_score,
+        "min_win_rate": rank_min_win_rate,
+        "max_draw_rate": rank_max_draw_rate,
+        "max_no_damage_rate": rank_max_no_damage_rate,
+        "max_low_engagement_rate": rank_max_low_engagement_rate,
+    }
+    strategy_report_config = {
+        "max_draw_rate": strategy_max_draw_rate,
+        "max_no_damage_rate": strategy_max_no_damage_rate,
+        "max_low_engagement_rate": strategy_max_low_engagement_rate,
+        "max_idle_rate": strategy_max_idle_rate,
+        "max_dominant_action_rate": strategy_max_dominant_action_rate,
+    }
+
+    checkpoint_dir = Path(checkpoint_root) / run_id
+    eval_dir = Path(eval_root) / run_id
+    replay_dir = Path(replay_root) / run_id
+    preflight_dir = Path(eval_root) / f"{run_id}-preflight-smoke"
+    preflight_timesteps = 128
+    preflight_rounds = 1
+    map_count = len(suite_map_names)
+    opponent_count = len(suite_opponent_names)
+    effective_min_eval_episodes = (
+        min_eval_episodes
+        if min_eval_episodes is not None
+        else rounds * map_count * opponent_count
+    )
+    effective_min_map_episodes = (
+        min_map_episodes if min_map_episodes is not None else rounds * opponent_count
+    )
+    default_min_replay_combat_maps = (
+        len(effective_required_maps) if effective_required_maps else min_maps
+    )
+    effective_min_replay_combat_maps = (
+        min_replay_combat_maps
+        if min_replay_combat_maps is not None
+        else (default_min_replay_combat_maps if require_replay_analysis else 0)
+    )
+    effective_require_head_to_head = (
+        timesteps > 10_000 if require_head_to_head is None else require_head_to_head
+    )
+    effective_min_head_to_head_episodes = (
+        min_head_to_head_episodes
+        if min_head_to_head_episodes is not None
+        else (rounds * map_count * 2 if effective_require_head_to_head else 0)
+    )
+    effective_min_head_to_head_map_episodes = (
+        min_head_to_head_map_episodes
+        if min_head_to_head_map_episodes is not None
+        else (rounds * 2 if effective_require_head_to_head else None)
+    )
+
+    long_run_check_parts = [
+        "set +e",
+        'python scripts/train.py --mode long_run_check \\',
+        '  --promotion-audit-summary "$PROMOTION_AUDIT" \\',
+        '  --strategy-report-summary "$STRATEGY_REPORT" \\',
+        '  --artifact-index-summary "$ARTIFACT_INDEX" \\',
+        f"  --long-run-min-maps {_shell_arg(min_maps)} \\",
+        f"  --long-run-required-maps {_shell_arg(required_maps_csv)} \\",
+        f"  --long-run-min-eval-episodes {_shell_arg(effective_min_eval_episodes)} \\",
+        f"  --long-run-min-map-episodes {_shell_arg(effective_min_map_episodes)} \\",
+    ]
+    if min_map_score is not None:
+        long_run_check_parts.append(
+            f"  --long-run-min-map-score {_shell_arg(min_map_score)} \\"
+        )
+    if require_replay_analysis:
+        long_run_check_parts.append("  --long-run-require-replay-analysis \\")
+    if effective_min_replay_combat_maps > 0:
+        long_run_check_parts.append(
+            "  --long-run-min-replay-combat-maps "
+            f"{_shell_arg(effective_min_replay_combat_maps)} \\"
+        )
+    if require_candidate_checkpoint:
+        long_run_check_parts.append("  --long-run-require-candidate-checkpoint \\")
+    if require_candidate_metadata:
+        long_run_check_parts.append("  --long-run-require-candidate-metadata \\")
+    if required_curriculum_stage is not None:
+        long_run_check_parts.append(
+            "  --long-run-required-curriculum-stage "
+            f"{_shell_arg(required_curriculum_stage)} \\"
+        )
+    if required_reward_preset is not None:
+        long_run_check_parts.append(
+            f"  --long-run-required-reward-preset {_shell_arg(required_reward_preset)} \\"
+        )
+    if effective_require_head_to_head:
+        long_run_check_parts.append("  --long-run-require-head-to-head \\")
+    if effective_min_head_to_head_episodes > 0:
+        long_run_check_parts.append(
+            "  --long-run-min-head-to-head-episodes "
+            f"{_shell_arg(effective_min_head_to_head_episodes)} \\"
+        )
+    if effective_min_head_to_head_map_episodes is not None:
+        long_run_check_parts.append(
+            "  --long-run-min-head-to-head-map-episodes "
+            f"{_shell_arg(effective_min_head_to_head_map_episodes)} \\"
+        )
+    long_run_check_parts.extend(
+        [
+            '  --eval-output-dir "$EVAL_DIR" \\',
+            '  --eval-label long-run-check > "$EVAL_DIR/long-run-check.out" 2>&1',
+            "LONG_RUN_CHECK_EXIT=$?",
+            'printf "%s\\n" "$LONG_RUN_CHECK_EXIT" > "$EVAL_DIR/long-run-check.exitcode"',
+            "set -e",
+        ]
+    )
+
+    train_parts = [
+        "python scripts/train.py --mode train \\",
+        f"  --timesteps {_shell_arg(timesteps)} \\",
+        "  --curriculum map_progression \\",
+        "  --randomize-maps \\",
+        f"  --map-choices {_shell_arg(suite_maps_csv)} \\",
+        '  --checkpoint-dir "$CHECKPOINT_DIR" \\',
+    ]
+    if effective_replay_save_interval is not None:
+        train_parts.append(
+            f"  --replay-save-interval {_shell_arg(effective_replay_save_interval)} \\"
+        )
+    train_parts.append('  --replay-dir "$REPLAY_DIR"')
+
+    preflight_parts = [
+        "python scripts/train_eval_smoke.py \\",
+        '  --output-dir "$PREFLIGHT_DIR" \\',
+        f"  --timesteps {_shell_arg(preflight_timesteps)} \\",
+        f"  --rounds {_shell_arg(preflight_rounds)} \\",
+        f"  --suite-opponents {_shell_arg(suite_opponents_csv)} \\",
+        f"  --suite-maps {_shell_arg(suite_maps_csv)}",
+    ]
+    final_artifact_index_parts = [
+        "python scripts/train.py --mode artifact_index \\",
+        '  --artifact-dir "$EVAL_DIR" \\',
+        "  --recursive-artifacts \\",
+        '  --eval-output-dir "$EVAL_DIR" \\',
+        "  --eval-label final-artifact-index",
+    ]
+    preflight_index_parts = [
+        "python scripts/train.py --mode artifact_index \\",
+        '  --artifact-dir "$PREFLIGHT_DIR" \\',
+        "  --recursive-artifacts \\",
+        '  --eval-output-dir "$EVAL_DIR" \\',
+        "  --eval-label preflight-artifact-index",
+    ]
+    resolve_promotion_audit_parts = [
+        'PROMOTION_AUDIT=$(ls -1t "$EVAL_DIR"/*_promotion.json 2>/dev/null | head -n 1 || true)',
+        'if [ -z "$PROMOTION_AUDIT" ]; then',
+        '  PROMOTION_AUDIT="$EVAL_DIR/MISSING_promotion.json"',
+        "fi",
+    ]
+    audit_summary_parts = [
+        'if [ -f "$PROMOTION_AUDIT" ]; then',
+        "  python scripts/train.py --mode audit_summary \\",
+        '    --audit-summary "$PROMOTION_AUDIT" \\',
+        '    --eval-output-dir "$EVAL_DIR" \\',
+        "    --eval-label promotion-summary",
+        "fi",
+    ]
+    resolve_validation_artifact_parts = [
+        'STRATEGY_REPORT=$(ls -1t "$EVAL_DIR"/*_strategy-report.json 2>/dev/null | head -n 1 || true)',
+        'if [ -z "$STRATEGY_REPORT" ]; then',
+        '  STRATEGY_REPORT="$EVAL_DIR/MISSING_strategy-report.json"',
+        "fi",
+        'ARTIFACT_INDEX=$(ls -1t "$EVAL_DIR"/*_artifact-index.json 2>/dev/null | head -n 1 || true)',
+        'if [ -z "$ARTIFACT_INDEX" ]; then',
+        '  ARTIFACT_INDEX="$EVAL_DIR/MISSING_artifact-index.json"',
+        "fi",
+    ]
+    preflight_shell = "\n".join(
+        [
+            "set +e",
+            *_with_output_redirect(preflight_parts, '"$EVAL_DIR/preflight.out"'),
+            "PREFLIGHT_EXIT=$?",
+            'printf "%s\\n" "$PREFLIGHT_EXIT" > "$EVAL_DIR/preflight.exitcode"',
+            "set -e",
+            'if [ "$PREFLIGHT_EXIT" -ne 0 ]; then',
+            *(
+                f"  {line}"
+                for line in _with_output_redirect(
+                    preflight_index_parts,
+                    '"$EVAL_DIR/preflight-artifact-index.out"',
+                )
+            ),
+            *(
+                f"  {line}"
+                for line in _with_output_redirect(
+                    final_artifact_index_parts,
+                    '"$EVAL_DIR/final-artifact-index.out"',
+                )
+            ),
+            '  exit "$PREFLIGHT_EXIT"',
+            "fi",
+        ]
+    )
+    train_shell = "\n".join(
+        [
+            "set +e",
+            *_with_output_redirect(train_parts, '"$EVAL_DIR/train.out"'),
+            "TRAIN_EXIT=$?",
+            'printf "%s\\n" "$TRAIN_EXIT" > "$EVAL_DIR/train.exitcode"',
+            "set -e",
+            'if [ "$TRAIN_EXIT" -ne 0 ]; then',
+            *(
+                f"  {line}"
+                for line in _with_output_redirect(
+                    final_artifact_index_parts,
+                    '"$EVAL_DIR/final-artifact-index.out"',
+                )
+            ),
+            '  exit "$TRAIN_EXIT"',
+            "fi",
+        ]
+    )
+
+    commands = [
+        {
+            "id": "create_run_dirs",
+            "description": "Create isolated artifact directories for this run.",
+            "expensive": False,
+            "shell": 'mkdir -p "$CHECKPOINT_DIR" "$EVAL_DIR" "$REPLAY_DIR" "$PREFLIGHT_DIR"',
+        },
+        {
+            "id": "archive_launcher",
+            "description": "Copy this launcher into the run eval directory.",
+            "expensive": False,
+            "shell": 'cp "$0" "$EVAL_DIR/long-run-launcher.sh"',
+        },
+        {
+            "id": "train_eval_smoke_preflight",
+            "description": "Run the tiny train/eval/verifier smoke before spending real compute.",
+            "expensive": False,
+            "shell": preflight_shell,
+        },
+        {
+            "id": "train",
+            "description": "Run the real curriculum self-play training job and preserve diagnostics if it fails.",
+            "expensive": True,
+            "shell": train_shell,
+        },
+        {
+            "id": "promotion_audit",
+            "description": "Rank checkpoints, gate the top promotion candidate, and capture its exit code.",
+            "expensive": False,
+            "shell": "\n".join(
+                [
+                    "set +e",
+                    *_with_output_redirect(
+                        [
+                            "python scripts/train.py --mode promotion_audit \\",
+                            '  --checkpoint-dir "$CHECKPOINT_DIR" \\',
+                            f"  --suite-opponents {_shell_arg(suite_opponents_csv)} \\",
+                            f"  --suite-maps {_shell_arg(suite_maps_csv)} \\",
+                            f"  --rounds {_shell_arg(rounds)} \\",
+                            "  --rank-head-to-head \\",
+                            f"  --rank-min-score {_shell_arg(rank_min_score)} \\",
+                            f"  --rank-min-win-rate {_shell_arg(rank_min_win_rate)} \\",
+                            f"  --rank-max-draw-rate {_shell_arg(rank_max_draw_rate)} \\",
+                            f"  --rank-max-no-damage-rate {_shell_arg(rank_max_no_damage_rate)} \\",
+                            "  --rank-max-low-engagement-rate "
+                            f"{_shell_arg(rank_max_low_engagement_rate)} \\",
+                            '  --eval-output-dir "$EVAL_DIR" \\',
+                            "  --eval-label promotion",
+                        ],
+                        '"$EVAL_DIR/promotion-audit.out"',
+                    ),
+                    "PROMOTION_AUDIT_EXIT=$?",
+                    'printf "%s\\n" "$PROMOTION_AUDIT_EXIT" > "$EVAL_DIR/promotion-audit.exitcode"',
+                    "set -e",
+                ]
+            ),
+        },
+        {
+            "id": "resolve_promotion_audit",
+            "description": "Resolve the newest promotion-audit artifact path.",
+            "expensive": False,
+            "shell": "\n".join(resolve_promotion_audit_parts),
+        },
+        {
+            "id": "audit_summary",
+            "description": "Write a compact promotion-audit summary when the audit artifact exists.",
+            "expensive": False,
+            "shell": "\n".join(
+                _with_output_redirect(
+                    audit_summary_parts,
+                    '"$EVAL_DIR/audit-summary.out"',
+                )
+            ),
+        },
+        {
+            "id": "sample_replay_analysis",
+            "description": "Save representative replay-analysis artifacts.",
+            "expensive": False,
+            "shell": "\n".join(
+                _with_output_redirect(
+                    [
+                        "python scripts/train.py --mode analyze \\",
+                        '  --replay-dir "$REPLAY_DIR" \\',
+                        "  --replay-samples-per-bucket "
+                        f"{_shell_arg(replay_samples_per_bucket)} \\",
+                        '  --eval-output-dir "$EVAL_DIR" \\',
+                        "  --eval-label replay-sample",
+                    ],
+                    '"$EVAL_DIR/replay-analysis.out"',
+                )
+            ),
+        },
+        {
+            "id": "strategy_report",
+            "description": "Scan artifacts for stalled or degenerate strategies.",
+            "expensive": False,
+            "shell": "\n".join(
+                _with_output_redirect(
+                    [
+                        "python scripts/train.py --mode strategy_report \\",
+                        '  --artifact-dir "$EVAL_DIR" \\',
+                        "  --recursive-artifacts \\",
+                        f"  --strategy-max-draw-rate {_shell_arg(strategy_max_draw_rate)} \\",
+                        "  --strategy-max-no-damage-rate "
+                        f"{_shell_arg(strategy_max_no_damage_rate)} \\",
+                        "  --strategy-max-low-engagement-rate "
+                        f"{_shell_arg(strategy_max_low_engagement_rate)} \\",
+                        f"  --strategy-max-idle-rate {_shell_arg(strategy_max_idle_rate)} \\",
+                        "  --strategy-max-dominant-action-rate "
+                        f"{_shell_arg(strategy_max_dominant_action_rate)} \\",
+                        '  --eval-output-dir "$EVAL_DIR" \\',
+                        "  --eval-label strategy-report",
+                    ],
+                    '"$EVAL_DIR/strategy-report.out"',
+                )
+            ),
+        },
+        {
+            "id": "artifact_index",
+            "description": "Index all saved artifacts for the run.",
+            "expensive": False,
+            "shell": "\n".join(
+                _with_output_redirect(
+                    [
+                        "python scripts/train.py --mode artifact_index \\",
+                        '  --artifact-dir "$EVAL_DIR" \\',
+                        "  --recursive-artifacts \\",
+                        '  --eval-output-dir "$EVAL_DIR" \\',
+                        "  --eval-label artifact-index",
+                    ],
+                    '"$EVAL_DIR/artifact-index.out"',
+                )
+            ),
+        },
+        {
+            "id": "resolve_validation_artifacts",
+            "description": "Resolve artifacts needed by long_run_check.",
+            "expensive": False,
+            "shell": "\n".join(resolve_validation_artifact_parts),
+        },
+        {
+            "id": "long_run_check",
+            "description": "Validate promotion evidence against long-run criteria and capture its exit code.",
+            "expensive": False,
+            "shell": "\n".join(long_run_check_parts),
+        },
+        {
+            "id": "final_artifact_index",
+            "description": "Index final artifacts, including long_run_check output.",
+            "expensive": False,
+            "shell": "\n".join(
+                _with_output_redirect(
+                    final_artifact_index_parts,
+                    '"$EVAL_DIR/final-artifact-index.out"',
+                )
+            ),
+        },
+        {
+            "id": "exit_with_long_run_check_status",
+            "description": "Preserve the long_run_check pass/fail status after final indexing.",
+            "expensive": False,
+            "shell": 'exit "$LONG_RUN_CHECK_EXIT"',
+        },
+    ]
+
+    shell_header = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        _shell_assign("RUN_ID", run_id),
+        _shell_assign("CHECKPOINT_DIR", str(checkpoint_dir)),
+        _shell_assign("EVAL_DIR", str(eval_dir)),
+        _shell_assign("REPLAY_DIR", str(replay_dir)),
+        _shell_assign("PREFLIGHT_DIR", str(preflight_dir)),
+    ]
+    shell_script = "\n\n".join(
+        [
+            *shell_header,
+            *(command["shell"] for command in commands),
+        ]
+    )
+    preflight_shell_script = "\n\n".join(
+        [
+            *shell_header,
+            commands[0]["shell"],
+            preflight_shell,
+        ]
+    )
+
+    return {
+        "artifact": artifact_metadata("long_run_manifest"),
+        "manifest_config": {
+            "run_id": run_id,
+            "checkpoint_dir": str(checkpoint_dir),
+            "eval_dir": str(eval_dir),
+            "replay_dir": str(replay_dir),
+            "preflight_dir": str(preflight_dir),
+            "preflight_timesteps": preflight_timesteps,
+            "preflight_rounds": preflight_rounds,
+            "timesteps": timesteps,
+            "suite_opponents": suite_opponents_csv,
+            "suite_maps": suite_maps_csv,
+            "rounds": rounds,
+            "replay_samples_per_bucket": replay_samples_per_bucket,
+            "replay_save_interval": effective_replay_save_interval,
+            "replay_save_interval_source": replay_save_interval_source,
+            "rank_gate": rank_gate_config,
+            "strategy_report": strategy_report_config,
+            "source_control": source_control_snapshot(),
+            "require_replay_analysis": require_replay_analysis,
+            "min_maps": min_maps,
+            "required_maps": list(effective_required_maps),
+            "min_eval_episodes": effective_min_eval_episodes,
+            "min_map_episodes": effective_min_map_episodes,
+            "min_map_score": min_map_score,
+            "min_replay_combat_maps": effective_min_replay_combat_maps,
+            "min_head_to_head_episodes": effective_min_head_to_head_episodes,
+            "min_head_to_head_map_episodes": (
+                effective_min_head_to_head_map_episodes
+            ),
+            "require_candidate_checkpoint": require_candidate_checkpoint,
+            "require_candidate_metadata": require_candidate_metadata,
+            "required_curriculum_stage": required_curriculum_stage,
+            "required_reward_preset": required_reward_preset,
+            "require_head_to_head": effective_require_head_to_head,
+        },
+        "guardrails": {
+            "executes_training": False,
+            "deletes_artifacts": False,
+            "contains_expensive_training_command": True,
+        },
+        "commands": commands,
+        "shell_script": shell_script,
+        "preflight_shell_script": preflight_shell_script,
+    }
+
+
+def run_long_run_manifest(
+    *,
+    run_id: str | None,
+    checkpoint_root: str,
+    eval_root: str,
+    replay_root: str,
+    timesteps: int,
+    suite_opponents: str,
+    suite_maps: str,
+    rounds: int,
+    replay_samples_per_bucket: int,
+    replay_save_interval: int | None = None,
+    rank_min_score: float = 0.1,
+    rank_min_win_rate: float = 0.0,
+    rank_max_draw_rate: float = 0.9,
+    rank_max_no_damage_rate: float = 0.75,
+    rank_max_low_engagement_rate: float = 0.5,
+    strategy_max_draw_rate: float = 0.9,
+    strategy_max_no_damage_rate: float = 0.75,
+    strategy_max_low_engagement_rate: float = 0.5,
+    strategy_max_idle_rate: float = 0.75,
+    strategy_max_dominant_action_rate: float = 0.95,
+    require_replay_analysis: bool,
+    min_maps: int,
+    required_maps: tuple[str, ...] | None,
+    min_eval_episodes: int | None,
+    min_map_episodes: int | None = None,
+    min_map_score: float | None = None,
+    min_replay_combat_maps: int | None = None,
+    min_head_to_head_episodes: int | None = None,
+    min_head_to_head_map_episodes: int | None = None,
+    require_candidate_checkpoint: bool = True,
+    require_candidate_metadata: bool = True,
+    required_curriculum_stage: str | None = "full_map_pool",
+    required_reward_preset: str | None = "anti_stall",
+    require_head_to_head: bool | None = None,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    if run_id is None:
+        run_id = f"arena-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+    manifest = build_long_run_manifest(
+        run_id=run_id,
+        checkpoint_root=checkpoint_root,
+        eval_root=eval_root,
+        replay_root=replay_root,
+        timesteps=timesteps,
+        suite_opponents=suite_opponents,
+        suite_maps=suite_maps,
+        rounds=rounds,
+        replay_samples_per_bucket=replay_samples_per_bucket,
+        replay_save_interval=replay_save_interval,
+        rank_min_score=rank_min_score,
+        rank_min_win_rate=rank_min_win_rate,
+        rank_max_draw_rate=rank_max_draw_rate,
+        rank_max_no_damage_rate=rank_max_no_damage_rate,
+        rank_max_low_engagement_rate=rank_max_low_engagement_rate,
+        strategy_max_draw_rate=strategy_max_draw_rate,
+        strategy_max_no_damage_rate=strategy_max_no_damage_rate,
+        strategy_max_low_engagement_rate=strategy_max_low_engagement_rate,
+        strategy_max_idle_rate=strategy_max_idle_rate,
+        strategy_max_dominant_action_rate=strategy_max_dominant_action_rate,
+        require_replay_analysis=require_replay_analysis,
+        min_maps=min_maps,
+        required_maps=required_maps,
+        min_eval_episodes=min_eval_episodes,
+        min_map_episodes=min_map_episodes,
+        min_map_score=min_map_score,
+        min_replay_combat_maps=min_replay_combat_maps,
+        min_head_to_head_episodes=min_head_to_head_episodes,
+        min_head_to_head_map_episodes=min_head_to_head_map_episodes,
+        require_candidate_checkpoint=require_candidate_checkpoint,
+        require_candidate_metadata=require_candidate_metadata,
+        required_curriculum_stage=required_curriculum_stage,
+        required_reward_preset=required_reward_preset,
+        require_head_to_head=require_head_to_head,
+    )
+
+    if output_dir is not None:
+        label = output_label or f"{run_id}-long-run-manifest"
+        path = write_eval_summary(manifest, output_dir, label=label)
+        script_path = path.with_suffix(".sh")
+        preflight_script_path = path.with_suffix(".preflight.sh")
+        script_path.write_text(manifest["shell_script"] + "\n")
+        preflight_script_path.write_text(manifest["preflight_shell_script"] + "\n")
+        script_path.chmod(0o755)
+        preflight_script_path.chmod(0o755)
+        manifest["manifest_artifact_path"] = str(path)
+        manifest["shell_script_path"] = str(script_path)
+        manifest["preflight_shell_script_path"] = str(preflight_script_path)
+        path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    print(json.dumps(manifest, indent=2, sort_keys=True))
+    if output_dir is not None:
+        print(f"Saved long-run manifest to {manifest['manifest_artifact_path']}")
+        print(f"Saved long-run launcher to {manifest['shell_script_path']}")
+        print(
+            "Saved long-run preflight launcher to "
+            f"{manifest['preflight_shell_script_path']}"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Arena Fighters: train, watch, or replay"
+        description="Arena Fighters: train, watch, replay, eval, or rank"
     )
     parser.add_argument(
         "--mode",
-        choices=["train", "watch", "replay"],
+        choices=[
+            "train",
+            "watch",
+            "replay",
+            "analyze",
+            "eval",
+            "compare",
+            "gate",
+            "suite",
+            "rank",
+            "rank_gate",
+            "promotion_audit",
+            "audit_summary",
+            "artifact_index",
+            "strategy_report",
+            "long_run_manifest",
+            "long_run_check",
+            "long_run_status",
+        ],
         default="train",
         help="Operating mode (default: train)",
     )
@@ -326,7 +3880,7 @@ def main():
         "--checkpoint",
         type=str,
         default=None,
-        help="Path to model checkpoint (for watch mode)",
+        help="Path to a trusted model checkpoint (for watch/eval/suite modes)",
     )
     parser.add_argument(
         "--episode",
@@ -338,35 +3892,426 @@ def main():
         "--timesteps",
         type=int,
         default=None,
-        help="Override total_timesteps from config",
+        help="Override total_timesteps from config or long-run manifest",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Run ID for long_run_manifest mode (default: generated UTC timestamp)",
     )
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
         default="checkpoints",
-        help="Directory for saving checkpoints (default: checkpoints)",
+        help="Directory for saving or discovering trusted checkpoints (default: checkpoints)",
     )
     parser.add_argument(
         "--replay-dir",
         type=str,
         default="replays",
-        help="Directory for replay files (default: replays)",
+        help="Directory for replay files or sampled replay analysis (default: replays)",
+    )
+    parser.add_argument(
+        "--replay-samples-per-bucket",
+        type=int,
+        default=1,
+        help="Replay samples per outcome/behavior bucket for analyze mode without --episode",
+    )
+    parser.add_argument(
+        "--replay-save-interval",
+        type=int,
+        default=None,
+        help="Save one training replay every N completed episodes (default: config value)",
     )
     parser.add_argument(
         "--rounds",
         type=int,
         default=0,
-        help="Number of rounds to watch (0 = infinite, Ctrl+C to stop)",
+        help="Number of rounds to watch/evaluate (watch: 0 = infinite, eval: 0 = 20)",
+    )
+    parser.add_argument(
+        "--opponent",
+        choices=BUILTIN_POLICY_NAMES,
+        default="random",
+        help="Built-in opponent for eval mode (default: random)",
+    )
+    parser.add_argument(
+        "--agent-policy",
+        choices=BUILTIN_POLICY_NAMES,
+        default="random",
+        help="Built-in agent 0 policy for eval/suite modes when --checkpoint is omitted",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for eval mode",
+    )
+    parser.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="Use stochastic model actions in eval mode",
+    )
+    parser.add_argument(
+        "--map",
+        dest="map_name",
+        choices=sorted(PLATFORM_LAYOUTS),
+        default=None,
+        help="Arena map to use",
+    )
+    parser.add_argument(
+        "--randomize-maps",
+        action="store_true",
+        help="Randomly choose a map on each reset",
+    )
+    parser.add_argument(
+        "--map-choices",
+        type=str,
+        default=None,
+        help="Comma-separated map names used with --randomize-maps",
+    )
+    parser.add_argument(
+        "--reward-preset",
+        choices=sorted(set(REWARD_PRESETS) | set(REWARD_PRESET_ALIASES)),
+        default=None,
+        help="Reward preset for train/watch/eval modes",
+    )
+    parser.add_argument(
+        "--curriculum",
+        choices=sorted(CURRICULUMS),
+        default=None,
+        help="Curriculum schedule for train mode",
+    )
+    parser.add_argument(
+        "--eval-output-dir",
+        type=str,
+        default=None,
+        help="Directory for timestamped eval/artifact JSON summaries",
+    )
+    parser.add_argument(
+        "--eval-label",
+        type=str,
+        default=None,
+        help="Optional label used in eval summary filenames",
+    )
+    parser.add_argument(
+        "--before",
+        type=str,
+        default=None,
+        help="Earlier eval JSON summary for compare mode",
+    )
+    parser.add_argument(
+        "--after",
+        type=str,
+        default=None,
+        help="Later eval JSON summary for compare mode",
+    )
+    parser.add_argument(
+        "--suite-opponents",
+        type=str,
+        default=None,
+        help="Comma-separated built-in opponents for suite/rank modes",
+    )
+    parser.add_argument(
+        "--suite-maps",
+        type=str,
+        default=None,
+        help="Comma-separated maps for suite/rank modes",
+    )
+    parser.add_argument(
+        "--rank-checkpoints",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated trusted checkpoint paths for rank mode; "
+            "defaults to --checkpoint-dir discovery"
+        ),
+    )
+    parser.add_argument(
+        "--rank-draw-weight",
+        type=float,
+        default=0.5,
+        help="Rank score credit for draw rate (default: 0.5)",
+    )
+    parser.add_argument(
+        "--rank-no-damage-penalty",
+        type=float,
+        default=0.25,
+        help="Rank score penalty for no-damage episode rate (default: 0.25)",
+    )
+    parser.add_argument(
+        "--rank-low-engagement-penalty",
+        type=float,
+        default=0.25,
+        help="Rank score penalty for low-engagement episode rate (default: 0.25)",
+    )
+    parser.add_argument(
+        "--rank-head-to-head",
+        action="store_true",
+        help="Include pairwise checkpoint-vs-checkpoint matchups in rank mode",
+    )
+    parser.add_argument(
+        "--rank-initial-elo",
+        type=float,
+        default=1000.0,
+        help="Initial Elo rating for head-to-head rank standings (default: 1000)",
+    )
+    parser.add_argument(
+        "--rank-elo-k",
+        type=float,
+        default=32.0,
+        help="Elo K-factor for head-to-head rank standings (default: 32)",
+    )
+    parser.add_argument(
+        "--rank-summary",
+        type=str,
+        default=None,
+        help="Rank JSON summary for rank_gate mode",
+    )
+    parser.add_argument(
+        "--audit-summary",
+        dest="audit_summary_path",
+        type=str,
+        default=None,
+        help="Promotion-audit JSON summary for audit_summary mode",
+    )
+    parser.add_argument(
+        "--promotion-audit-summary",
+        dest="promotion_audit_path",
+        type=str,
+        default=None,
+        help="Promotion-audit JSON summary for long_run_check mode",
+    )
+    parser.add_argument(
+        "--strategy-report-summary",
+        dest="strategy_report_path",
+        type=str,
+        default=None,
+        help="Strategy-report JSON summary for long_run_check mode",
+    )
+    parser.add_argument(
+        "--artifact-index-summary",
+        dest="artifact_index_path",
+        type=str,
+        default=None,
+        help="Artifact-index JSON summary for long_run_check mode",
+    )
+    parser.add_argument(
+        "--artifact-dir",
+        type=str,
+        default="evals",
+        help="Directory of saved JSON artifacts for artifact_index mode",
+    )
+    parser.add_argument(
+        "--recursive-artifacts",
+        action="store_true",
+        help="Recursively scan --artifact-dir in artifact_index/strategy_report modes",
+    )
+    parser.add_argument(
+        "--strategy-max-draw-rate",
+        type=float,
+        default=0.9,
+        help="Draw-rate threshold for strategy_report mode (default: 0.9)",
+    )
+    parser.add_argument(
+        "--strategy-max-no-damage-rate",
+        type=float,
+        default=0.75,
+        help="No-damage rate threshold for strategy_report mode (default: 0.75)",
+    )
+    parser.add_argument(
+        "--strategy-max-low-engagement-rate",
+        type=float,
+        default=0.5,
+        help="Low-engagement rate threshold for strategy_report mode (default: 0.5)",
+    )
+    parser.add_argument(
+        "--strategy-max-idle-rate",
+        type=float,
+        default=0.75,
+        help="Agent 0 idle-rate threshold for strategy_report mode (default: 0.75)",
+    )
+    parser.add_argument(
+        "--strategy-max-dominant-action-rate",
+        type=float,
+        default=0.95,
+        help=(
+            "Agent 0 dominant-action-rate threshold for strategy_report mode "
+            "(default: 0.95)"
+        ),
+    )
+    parser.add_argument(
+        "--rank-min-score",
+        type=float,
+        default=0.1,
+        help="Minimum top-checkpoint rank score for rank_gate mode (default: 0.1)",
+    )
+    parser.add_argument(
+        "--rank-min-win-rate",
+        type=float,
+        default=0.0,
+        help="Minimum top-checkpoint mean win rate for rank_gate mode (default: 0.0)",
+    )
+    parser.add_argument(
+        "--rank-max-draw-rate",
+        type=float,
+        default=0.9,
+        help="Maximum top-checkpoint draw rate for rank_gate mode (default: 0.9)",
+    )
+    parser.add_argument(
+        "--rank-max-no-damage-rate",
+        type=float,
+        default=0.75,
+        help="Maximum top-checkpoint no-damage rate for rank_gate mode (default: 0.75)",
+    )
+    parser.add_argument(
+        "--rank-max-low-engagement-rate",
+        type=float,
+        default=0.5,
+        help="Maximum top-checkpoint low-engagement rate for rank_gate mode (default: 0.5)",
+    )
+    parser.add_argument(
+        "--rank-min-head-to-head-elo",
+        type=float,
+        default=None,
+        help="Optional minimum top-checkpoint head-to-head Elo for rank_gate mode",
+    )
+    parser.add_argument(
+        "--rank-min-head-to-head-score",
+        type=float,
+        default=None,
+        help="Optional minimum top-checkpoint head-to-head score for rank_gate mode",
+    )
+    parser.add_argument(
+        "--audit-include-nested",
+        action="store_true",
+        help="Include full nested rank and rank-gate JSON in promotion_audit output",
+    )
+    parser.add_argument(
+        "--long-run-min-maps",
+        type=int,
+        default=2,
+        help="Minimum candidate map coverage for long_run_check mode (default: 2)",
+    )
+    parser.add_argument(
+        "--long-run-required-maps",
+        type=str,
+        default=None,
+        help="Comma-separated maps that must appear in long_run_check candidate scores",
+    )
+    parser.add_argument(
+        "--long-run-min-eval-episodes",
+        type=int,
+        default=0,
+        help="Minimum candidate baseline-suite episode count for long_run_check mode",
+    )
+    parser.add_argument(
+        "--long-run-min-map-episodes",
+        type=int,
+        default=None,
+        help="Optional minimum candidate baseline-suite episodes on every evaluated map",
+    )
+    parser.add_argument(
+        "--long-run-min-map-score",
+        type=float,
+        default=None,
+        help="Optional minimum candidate mean score on every evaluated map",
+    )
+    parser.add_argument(
+        "--long-run-require-replay-analysis",
+        action="store_true",
+        help="Require at least one replay-analysis artifact with combat in long_run_check mode",
+    )
+    parser.add_argument(
+        "--long-run-min-replay-combat-maps",
+        type=int,
+        default=0,
+        help="Minimum distinct maps with combat replay-analysis evidence",
+    )
+    parser.add_argument(
+        "--long-run-min-head-to-head-episodes",
+        type=int,
+        default=0,
+        help="Minimum actual checkpoint-vs-checkpoint episodes in long_run_check mode",
+    )
+    parser.add_argument(
+        "--long-run-min-head-to-head-map-episodes",
+        type=int,
+        default=None,
+        help="Optional minimum checkpoint-vs-checkpoint episodes on each required map",
+    )
+    parser.add_argument(
+        "--long-run-require-candidate-checkpoint",
+        action="store_true",
+        help="Require the promoted candidate checkpoint path to exist",
+    )
+    parser.add_argument(
+        "--long-run-require-candidate-metadata",
+        action="store_true",
+        help="Require the promoted candidate checkpoint metadata sidecar to exist",
+    )
+    parser.add_argument(
+        "--long-run-require-head-to-head",
+        action="store_true",
+        help="Require head-to-head checkpoint standings in long_run_check mode",
+    )
+    parser.add_argument(
+        "--long-run-required-curriculum-stage",
+        type=str,
+        default=None,
+        help="Optional required candidate checkpoint metadata curriculum stage",
+    )
+    parser.add_argument(
+        "--long-run-required-reward-preset",
+        type=str,
+        default=None,
+        help="Optional required candidate checkpoint metadata reward preset",
     )
     args = parser.parse_args()
 
     cfg = Config()
+
+    arena_overrides = {}
+    if args.map_name is not None:
+        arena_overrides["map_name"] = args.map_name
+    if args.randomize_maps:
+        arena_overrides["randomize_maps"] = True
+    if args.map_choices is not None:
+        map_choices = tuple(
+            name.strip() for name in args.map_choices.split(",") if name.strip()
+        )
+        if not map_choices:
+            parser.error("--map-choices must include at least one map name")
+        unknown_maps = [name for name in map_choices if name not in PLATFORM_LAYOUTS]
+        if unknown_maps:
+            parser.error(f"Unknown map names: {', '.join(unknown_maps)}")
+        arena_overrides["map_choices"] = map_choices
+    if arena_overrides:
+        cfg = replace(cfg, arena=replace(cfg.arena, **arena_overrides))
+    if args.reward_preset is not None:
+        cfg = replace(cfg, reward=reward_config_for_preset(args.reward_preset))
 
     # Override timesteps if provided
     if args.timesteps is not None:
         cfg = replace(
             cfg,
             training=replace(cfg.training, total_timesteps=args.timesteps),
+        )
+    if args.curriculum is not None:
+        cfg = replace(
+            cfg,
+            training=replace(cfg.training, curriculum_name=args.curriculum),
+        )
+    if args.replay_save_interval is not None:
+        if args.replay_save_interval < 1:
+            parser.error("--replay-save-interval must be at least 1")
+        cfg = replace(
+            cfg,
+            training=replace(
+                cfg.training,
+                replay_save_interval=args.replay_save_interval,
+            ),
         )
 
     if args.mode == "train":
@@ -377,6 +4322,291 @@ def main():
         if not args.episode:
             parser.error("--episode is required for replay mode")
         run_replay(cfg, args.episode)
+    elif args.mode == "analyze":
+        if args.episode:
+            run_analyze_replay(
+                args.episode,
+                output_dir=args.eval_output_dir,
+                output_label=args.eval_label,
+            )
+        else:
+            run_analyze_replay_dir(
+                args.replay_dir,
+                samples_per_bucket=args.replay_samples_per_bucket,
+                output_dir=args.eval_output_dir,
+                output_label=args.eval_label,
+            )
+    elif args.mode == "eval":
+        run_eval(
+            cfg,
+            args.checkpoint,
+            args.opponent,
+            num_rounds=args.rounds,
+            seed=args.seed,
+            deterministic=not args.stochastic,
+            reward_preset=args.reward_preset or "default",
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+            agent_policy=args.agent_policy,
+        )
+    elif args.mode == "compare":
+        if not args.before or not args.after:
+            parser.error("--before and --after are required for compare mode")
+        run_compare(
+            args.before,
+            args.after,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "gate":
+        if not args.before or not args.after:
+            parser.error("--before and --after are required for gate mode")
+        run_gate(
+            args.before,
+            args.after,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "rank_gate":
+        if not args.rank_summary:
+            parser.error("--rank-summary is required for rank_gate mode")
+        run_rank_gate(
+            args.rank_summary,
+            min_score=args.rank_min_score,
+            min_win_rate=args.rank_min_win_rate,
+            max_draw_rate=args.rank_max_draw_rate,
+            max_no_damage_rate=args.rank_max_no_damage_rate,
+            max_low_engagement_rate=args.rank_max_low_engagement_rate,
+            min_head_to_head_elo=args.rank_min_head_to_head_elo,
+            min_head_to_head_score=args.rank_min_head_to_head_score,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "promotion_audit":
+        try:
+            suite_opponents = parse_builtin_opponents(args.suite_opponents)
+            suite_maps = parse_suite_maps(args.suite_maps, cfg)
+            rank_checkpoints = parse_rank_checkpoints(args.rank_checkpoints)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+        run_promotion_audit(
+            cfg,
+            rank_checkpoints,
+            args.checkpoint_dir,
+            suite_opponents,
+            suite_maps,
+            num_rounds=args.rounds,
+            seed=args.seed,
+            deterministic=not args.stochastic,
+            reward_preset=args.reward_preset or "default",
+            draw_weight=args.rank_draw_weight,
+            no_damage_penalty=args.rank_no_damage_penalty,
+            low_engagement_penalty=args.rank_low_engagement_penalty,
+            include_head_to_head=args.rank_head_to_head,
+            initial_elo=args.rank_initial_elo,
+            elo_k_factor=args.rank_elo_k,
+            min_score=args.rank_min_score,
+            min_win_rate=args.rank_min_win_rate,
+            max_draw_rate=args.rank_max_draw_rate,
+            max_no_damage_rate=args.rank_max_no_damage_rate,
+            max_low_engagement_rate=args.rank_max_low_engagement_rate,
+            min_head_to_head_elo=args.rank_min_head_to_head_elo,
+            min_head_to_head_score=args.rank_min_head_to_head_score,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+            include_nested=args.audit_include_nested,
+        )
+    elif args.mode == "audit_summary":
+        if not args.audit_summary_path:
+            parser.error("--audit-summary is required for audit_summary mode")
+        run_audit_summary(
+            args.audit_summary_path,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "artifact_index":
+        run_artifact_index(
+            args.artifact_dir,
+            recursive=args.recursive_artifacts,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "strategy_report":
+        run_strategy_report(
+            args.artifact_dir,
+            recursive=args.recursive_artifacts,
+            max_draw_rate=args.strategy_max_draw_rate,
+            max_no_damage_rate=args.strategy_max_no_damage_rate,
+            max_low_engagement_rate=args.strategy_max_low_engagement_rate,
+            max_idle_rate=args.strategy_max_idle_rate,
+            max_dominant_action_rate=args.strategy_max_dominant_action_rate,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "long_run_check":
+        missing = []
+        if not args.promotion_audit_path:
+            missing.append("--promotion-audit-summary")
+        if not args.strategy_report_path:
+            missing.append("--strategy-report-summary")
+        if not args.artifact_index_path:
+            missing.append("--artifact-index-summary")
+        if missing:
+            parser.error(f"{', '.join(missing)} required for long_run_check mode")
+        try:
+            required_maps = (
+                parse_suite_maps(args.long_run_required_maps, cfg)
+                if args.long_run_required_maps
+                else ()
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        run_long_run_check(
+            args.promotion_audit_path,
+            args.strategy_report_path,
+            args.artifact_index_path,
+            min_maps=args.long_run_min_maps,
+            required_maps=required_maps,
+            min_eval_episodes=args.long_run_min_eval_episodes,
+            min_map_episodes=args.long_run_min_map_episodes,
+            min_map_score=args.long_run_min_map_score,
+            require_replay_analysis=args.long_run_require_replay_analysis,
+            min_replay_combat_maps=args.long_run_min_replay_combat_maps,
+            min_head_to_head_episodes=args.long_run_min_head_to_head_episodes,
+            min_head_to_head_map_episodes=(
+                args.long_run_min_head_to_head_map_episodes
+            ),
+            require_candidate_checkpoint=args.long_run_require_candidate_checkpoint,
+            require_candidate_metadata=args.long_run_require_candidate_metadata,
+            required_curriculum_stage=args.long_run_required_curriculum_stage,
+            required_reward_preset=args.long_run_required_reward_preset,
+            require_head_to_head=args.long_run_require_head_to_head,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "long_run_status":
+        run_long_run_status(
+            args.artifact_dir,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "long_run_manifest":
+        try:
+            suite_opponents = (
+                parse_builtin_opponents(args.suite_opponents)
+                if args.suite_opponents
+                else ("idle", "scripted", "evasive")
+            )
+            suite_maps = (
+                parse_suite_maps(args.suite_maps, cfg)
+                if args.suite_maps
+                else ("classic", "flat", "split", "tower")
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+
+        run_long_run_manifest(
+            run_id=args.run_id,
+            checkpoint_root=args.checkpoint_dir,
+            eval_root=args.artifact_dir,
+            replay_root=args.replay_dir,
+            timesteps=args.timesteps or 5_000_000,
+            suite_opponents=",".join(suite_opponents),
+            suite_maps=",".join(suite_maps),
+            rounds=args.rounds or 20,
+            replay_samples_per_bucket=args.replay_samples_per_bucket,
+            replay_save_interval=args.replay_save_interval,
+            rank_min_score=args.rank_min_score,
+            rank_min_win_rate=args.rank_min_win_rate,
+            rank_max_draw_rate=args.rank_max_draw_rate,
+            rank_max_no_damage_rate=args.rank_max_no_damage_rate,
+            rank_max_low_engagement_rate=args.rank_max_low_engagement_rate,
+            strategy_max_draw_rate=args.strategy_max_draw_rate,
+            strategy_max_no_damage_rate=args.strategy_max_no_damage_rate,
+            strategy_max_low_engagement_rate=args.strategy_max_low_engagement_rate,
+            strategy_max_idle_rate=args.strategy_max_idle_rate,
+            strategy_max_dominant_action_rate=args.strategy_max_dominant_action_rate,
+            require_replay_analysis=True,
+            min_maps=args.long_run_min_maps,
+            required_maps=suite_maps,
+            min_eval_episodes=args.long_run_min_eval_episodes or None,
+            min_map_episodes=args.long_run_min_map_episodes,
+            min_map_score=(
+                args.long_run_min_map_score
+                if args.long_run_min_map_score is not None
+                else 0.0
+            ),
+            min_replay_combat_maps=(
+                args.long_run_min_replay_combat_maps or None
+            ),
+            min_head_to_head_episodes=(
+                args.long_run_min_head_to_head_episodes or None
+            ),
+            min_head_to_head_map_episodes=(
+                args.long_run_min_head_to_head_map_episodes
+            ),
+            require_candidate_checkpoint=True,
+            require_candidate_metadata=True,
+            required_curriculum_stage=(
+                args.long_run_required_curriculum_stage or "full_map_pool"
+            ),
+            required_reward_preset=(
+                args.long_run_required_reward_preset or "anti_stall"
+            ),
+            require_head_to_head=(
+                True if args.long_run_require_head_to_head else None
+            ),
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "suite":
+        try:
+            suite_opponents = parse_builtin_opponents(args.suite_opponents)
+            suite_maps = parse_suite_maps(args.suite_maps, cfg)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+        run_suite(
+            cfg,
+            args.checkpoint,
+            args.agent_policy,
+            suite_opponents,
+            suite_maps,
+            num_rounds=args.rounds,
+            seed=args.seed,
+            deterministic=not args.stochastic,
+            reward_preset=args.reward_preset or "default",
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "rank":
+        try:
+            suite_opponents = parse_builtin_opponents(args.suite_opponents)
+            suite_maps = parse_suite_maps(args.suite_maps, cfg)
+            rank_checkpoints = parse_rank_checkpoints(args.rank_checkpoints)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+        run_rank(
+            cfg,
+            rank_checkpoints,
+            args.checkpoint_dir,
+            suite_opponents,
+            suite_maps,
+            num_rounds=args.rounds,
+            seed=args.seed,
+            deterministic=not args.stochastic,
+            reward_preset=args.reward_preset or "default",
+            draw_weight=args.rank_draw_weight,
+            no_damage_penalty=args.rank_no_damage_penalty,
+            low_engagement_penalty=args.rank_low_engagement_penalty,
+            include_head_to_head=args.rank_head_to_head,
+            initial_elo=args.rank_initial_elo,
+            elo_k_factor=args.rank_elo_k,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
 
 
 if __name__ == "__main__":

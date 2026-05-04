@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import gymnasium
@@ -27,11 +27,12 @@ from arena_fighters.config import (
     NUM_ACTIONS,
     NUM_CHANNELS,
     NUM_VECTOR_OBS,
-    PLATFORM_LAYOUT,
+    PLATFORM_LAYOUTS,
     SHOOT_DIAG_DOWN,
     SHOOT_DIAG_UP,
     SHOOT_FORWARD,
     Config,
+    RewardConfig,
 )
 
 
@@ -69,17 +70,20 @@ class ArenaFightersEnv(ParallelEnv):
         self.possible_agents = ["agent_0", "agent_1"]
         self.agents = list(self.possible_agents)
 
-        # Build grid from platform layout
+        self._map_name = ""
+        self._map_pool: tuple[str, ...] | None = None
+        self._platform_layout: tuple[tuple[int, int, int], ...] = ()
         self._platform_grid = np.zeros(
             (self.cfg.arena.height, self.cfg.arena.width), dtype=np.int8
         )
-        for x_start, x_end, y in PLATFORM_LAYOUT:
-            self._platform_grid[y, x_start : x_end + 1] = 1
+        self._set_map(self.cfg.arena.map_name)
 
         self._agent_states: dict[str, AgentState] = {}
         self._bullets: list[Bullet] = []
         self._tick = 0
         self._rewards: dict[str, float] = {}
+        self._events = self._empty_event_counters()
+        self._episode_events = self._empty_event_counters()
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent: str) -> spaces.Dict:
@@ -110,6 +114,9 @@ class ArenaFightersEnv(ParallelEnv):
         self._tick = 0
         self._bullets = []
         self._rewards = {a: 0.0 for a in self.agents}
+        self._events = self._empty_event_counters()
+        self._episode_events = self._empty_event_counters()
+        self._set_map(self._select_map(seed))
 
         hp = self.cfg.agent.start_hp
         self._agent_states = {
@@ -118,7 +125,7 @@ class ArenaFightersEnv(ParallelEnv):
         }
 
         obs = {a: self._build_obs(a) for a in self.agents}
-        infos = {a: {} for a in self.agents}
+        infos = {a: self._build_info(a) for a in self.agents}
         return obs, infos
 
     def step(
@@ -132,6 +139,7 @@ class ArenaFightersEnv(ParallelEnv):
     ]:
         self._tick += 1
         self._rewards = {a: 0.0 for a in self.agents}
+        self._events = self._empty_event_counters()
 
         # 1) Process actions
         for agent_name, action in actions.items():
@@ -172,13 +180,16 @@ class ArenaFightersEnv(ParallelEnv):
                 break
 
         if self._tick >= self.cfg.arena.max_ticks and not any(terminations.values()):
+            draw_reward = self.cfg.reward.draw
+            if self._episode_damage_dealt() == 0:
+                draw_reward += self.cfg.reward.no_damage_draw_penalty
             for a in self.agents:
                 truncations[a] = True
-                self._rewards[a] += self.cfg.reward.draw
+                self._rewards[a] += draw_reward
 
         # 7) Build observations
         obs = {a: self._build_obs(a) for a in self.agents}
-        infos = {a: {} for a in self.agents}
+        infos = {a: self._build_info(a) for a in self.agents}
 
         # If episode ended, clear agents list
         if any(terminations.values()) or any(truncations.values()):
@@ -222,10 +233,12 @@ class ArenaFightersEnv(ParallelEnv):
                 self._bullets.append(
                     Bullet(x=bx, y=by, dx=dx, dy=dy, owner=agent_name)
                 )
+                self._add_event(agent_name, "shots_fired")
                 st.shoot_cd = self.cfg.agent.shoot_cooldown
 
         elif action == MELEE:
             if st.melee_cd <= 0:
+                self._add_event(agent_name, "melee_attempts")
                 target_x = st.x + st.facing
                 target_y = st.y
                 other = self._other(agent_name)
@@ -233,6 +246,8 @@ class ArenaFightersEnv(ParallelEnv):
                 if ost.x == target_x and ost.y == target_y:
                     dmg = self.cfg.agent.melee_damage
                     ost.hp -= dmg
+                    self._add_event(agent_name, "melee_hits")
+                    self._add_damage_event(agent_name, other, dmg)
                     self._rewards[agent_name] += (
                         self.cfg.reward.deal_damage_per_hp * dmg
                     )
@@ -291,6 +306,8 @@ class ArenaFightersEnv(ParallelEnv):
                         continue
                     dmg = self.cfg.agent.bullet_damage
                     st.hp -= dmg
+                    self._add_event(b.owner, "projectile_hits")
+                    self._add_damage_event(b.owner, agent_name, dmg)
                     self._rewards[b.owner] += (
                         self.cfg.reward.deal_damage_per_hp * dmg
                     )
@@ -353,6 +370,84 @@ class ArenaFightersEnv(ParallelEnv):
 
     def _other(self, agent_name: str) -> str:
         return "agent_1" if agent_name == "agent_0" else "agent_0"
+
+    def _empty_event_counters(self) -> dict[str, dict[str, int]]:
+        return {
+            agent_name: {
+                "shots_fired": 0,
+                "melee_attempts": 0,
+                "melee_hits": 0,
+                "projectile_hits": 0,
+                "damage_dealt": 0,
+                "damage_taken": 0,
+            }
+            for agent_name in self.possible_agents
+        }
+
+    def _add_event(self, agent_name: str, event_name: str, amount: int = 1) -> None:
+        self._events[agent_name][event_name] += amount
+        self._episode_events[agent_name][event_name] += amount
+
+    def _add_damage_event(self, attacker: str, victim: str, damage: int) -> None:
+        self._add_event(attacker, "damage_dealt", damage)
+        self._add_event(victim, "damage_taken", damage)
+
+    def _episode_damage_dealt(self) -> int:
+        return sum(
+            int(events.get("damage_dealt", 0))
+            for events in self._episode_events.values()
+        )
+
+    def _build_info(self, agent_name: str) -> dict[str, Any]:
+        return {
+            "map_name": self._map_name,
+            "map_pool": self._map_pool,
+            "events": dict(self._events[agent_name]),
+            "episode_events": dict(self._episode_events[agent_name]),
+        }
+
+    def _select_map(self, seed: int | None) -> str:
+        if self._map_pool is not None:
+            rng = np.random.default_rng(seed)
+            return str(rng.choice(self._map_pool))
+
+        if not self.cfg.arena.randomize_maps:
+            return self.cfg.arena.map_name
+
+        choices = self.cfg.arena.map_choices
+        for map_name in choices:
+            if map_name not in PLATFORM_LAYOUTS:
+                raise ValueError(f"Unknown arena map: {map_name}")
+
+        rng = np.random.default_rng(seed)
+        return str(rng.choice(choices))
+
+    def _set_map(self, map_name: str) -> None:
+        if map_name not in PLATFORM_LAYOUTS:
+            raise ValueError(f"Unknown arena map: {map_name}")
+
+        self._map_name = map_name
+        self._platform_layout = PLATFORM_LAYOUTS[map_name]
+        self._platform_grid = np.zeros(
+            (self.cfg.arena.height, self.cfg.arena.width), dtype=np.int8
+        )
+        for x_start, x_end, y in self._platform_layout:
+            self._platform_grid[y, x_start : x_end + 1] = 1
+
+    def set_map_pool(self, map_choices: tuple[str, ...] | None) -> None:
+        if map_choices is None:
+            self._map_pool = None
+            return
+
+        if not map_choices:
+            raise ValueError("map pool must include at least one map")
+        for map_name in map_choices:
+            if map_name not in PLATFORM_LAYOUTS:
+                raise ValueError(f"Unknown arena map: {map_name}")
+        self._map_pool = tuple(map_choices)
+
+    def set_reward_config(self, reward_config: RewardConfig) -> None:
+        self.cfg = replace(self.cfg, reward=reward_config)
 
     def _is_solid(self, x: int, y: int) -> bool:
         if x < 0 or x >= self.cfg.arena.width or y < 0 or y >= self.cfg.arena.height:
@@ -461,6 +556,16 @@ class ArenaFightersEnv(ParallelEnv):
         """Return serializable dict of current game state for replay logging."""
         return {
             "tick": self._tick,
+            "map_name": self._map_name,
+            "map_pool": self._map_pool,
+            "events": {
+                name: dict(events)
+                for name, events in self._events.items()
+            },
+            "episode_events": {
+                name: dict(events)
+                for name, events in self._episode_events.items()
+            },
             "agents": {
                 name: {
                     "x": st.x,

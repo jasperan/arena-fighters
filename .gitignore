@@ -1,5 +1,6 @@
 checkpoints/
 replays/
+evals/
 __pycache__/
 *.egg-info/
 dist/
@@ -7,6 +8,7 @@ build/
 .agents/
 .claude/
 .omc/
+.omx/
 tb_logs/
 docs/plans/
 task_plan.md
