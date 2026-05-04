@@ -508,6 +508,71 @@ def test_score_baseline_suite_combines_wins_and_draws():
     assert [item["episodes"] for item in score["matchup_scores"]] == [2, 2]
 
 
+def test_score_baseline_suite_reports_invalid_matchup_metrics():
+    suite = {
+        "matchups": {
+            "flat": {
+                "idle": {
+                    "episodes": "bad-count",
+                    "win_rate_agent_0": "nan",
+                    "draw_rate": 0.5,
+                    "avg_length": "bad-length",
+                    "behavior": {
+                        "no_damage_episodes": "bad-damage",
+                        "low_engagement_episodes": 1,
+                    },
+                }
+            }
+        }
+    }
+
+    score = score_baseline_suite(suite)
+
+    assert score["matchup_scores"] == [
+        {
+            "map_name": "flat",
+            "opponent": "idle",
+            "score": 0.25,
+            "episodes": 0,
+            "win_rate_agent_0": 0.0,
+            "draw_rate": 0.5,
+            "no_damage_rate": 0.0,
+            "low_engagement_rate": 0.0,
+            "avg_length": 0.0,
+        }
+    ]
+    assert score["invalid_matchup_metrics"] == [
+        {
+            "map_name": "flat",
+            "opponent": "idle",
+            "metric": "episodes",
+            "value": "bad-count",
+            "reason": "invalid_metric",
+        },
+        {
+            "map_name": "flat",
+            "opponent": "idle",
+            "metric": "win_rate_agent_0",
+            "value": "nan",
+            "reason": "invalid_metric",
+        },
+        {
+            "map_name": "flat",
+            "opponent": "idle",
+            "metric": "avg_length",
+            "value": "bad-length",
+            "reason": "invalid_metric",
+        },
+        {
+            "map_name": "flat",
+            "opponent": "idle",
+            "metric": "behavior.no_damage_episodes",
+            "value": "bad-damage",
+            "reason": "invalid_metric",
+        },
+    ]
+
+
 def test_score_baseline_suite_penalizes_low_engagement_draws():
     suite = {
         "matchups": {

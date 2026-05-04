@@ -255,8 +255,9 @@ Tune thresholds with
 `--strategy-max-low-engagement-rate`, `--strategy-max-idle-rate`, and
 `--strategy-max-dominant-action-rate`. It also reports the weakest suite/rank
 map-opponent matchups by score, capped by `--strategy-max-weaknesses`.
-Malformed but loadable artifacts are skipped with a recorded reason so one bad
-file does not hide the rest of the report.
+Malformed matchup metrics are reported as `invalid_matchup_metric` issues.
+Artifacts that still cannot be analyzed are skipped with a recorded reason so
+one bad file does not hide the rest of the report.
 
 ## 12. Curriculum Planning
 

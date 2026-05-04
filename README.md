@@ -273,9 +273,9 @@ regressions, or failed smoke health/strategy signals. Tune thresholds with
 `--strategy-max-idle-rate`, and `--strategy-max-dominant-action-rate`. The
 report also ranks the weakest suite/rank map-opponent matchups by score so the
 next curriculum, reward, or training pass can target the most fragile maps.
-Limit that list with `--strategy-max-weaknesses`. Malformed but loadable
-artifacts are skipped with a recorded reason instead of aborting the whole
-report.
+Limit that list with `--strategy-max-weaknesses`. Malformed matchup metrics are
+reported as `invalid_matchup_metric` issues; artifacts that still cannot be
+analyzed are skipped with a recorded reason instead of aborting the whole report.
 
 ### Long-Run Check
 

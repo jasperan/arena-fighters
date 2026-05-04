@@ -8,6 +8,7 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import re
 import shutil
 import shlex
@@ -192,7 +193,8 @@ def json_non_negative_int(value: object) -> int | None:
 
 def json_number(value: object) -> float | None:
     if type(value) in {int, float}:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     return None
 
 
@@ -2236,7 +2238,12 @@ def add_rate_issue(
 ) -> None:
     if value is None:
         return
-    value = float(value)
+    try:
+        value = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return
+    if not math.isfinite(value):
+        return
     if value > threshold:
         issues.append(
             {
@@ -2261,15 +2268,19 @@ def eval_strategy_issues(
     scope: str,
     thresholds: dict[str, float],
 ) -> list[dict]:
-    episodes = int(summary.get("episodes", 0) or 0)
+    episodes = json_non_negative_int(summary.get("episodes")) or 0
     behavior = summary.get("behavior", {})
+    if not isinstance(behavior, dict):
+        behavior = {}
     no_damage_rate = None
     low_engagement_rate = None
     if episodes > 0:
-        no_damage_rate = float(behavior.get("no_damage_episodes", 0)) / episodes
-        low_engagement_rate = (
-            float(behavior.get("low_engagement_episodes", 0)) / episodes
+        no_damage_episodes = json_number(behavior.get("no_damage_episodes")) or 0.0
+        low_engagement_episodes = (
+            json_number(behavior.get("low_engagement_episodes")) or 0.0
         )
+        no_damage_rate = no_damage_episodes / episodes
+        low_engagement_rate = low_engagement_episodes / episodes
 
     issues: list[dict] = []
     add_rate_issue(
@@ -2341,6 +2352,7 @@ def rank_strategy_issues(
     issues: list[dict] = []
     for ranking in summary.get("rankings", []):
         scope = f"rank:{ranking.get('label')}"
+        label = ranking.get("label")
         add_rate_issue(
             issues,
             path=path,
@@ -2374,6 +2386,23 @@ def rank_strategy_issues(
             threshold=thresholds["max_low_engagement_rate"],
             reason="mean_low_engagement_rate_above_threshold",
         )
+        _, invalid_map_scores = ranking_per_map_score_details(ranking)
+        for item in invalid_map_scores:
+            issues.append(
+                _invalid_matchup_metric_issue(
+                    {
+                        **item,
+                        "metric": "score",
+                        "opponent": item.get("opponent"),
+                        "value": item.get("score"),
+                    },
+                    path=path,
+                    relative_path=relative_path,
+                    artifact_type=artifact_type,
+                    scope=f"rank:{label}:{item.get('map_name')}",
+                    label=label,
+                )
+            )
     for entry in summary.get("suites", []):
         label = entry.get("label")
         suite = entry.get("suite") or {}
@@ -2389,6 +2418,16 @@ def rank_strategy_issues(
                         thresholds=thresholds,
                     )
                 )
+        issues.extend(
+            _suite_invalid_metric_issues(
+                suite,
+                path=path,
+                relative_path=relative_path,
+                artifact_type=artifact_type,
+                scope_prefix=f"candidate:{label}:rank_suite",
+                label=label,
+            )
+        )
     return issues
 
 
@@ -2881,6 +2920,15 @@ def strategy_issues_for_artifact(
                         thresholds=thresholds,
                     )
                 )
+        issues.extend(
+            _suite_invalid_metric_issues(
+                data,
+                path=path,
+                relative_path=relative_path,
+                artifact_type=artifact_type,
+                scope_prefix="suite",
+            )
+        )
         return issues
     if artifact_type == "rank":
         return rank_strategy_issues(
@@ -2953,6 +3001,10 @@ def _weakness_from_matchup_score(
     scope: str,
     label: str | None = None,
 ) -> dict:
+    def metric_number(key: str) -> float:
+        return json_number(item.get(key)) or 0.0
+
+    episodes = json_non_negative_int(item.get("episodes")) or 0
     weakness = {
         "path": path,
         "relative_path": relative_path,
@@ -2960,17 +3012,66 @@ def _weakness_from_matchup_score(
         "scope": scope,
         "map_name": item.get("map_name"),
         "opponent": item.get("opponent"),
-        "score": float(item.get("score", 0.0)),
-        "episodes": int(item.get("episodes", 0) or 0),
-        "win_rate_agent_0": float(item.get("win_rate_agent_0", 0.0)),
-        "draw_rate": float(item.get("draw_rate", 0.0)),
-        "no_damage_rate": float(item.get("no_damage_rate", 0.0)),
-        "low_engagement_rate": float(item.get("low_engagement_rate", 0.0)),
-        "avg_length": float(item.get("avg_length", 0.0)),
+        "score": metric_number("score"),
+        "episodes": episodes,
+        "win_rate_agent_0": metric_number("win_rate_agent_0"),
+        "draw_rate": metric_number("draw_rate"),
+        "no_damage_rate": metric_number("no_damage_rate"),
+        "low_engagement_rate": metric_number("low_engagement_rate"),
+        "avg_length": metric_number("avg_length"),
     }
     if label is not None:
         weakness["label"] = label
     return weakness
+
+
+def _invalid_matchup_metric_issue(
+    item: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    scope: str,
+    label: str | None = None,
+) -> dict:
+    issue = {
+        "path": path,
+        "relative_path": relative_path,
+        "artifact_type": artifact_type,
+        "scope": scope,
+        "metric": "invalid_matchup_metric",
+        "invalid_metric": item.get("metric"),
+        "map_name": item.get("map_name"),
+        "opponent": item.get("opponent"),
+        "value": item.get("value"),
+        "reason": item.get("reason", "invalid_metric"),
+    }
+    if label is not None:
+        issue["label"] = label
+    return issue
+
+
+def _suite_invalid_metric_issues(
+    suite: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    scope_prefix: str,
+    label: str | None = None,
+) -> list[dict]:
+    scored = score_baseline_suite(suite)
+    return [
+        _invalid_matchup_metric_issue(
+            item,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope=f"{scope_prefix}:{item.get('map_name')}/{item.get('opponent')}",
+            label=label,
+        )
+        for item in scored.get("invalid_matchup_metrics", [])
+    ]
 
 
 def _suite_weaknesses(
@@ -3266,6 +3367,7 @@ def candidate_strategy_issues_for_check(
         "idle_rate_agent_0",
         "dominant_action_rate_agent_0",
         "checkpoint_historical_opponent_samples",
+        "invalid_matchup_metric",
     }
 
     def matches_candidate_scope(issue: dict) -> bool:

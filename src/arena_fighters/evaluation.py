@@ -777,21 +777,79 @@ def score_baseline_suite(
     low_engagement_penalty: float = 0.25,
 ) -> dict[str, Any]:
     matchup_scores = []
+    invalid_matchup_metrics = []
 
     for map_name, opponents in suite.get("matchups", {}).items():
         for opponent_name, summary in opponents.items():
-            episodes = int(summary.get("episodes", 0))
-            win_rate = float(summary.get("win_rate_agent_0", 0.0))
-            draw_rate = float(summary.get("draw_rate", 0.0))
-            avg_length = float(summary.get("avg_length", 0.0))
+            matchup_context = {
+                "map_name": str(map_name),
+                "opponent": str(opponent_name),
+            }
+
+            def numeric_metric(metric: str, default: float = 0.0) -> float:
+                value = summary.get(metric, default)
+                parsed = _finite_float(value)
+                if parsed is None:
+                    invalid_matchup_metrics.append(
+                        {
+                            **matchup_context,
+                            "metric": metric,
+                            "value": _json_safe_value(value),
+                            "reason": "invalid_metric",
+                        }
+                    )
+                    return default
+                return parsed
+
+            def count_metric(metric: str) -> int:
+                value = summary.get(metric, 0)
+                try:
+                    count = int(value or 0)
+                except (TypeError, ValueError, OverflowError):
+                    invalid_matchup_metrics.append(
+                        {
+                            **matchup_context,
+                            "metric": metric,
+                            "value": _json_safe_value(value),
+                            "reason": "invalid_metric",
+                        }
+                    )
+                    return 0
+                return max(0, count)
+
+            episodes = count_metric("episodes")
+            win_rate = numeric_metric("win_rate_agent_0")
+            draw_rate = numeric_metric("draw_rate")
+            avg_length = numeric_metric("avg_length")
             behavior = summary.get("behavior", {})
+            if not isinstance(behavior, dict):
+                behavior = {}
+
+            def behavior_count_metric(metric: str) -> int:
+                value = behavior.get(metric, 0)
+                try:
+                    count = int(value or 0)
+                except (TypeError, ValueError, OverflowError):
+                    invalid_matchup_metrics.append(
+                        {
+                            **matchup_context,
+                            "metric": f"behavior.{metric}",
+                            "value": _json_safe_value(value),
+                            "reason": "invalid_metric",
+                        }
+                    )
+                    return 0
+                return max(0, count)
+
+            no_damage_episodes = behavior_count_metric("no_damage_episodes")
+            low_engagement_episodes = behavior_count_metric(
+                "low_engagement_episodes"
+            )
             no_damage_rate = (
-                float(behavior.get("no_damage_episodes", 0)) / episodes
-                if episodes else 0.0
+                no_damage_episodes / episodes if episodes else 0.0
             )
             low_engagement_rate = (
-                float(behavior.get("low_engagement_episodes", 0)) / episodes
-                if episodes else 0.0
+                low_engagement_episodes / episodes if episodes else 0.0
             )
             score = (
                 win_rate
@@ -848,6 +906,7 @@ def score_baseline_suite(
         "worst_map_name": worst_map["map_name"] if worst_map else None,
         "worst_map_score": worst_map["mean_score"] if worst_map else None,
         "matchup_scores": matchup_scores,
+        "invalid_matchup_metrics": invalid_matchup_metrics,
     }
 
 

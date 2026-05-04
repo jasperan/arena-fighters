@@ -2251,7 +2251,7 @@ def test_build_strategy_report_ranks_low_score_matchup_weaknesses(tmp_path):
     ]
 
 
-def test_build_strategy_report_skips_malformed_artifacts(tmp_path):
+def test_build_strategy_report_reports_malformed_matchups_without_skipping(tmp_path):
     healthy_eval = _eval_summary("healthy", win_rate=1.0)
     malformed_suite = {
         "artifact": artifact_metadata("suite"),
@@ -2272,18 +2272,25 @@ def test_build_strategy_report_skips_malformed_artifacts(tmp_path):
 
     report = build_strategy_report(tmp_path)
 
-    assert report["scanned_artifacts"] == 1
-    assert report["skipped_artifacts"] == [
-        {
-            "path": str(tmp_path / "malformed-suite.json"),
-            "relative_path": "malformed-suite.json",
-            "artifact_type": "suite",
-            "reason": (
-                "ValueError: invalid literal for int() with base 10: 'not-an-int'"
-            ),
-        }
+    invalid_metric_issues = [
+        issue
+        for issue in report["issues"]
+        if issue["metric"] == "invalid_matchup_metric"
     ]
-    assert report["weakness_count"] == 0
+    assert report["scanned_artifacts"] == 2
+    assert report["skipped_artifacts"] == []
+    assert {
+        "path": str(tmp_path / "malformed-suite.json"),
+        "relative_path": "malformed-suite.json",
+        "artifact_type": "suite",
+        "scope": "suite:flat/idle",
+        "metric": "invalid_matchup_metric",
+        "invalid_metric": "episodes",
+        "map_name": "flat",
+        "opponent": "idle",
+        "value": "not-an-int",
+        "reason": "invalid_metric",
+    } in invalid_metric_issues
 
 
 def test_build_artifact_index_summarizes_strategy_report_skips(tmp_path):
@@ -2983,6 +2990,31 @@ def test_build_long_run_check_treats_candidate_idle_as_bad_strategy():
             "scope": "candidate:candidate:rank_suite:classic/idle",
             "metric": "idle_rate_agent_0",
             "value": 0.9,
+        }
+    ]
+
+    result = build_long_run_check(
+        _long_run_promotion_audit(),
+        strategy_report,
+        _long_run_artifact_index(),
+        min_maps=2,
+        require_replay_analysis=True,
+    )
+
+    failed = {check["id"] for check in result["checks"] if not check["passed"]}
+    assert result["passed"] is False
+    assert "no_candidate_bad_strategy_issues" in failed
+
+
+def test_build_long_run_check_treats_candidate_invalid_matchups_as_bad_strategy():
+    strategy_report = _long_run_strategy_report()
+    strategy_report["issue_count"] = 1
+    strategy_report["issues"] = [
+        {
+            "scope": "candidate:candidate:rank_suite:flat/idle",
+            "metric": "invalid_matchup_metric",
+            "invalid_metric": "episodes",
+            "value": "bad-count",
         }
     ]
 
