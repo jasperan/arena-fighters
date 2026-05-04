@@ -453,8 +453,8 @@ League health mode rolls the latest strategy report, long-run status,
 rank/head-to-head standings, promotion audit, and long-run check into one
 promotion-health artifact with `health.blockers`, `health.warnings`, opponent-pool
 readiness, self-play sampling smoke status, replay strategy blockers, long-run
-status blockers, weakest maps, malformed candidate map-score checks, and
-head-to-head candidate Elo.
+status blockers, strategy-report weakest maps, direct rank-derived per-map score
+signals, malformed candidate map-score checks, and head-to-head candidate Elo.
 When the latest status includes an eval directory, those source artifacts are
 scoped to that run so unrelated older artifacts do not make a blocked run look
 healthy.

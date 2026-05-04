@@ -4806,6 +4806,33 @@ def _candidate_head_to_head_signal(rank: dict | None) -> dict:
     }
 
 
+def _candidate_rank_map_score_signal(rank_top: dict | None) -> dict:
+    if not isinstance(rank_top, dict) or not rank_top:
+        return {
+            "available": False,
+            "candidate_label": None,
+            "map_count": 0,
+            "per_map_scores": [],
+            "invalid_map_scores": [],
+            "worst": None,
+        }
+
+    per_map_scores, invalid_map_scores = ranking_per_map_score_details(rank_top)
+    worst_map = min(
+        per_map_scores,
+        key=lambda item: (item["mean_score"], item["map_name"]),
+        default=None,
+    )
+    return {
+        "available": bool(per_map_scores or invalid_map_scores),
+        "candidate_label": rank_top.get("label"),
+        "map_count": len(per_map_scores),
+        "per_map_scores": per_map_scores,
+        "invalid_map_scores": invalid_map_scores,
+        "worst": worst_map,
+    }
+
+
 def build_league_health_report(
     artifact_dir: str | Path,
     *,
@@ -4999,6 +5026,7 @@ def build_league_health_report(
                 "maps": weakness_maps,
                 "worst": weaknesses[0] if weaknesses else None,
             },
+            "rank_map_scores": _candidate_rank_map_score_signal(rank_top),
             "head_to_head": _candidate_head_to_head_signal(rank),
             "self_play_sampling": {
                 "available": bool(self_play_sampling),

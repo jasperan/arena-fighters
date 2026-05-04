@@ -391,7 +391,10 @@ latest run's eval directory when available, so older or unrelated runs do not
 pollute triage. It reports blockers such as blocked long-run status, failed
 promotion audit, candidate or replay strategy issues, failed self-play sampling
 preflights or smokes, missing historical-opponent sampling, or a failed long-run
-check, plus warnings for missing source artifacts.
+check, plus warnings for missing source artifacts. It also surfaces the top
+ranked candidate's per-map score summary directly from the rank artifact, so
+weak maps remain visible even when the strategy report truncates matchup
+weaknesses.
 Use it as a triage dashboard before spending time on deeper replay inspection or
 new training runs.
 

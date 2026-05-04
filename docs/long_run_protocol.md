@@ -329,8 +329,9 @@ health reads strategy, rank, promotion, and verifier artifacts from that run
 instead of mixing in older runs. Its `health.blockers` list highlights candidate
 strategy issues, blocked long-run status, failed promotion audits, failed
 self-play sampling preflights or smokes, missing historical-opponent sampling,
-and failed long-run checks in one place, while `health.warnings` records missing
-source artifacts.
+and failed long-run checks in one place. Its signals also include the ranked
+candidate's direct per-map score summary, while `health.warnings` records
+missing source artifacts.
 
 ## 9. Promotion Criteria
 

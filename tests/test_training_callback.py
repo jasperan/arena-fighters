@@ -5088,6 +5088,10 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
         },
     }
     rank = _rank_summary(label="candidate", score=0.5)
+    rank["rankings"][0]["matchup_scores"] = [
+        {"map_name": "classic", "score": 0.5, "episodes": 20},
+        {"map_name": "flat", "score": -0.25, "episodes": 20},
+    ]
     rank["head_to_head"] = {
         "overview": {"total_episodes": 4},
         "standings": [
@@ -5140,6 +5144,32 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
     assert report["signals"]["strategy"]["historical_sampling_issue_count"] == 1
     assert report["signals"]["map_weaknesses"]["maps"] == ["flat"]
     assert report["signals"]["map_weaknesses"]["worst"]["scope"] == "suite:flat/idle"
+    assert report["signals"]["rank_map_scores"] == {
+        "available": True,
+        "candidate_label": "candidate",
+        "map_count": 2,
+        "per_map_scores": [
+            {
+                "map_name": "classic",
+                "mean_score": 0.5,
+                "matchup_count": 1,
+                "episode_count": 20,
+            },
+            {
+                "map_name": "flat",
+                "mean_score": -0.25,
+                "matchup_count": 1,
+                "episode_count": 20,
+            },
+        ],
+        "invalid_map_scores": [],
+        "worst": {
+            "map_name": "flat",
+            "mean_score": -0.25,
+            "matchup_count": 1,
+            "episode_count": 20,
+        },
+    }
     assert report["signals"]["head_to_head"]["candidate_elo"] == 1012.0
     assert report["signals"]["head_to_head"]["standing_rank"] == 1
     assert report["signals"]["self_play_sampling_preflight"] == {
