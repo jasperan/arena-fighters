@@ -1647,6 +1647,33 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "next_command": data.get("next_command"),
             "next_preflight_command": data.get("next_preflight_command"),
         }
+    if artifact_type == "league_health":
+        health = data.get("health", {})
+        signals = data.get("signals", {})
+        return {
+            "ready": health.get("ready"),
+            "blockers": health.get("blockers", []),
+            "warnings": health.get("warnings", []),
+            "candidate_label": signals.get("candidate", {}).get("label"),
+            "strategy_issue_count": signals.get("strategy", {}).get("issue_count"),
+            "candidate_strategy_issue_count": signals.get("strategy", {}).get(
+                "candidate_issue_count"
+            ),
+            "historical_sample_ready": signals.get("opponent_pool", {}).get(
+                "historical_sample_ready"
+            ),
+            "max_historical_samples": signals.get("opponent_pool", {}).get(
+                "max_historical_samples"
+            ),
+            "weakness_count": signals.get("map_weaknesses", {}).get("count"),
+            "worst_weakness": signals.get("map_weaknesses", {}).get("worst"),
+            "head_to_head_candidate_elo": signals.get("head_to_head", {}).get(
+                "candidate_elo"
+            ),
+            "long_run_check_passed": signals.get("long_run", {}).get(
+                "latest_check_passed"
+            ),
+        }
     return {}
 
 
@@ -3799,6 +3826,249 @@ def run_long_run_status(
         print(f"Saved long-run status to {path}")
 
 
+def _latest_artifact_entry(index: dict, artifact_type: str) -> dict | None:
+    entries = [
+        entry
+        for entry in index.get("artifacts", [])
+        if entry.get("artifact_type") == artifact_type
+    ]
+    if not entries:
+        return None
+    return max(
+        entries,
+        key=lambda entry: (
+            Path(entry["path"]).stat().st_mtime,
+            entry.get("relative_path") or entry["path"],
+        ),
+    )
+
+
+def _load_indexed_artifact(entry: dict | None, expected_type: str) -> dict | None:
+    if entry is None:
+        return None
+    try:
+        artifact = load_eval_summary(entry["path"])
+        validate_artifact(artifact, expected_type)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    return artifact
+
+
+def _candidate_head_to_head_signal(rank: dict | None) -> dict:
+    if not isinstance(rank, dict):
+        return {
+            "available": False,
+            "candidate_label": None,
+            "candidate_elo": None,
+            "candidate_score": None,
+            "standing_rank": None,
+        }
+    rankings = rank.get("rankings", [])
+    if not isinstance(rankings, list):
+        rankings = []
+    top_ranking = rankings[0] if rankings and isinstance(rankings[0], dict) else {}
+    candidate_label = top_ranking.get("label")
+    head_to_head = rank.get("head_to_head", {})
+    if not isinstance(head_to_head, dict):
+        head_to_head = {}
+    standings = head_to_head.get("standings", [])
+    if not isinstance(standings, list):
+        standings = []
+    candidate_standing = None
+    for index, standing in enumerate(standings, start=1):
+        if not isinstance(standing, dict):
+            continue
+        if standing.get("label") == candidate_label:
+            candidate_standing = standing
+            standing_rank = index
+            break
+    else:
+        standing_rank = None
+    overview = head_to_head.get("overview", {})
+    if not isinstance(overview, dict):
+        overview = {}
+    return {
+        "available": candidate_standing is not None,
+        "candidate_label": candidate_label,
+        "candidate_elo": (
+            candidate_standing.get("elo") if candidate_standing else None
+        ),
+        "candidate_score": (
+            candidate_standing.get("score") if candidate_standing else None
+        ),
+        "standing_rank": standing_rank,
+        "total_episodes": overview.get("total_episodes"),
+    }
+
+
+def build_league_health_report(
+    artifact_dir: str | Path,
+    *,
+    recursive: bool = True,
+) -> dict:
+    root = Path(artifact_dir)
+    index = build_artifact_index(root, recursive=recursive)
+    latest_entries = {
+        artifact_type: _latest_artifact_entry(index, artifact_type)
+        for artifact_type in (
+            "strategy_report",
+            "long_run_status",
+            "rank",
+            "promotion_audit",
+            "long_run_check",
+        )
+    }
+    latest = {
+        artifact_type: _load_indexed_artifact(entry, artifact_type)
+        for artifact_type, entry in latest_entries.items()
+    }
+
+    strategy = latest["strategy_report"] or {}
+    status = latest["long_run_status"] or {}
+    rank = latest["rank"] or {}
+    promotion = latest["promotion_audit"] or {}
+    long_run_check = latest["long_run_check"] or {}
+
+    strategy_issues = strategy.get("issues", [])
+    if not isinstance(strategy_issues, list):
+        strategy_issues = []
+    candidate_issues = [
+        issue
+        for issue in strategy_issues
+        if str(issue.get("scope", "")).startswith("candidate:")
+    ]
+    historical_sampling_issues = [
+        issue
+        for issue in strategy_issues
+        if issue.get("metric") == "checkpoint_historical_opponent_samples"
+    ]
+    weaknesses = strategy.get("weaknesses", [])
+    if not isinstance(weaknesses, list):
+        weaknesses = []
+    weakness_maps = sorted(
+        {weakness.get("map_name") for weakness in weaknesses if weakness.get("map_name")}
+    )
+
+    latest_manifest = status.get("latest_manifest") or {}
+    if not isinstance(latest_manifest, dict):
+        latest_manifest = {}
+    checkpoint_pool = latest_manifest.get("checkpoint_opponent_pool") or {}
+    if not isinstance(checkpoint_pool, dict):
+        checkpoint_pool = {}
+    long_run_check_failed = failed_required_check_ids(long_run_check)
+    promotion_candidate = promotion.get("candidate") or {}
+    rankings = rank.get("rankings") or []
+    if not isinstance(rankings, list) or not rankings:
+        rank_top = {}
+    else:
+        rank_top = rankings[0] if isinstance(rankings[0], dict) else {}
+    candidate_label = (
+        promotion_candidate.get("label")
+        or rank_top.get("label")
+        or long_run_check.get("candidate", {}).get("label")
+    )
+
+    blockers = []
+    warnings = []
+    if latest["strategy_report"] is None:
+        warnings.append("missing_strategy_report")
+    if latest["rank"] is None:
+        warnings.append("missing_rank")
+    if latest["long_run_status"] is None:
+        warnings.append("missing_long_run_status")
+    if latest["long_run_check"] is None:
+        warnings.append("missing_long_run_check")
+    if candidate_issues:
+        blockers.append("candidate_strategy_issues")
+    missing_evidence = status.get("missing_evidence", [])
+    if not isinstance(missing_evidence, list):
+        missing_evidence = []
+    if (
+        historical_sampling_issues
+        or "checkpoint_historical_opponent_samples" in missing_evidence
+    ):
+        blockers.append("historical_opponent_sampling")
+    if long_run_check and not long_run_check.get("passed"):
+        blockers.append("long_run_check_failed")
+
+    source_artifacts = {
+        artifact_type: entry.get("path") if entry else None
+        for artifact_type, entry in latest_entries.items()
+    }
+    return {
+        "artifact": artifact_metadata("league_health"),
+        "health_config": {
+            "artifact_dir": str(root),
+            "recursive": recursive,
+        },
+        "source_artifacts": source_artifacts,
+        "health": {
+            "ready": not blockers and not warnings,
+            "blockers": blockers,
+            "warnings": warnings,
+        },
+        "signals": {
+            "candidate": {
+                "label": candidate_label,
+                "promotion_passed": promotion.get("passed"),
+                "rank_score": rank_top.get("score"),
+            },
+            "opponent_pool": {
+                "historical_sample_ready": checkpoint_pool.get(
+                    "meets_min_opponent_historical_samples"
+                ),
+                "max_historical_samples": checkpoint_pool.get(
+                    "max_historical_samples"
+                ),
+                "min_historical_samples": checkpoint_pool.get(
+                    "min_opponent_historical_samples"
+                ),
+            },
+            "strategy": {
+                "issue_count": strategy.get("issue_count", len(strategy_issues)),
+                "candidate_issue_count": len(candidate_issues),
+                "historical_sampling_issue_count": len(historical_sampling_issues),
+                "issue_metrics": sorted(
+                    {
+                        issue.get("metric")
+                        for issue in strategy_issues
+                        if issue.get("metric")
+                    }
+                ),
+            },
+            "map_weaknesses": {
+                "count": strategy.get("weakness_count", len(weaknesses)),
+                "reported_count": len(weaknesses),
+                "maps": weakness_maps,
+                "worst": weaknesses[0] if weaknesses else None,
+            },
+            "head_to_head": _candidate_head_to_head_signal(rank),
+            "long_run": {
+                "status_candidate_evidence_ready": status.get(
+                    "candidate_evidence_ready"
+                ),
+                "status_blocked_reason": status.get("blocked_reason"),
+                "missing_evidence": missing_evidence,
+                "latest_check_passed": long_run_check.get("passed"),
+                "failed_required_checks": long_run_check_failed,
+            },
+        },
+    }
+
+
+def run_league_health(
+    artifact_dir: str,
+    output_dir: str | None = None,
+    output_label: str | None = None,
+) -> None:
+    report = build_league_health_report(artifact_dir, recursive=True)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    if output_dir is not None:
+        label = output_label or "league-health"
+        path = write_eval_summary(report, output_dir, label=label)
+        print(f"Saved league health report to {path}")
+
+
 def _shell_assign(name: str, value: str) -> str:
     return f"{name}={shlex.quote(value)}"
 
@@ -4552,6 +4822,7 @@ def main():
             "long_run_manifest",
             "long_run_check",
             "long_run_status",
+            "league_health",
         ],
         default="train",
         help="Operating mode (default: train)",
@@ -4781,12 +5052,15 @@ def main():
         "--artifact-dir",
         type=str,
         default="evals",
-        help="Directory of saved JSON artifacts for artifact_index mode",
+        help="Directory of saved JSON artifacts for artifact report modes",
     )
     parser.add_argument(
         "--recursive-artifacts",
         action="store_true",
-        help="Recursively scan --artifact-dir in artifact_index/strategy_report modes",
+        help=(
+            "Recursively scan --artifact-dir in artifact_index, strategy_report, "
+            "and league_health modes"
+        ),
     )
     parser.add_argument(
         "--strategy-max-draw-rate",
@@ -5200,6 +5474,12 @@ def main():
         )
     elif args.mode == "long_run_status":
         run_long_run_status(
+            args.artifact_dir,
+            output_dir=args.eval_output_dir,
+            output_label=args.eval_label,
+        )
+    elif args.mode == "league_health":
+        run_league_health(
             args.artifact_dir,
             output_dir=args.eval_output_dir,
             output_label=args.eval_label,

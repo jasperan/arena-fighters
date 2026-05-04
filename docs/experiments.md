@@ -360,6 +360,7 @@ use:
 
 ```bash
 python scripts/train.py --mode long_run_status --artifact-dir evals
+python scripts/train.py --mode league_health --artifact-dir evals --eval-output-dir evals --eval-label league-health
 ```
 
 The status output reports the latest manifest, whether the run directory exists,
@@ -370,6 +371,10 @@ sidecars, checkpoint files, replay files, or latest-run verifier artifacts, and
 includes `source_safe_to_launch` plus `source_stale_reasons` before a long run is
 started. The latest manifest status also summarizes checkpoint opponent-pool
 metadata and flags missing historical-opponent sample evidence.
+League health mode rolls the latest strategy report, long-run status,
+rank/head-to-head standings, promotion audit, and long-run check into one
+promotion-health artifact with `health.blockers`, `health.warnings`, opponent-pool
+readiness, weakest maps, and head-to-head candidate Elo.
 
 Single eval output records the current curriculum under
 `eval_config.curriculum`; suite output records it under

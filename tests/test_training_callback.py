@@ -14,6 +14,7 @@ from scripts.train import (
     build_long_run_check,
     build_long_run_manifest,
     build_long_run_status,
+    build_league_health_report,
     build_replay_analysis_batch,
     build_strategy_report,
     build_training_wrapper,
@@ -43,6 +44,7 @@ from scripts.train import (
     run_long_run_check,
     run_long_run_manifest,
     run_long_run_status,
+    run_league_health,
     run_promotion_audit,
     run_rank_gate,
     run_suite,
@@ -3690,6 +3692,138 @@ def test_run_long_run_status_can_save_indexable_artifact(tmp_path, capsys):
     assert status_entry["summary"]["candidate_evidence_ready"] is False
     assert status_entry["summary"]["blocked_reason"] == "no_long_run_manifest_found"
     assert status_entry["summary"]["missing_evidence"] == ["long_run_manifest"]
+
+
+def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 1,
+        "issues": [
+            {
+                "scope": "candidate:candidate:checkpoint_opponent_pool",
+                "metric": "checkpoint_historical_opponent_samples",
+                "value": 0,
+                "threshold": 1,
+            }
+        ],
+        "weakness_count": 1,
+        "weaknesses": [
+            {
+                "scope": "suite:flat/idle",
+                "map_name": "flat",
+                "opponent": "idle",
+                "score": -0.25,
+                "episodes": 20,
+                "win_rate_agent_0": 0.0,
+                "draw_rate": 0.5,
+                "no_damage_rate": 0.25,
+                "low_engagement_rate": 0.5,
+                "avg_length": 50.0,
+            }
+        ],
+    }
+    long_run_status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "candidate_evidence_ready": False,
+        "blocked_reason": "latest_long_run_check_not_passing",
+        "missing_evidence": ["checkpoint_historical_opponent_samples"],
+        "latest_manifest": {
+            "run_id": "status-run",
+            "checkpoint_opponent_pool": {
+                "min_opponent_historical_samples": 1,
+                "max_historical_samples": 0,
+                "meets_min_opponent_historical_samples": False,
+            },
+        },
+    }
+    rank = _rank_summary(label="candidate", score=0.5)
+    rank["head_to_head"] = {
+        "overview": {"total_episodes": 4},
+        "standings": [
+            {"label": "candidate", "elo": 1012.0, "score": 0.6},
+            {"label": "older", "elo": 988.0, "score": 0.4},
+        ],
+    }
+    long_run_check = {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": False,
+        "candidate": {"label": "candidate", "score": 0.5},
+        "checks": [
+            {
+                "id": "no_candidate_bad_strategy_issues",
+                "required": True,
+                "passed": False,
+            }
+        ],
+    }
+    promotion = _promotion_audit_summary()
+    (artifact_dir / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+    (artifact_dir / "status.json").write_text(json.dumps(long_run_status) + "\n")
+    (artifact_dir / "rank.json").write_text(json.dumps(rank) + "\n")
+    (artifact_dir / "check.json").write_text(json.dumps(long_run_check) + "\n")
+    (artifact_dir / "promotion.json").write_text(json.dumps(promotion) + "\n")
+
+    report = build_league_health_report(artifact_dir)
+
+    assert report["artifact"] == {
+        "artifact_type": "league_health",
+        "schema_version": 1,
+    }
+    assert report["health"] == {
+        "ready": False,
+        "blockers": [
+            "candidate_strategy_issues",
+            "historical_opponent_sampling",
+            "long_run_check_failed",
+        ],
+        "warnings": [],
+    }
+    assert report["signals"]["candidate"]["label"] == "candidate"
+    assert report["signals"]["opponent_pool"] == {
+        "historical_sample_ready": False,
+        "max_historical_samples": 0,
+        "min_historical_samples": 1,
+    }
+    assert report["signals"]["strategy"]["candidate_issue_count"] == 1
+    assert report["signals"]["strategy"]["historical_sampling_issue_count"] == 1
+    assert report["signals"]["map_weaknesses"]["maps"] == ["flat"]
+    assert report["signals"]["map_weaknesses"]["worst"]["scope"] == "suite:flat/idle"
+    assert report["signals"]["head_to_head"]["candidate_elo"] == 1012.0
+    assert report["signals"]["head_to_head"]["standing_rank"] == 1
+    assert report["signals"]["long_run"]["failed_required_checks"] == [
+        "no_candidate_bad_strategy_issues"
+    ]
+
+
+def test_run_league_health_can_save_indexable_artifact(tmp_path, capsys):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    output_dir = tmp_path / "health"
+
+    run_league_health(
+        str(artifact_dir),
+        output_dir=str(output_dir),
+        output_label="league-health",
+    )
+
+    stdout = capsys.readouterr().out
+    [saved_path] = output_dir.glob("*_league-health.json")
+    saved = json.loads(saved_path.read_text())
+    index = build_artifact_index(output_dir)
+    [health_entry] = index["artifacts"]
+    assert "Saved league health report to" in stdout
+    assert saved["health"]["ready"] is False
+    assert set(saved["health"]["warnings"]) == {
+        "missing_strategy_report",
+        "missing_rank",
+        "missing_long_run_status",
+        "missing_long_run_check",
+    }
+    assert index["artifact_counts"] == {"league_health": 1}
+    assert health_entry["summary"]["ready"] is False
+    assert "missing_rank" in health_entry["summary"]["warnings"]
 
 
 def test_build_long_run_manifest_auto_pins_replay_interval_for_tiny_runs():

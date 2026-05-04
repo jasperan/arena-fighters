@@ -25,12 +25,13 @@ Two agents spawn on a multi-platform arena, shoot projectiles, swing melee attac
 - **Audit summary**: skim saved promotion-audit JSON into candidate, pass/fail, failures, and artifact paths
 - **Artifact index**: scan ignored eval directories and create a lightweight manifest of JSON artifact types, summaries, and links
 - **Strategy report**: scan saved artifacts for no-damage, low-engagement, all-draw, idle, action-spam, or missing historical-opponent evidence
+- **League health report**: combine strategy, long-run status, rank/head-to-head, and map weakness signals into one promotion-health artifact
 - **Long-run manifest**: emit a reproducible real-compute command bundle and launcher script without executing training
 - **Long-run check**: validate promotion-audit, strategy-report, and artifact-index outputs against documented promotion criteria
 - **Built-in baselines**: random, idle, scripted, aggressive, and evasive evaluation opponents
 - **Reward presets**: default and anti-stall reward profiles for evaluation-driven training experiments
 - **Custom CNN extractor**: processes a 6-channel 20x40 grid observation + 6-dim vector (HP, cooldowns, velocity, ducking)
-- **16 modes**: headless training, live ASCII watch, frame-by-frame replay, replay analysis, JSON evaluation, eval comparison, eval gating, baseline suites, checkpoint ranking, rank gating, promotion audit, audit summary, artifact indexing, strategy reporting, long-run manifesting, long-run checking
+- **18 modes**: headless training, live ASCII watch, frame-by-frame replay, replay analysis, JSON evaluation, eval comparison, eval gating, baseline suites, checkpoint ranking, rank gating, promotion audit, audit summary, artifact indexing, strategy reporting, long-run manifesting, long-run checking, long-run status, and league health
 - **Milestone checkpoints**: auto-saves at 100K, 500K, 1M, 5M, 10M, 50M, and 100M steps
 - **Episode replay**: JSON-serialized frame logs with map and event metadata for post-hoc analysis
 
@@ -336,6 +337,7 @@ launching training:
 ```bash
 python scripts/train.py --mode long_run_status --artifact-dir evals
 python scripts/train.py --mode long_run_status --artifact-dir evals --eval-output-dir evals --eval-label long-run-status
+python scripts/train.py --mode league_health --artifact-dir evals --eval-output-dir evals --eval-label league-health
 ```
 
 Status mode recursively scans `--artifact-dir`, reports the latest
@@ -352,6 +354,14 @@ metadata summary so stale launchers or self-play runs with no historical
 opponent samples can be caught before spending promotion compute. It is an audit
 aid only; a passing status still needs the underlying verifier artifacts to be
 inspected before promoting a checkpoint.
+
+League health mode recursively scans the same artifact directory and combines the
+latest strategy report, long-run status, rank/head-to-head standings,
+promotion-audit candidate, and long-run check into one compact JSON artifact. It
+reports blockers such as candidate strategy issues, missing historical-opponent
+sampling, or a failed long-run check, plus warnings for missing source artifacts.
+Use it as a triage dashboard before spending time on deeper replay inspection or
+new training runs.
 
 Long-run check validates saved promotion-audit, strategy-report, and
 artifact-index outputs against the documented promotion criteria. It exits
@@ -449,7 +459,7 @@ src/arena_fighters/
 ├── self_play.py   # Opponent pool manager, wraps env for SB3 single-agent training
 └── replay.py      # Episode logger (JSON) and playback
 scripts/
-└── train.py       # CLI entrypoint with train/watch/replay/analyze/eval/compare/gate/suite/rank/rank_gate/promotion_audit/audit_summary/artifact_index/strategy_report/long_run_manifest/long_run_check/long_run_status modes
+└── train.py       # CLI entrypoint with train/watch/replay/analyze/eval/compare/gate/suite/rank/rank_gate/promotion_audit/audit_summary/artifact_index/strategy_report/long_run_manifest/long_run_check/long_run_status/league_health modes
 ```
 
 ### Observation Space

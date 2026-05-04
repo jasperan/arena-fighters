@@ -271,6 +271,11 @@ python scripts/train.py --mode long_run_status \
   --artifact-dir evals \
   --eval-output-dir evals \
   --eval-label long-run-status
+
+python scripts/train.py --mode league_health \
+  --artifact-dir evals \
+  --eval-output-dir evals \
+  --eval-label league-health
 ```
 
 Status mode recursively scans generated manifests, launcher sidecars, and
@@ -286,6 +291,12 @@ metadata sidecars for opponent-pool historical-sample evidence, and
 `missing_evidence` includes `checkpoint_historical_opponent_samples` when a
 real-run manifest requires that evidence but no checkpoint metadata satisfies it.
 Treat this as a quick triage artifact, not as promotion proof by itself.
+
+League health mode then combines the latest strategy report, long-run status,
+rank/head-to-head standings, promotion audit, and long-run check into a compact
+triage artifact. Its `health.blockers` list highlights candidate strategy issues,
+missing historical-opponent sampling, and failed long-run checks in one place,
+while `health.warnings` records missing source artifacts.
 
 ## 9. Promotion Criteria
 

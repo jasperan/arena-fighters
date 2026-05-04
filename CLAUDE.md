@@ -68,6 +68,7 @@ python scripts/train.py --mode strategy_report --artifact-dir evals --recursive-
 python scripts/train.py --mode long_run_manifest --run-id arena-manual-001 --timesteps 5000000 --eval-output-dir evals --eval-label arena-manual-001-plan
 python scripts/train.py --mode long_run_check --promotion-audit-summary evals/promotion.json --strategy-report-summary evals/strategy-report.json --artifact-index-summary evals/artifact-index.json --long-run-required-maps classic,flat,split,tower --long-run-min-eval-episodes 320 --long-run-min-map-episodes 80 --long-run-min-map-score 0.0 --long-run-min-opponent-historical-samples 1 --long-run-require-candidate-checkpoint --long-run-require-candidate-metadata --long-run-require-candidate-integrity --eval-output-dir evals --eval-label long-run-check
 python scripts/train.py --mode long_run_status --artifact-dir evals --eval-output-dir evals --eval-label long-run-status
+python scripts/train.py --mode league_health --artifact-dir evals --eval-output-dir evals --eval-label league-health
 python scripts/reward_shaping_smoke.py
 python scripts/train_eval_smoke.py
 
@@ -100,6 +101,9 @@ matches the current clean checkout. The status artifact also includes
 `source_safe_to_launch`/`source_stale_reasons` for stale-manifest detection. The
 latest manifest status summarizes checkpoint opponent-pool metadata and flags
 missing historical-opponent samples before promotion checks are run.
+Use `league_health` to combine the latest strategy report, long-run status,
+rank/head-to-head standings, promotion audit, and long-run check into one compact
+promotion-health artifact.
 
 ## Architecture
 
@@ -124,6 +128,7 @@ All source lives in `src/arena_fighters/`:
 - Checkpoint metadata records latest opponent-pool stats; generated real-run long-run checks require historical opponent samples
 - Long-run status summarizes checkpoint opponent-pool metadata and flags missing historical-opponent sample evidence
 - Strategy report treats missing historical-opponent evidence from long-run status as a candidate bad-strategy issue
+- League health summarizes strategy, opponent-pool, head-to-head, map weakness, and long-run gate signals in one artifact
 - Checkpoints get companion `.meta.json` files with map settings, reward config, active curriculum stage, file size, and SHA-256 digest
 - Eval JSON includes average cumulative rewards and behavior diagnostics for idle rate, action spam, no-damage episodes, low-engagement episodes, and damage events
 - Evaluation winner inference treats timeouts as draws and knockouts by terminal HP; shaped rewards do not create timeout wins
