@@ -297,10 +297,12 @@ Treat this as a quick triage artifact, not as promotion proof by itself.
 
 League health mode then combines the latest strategy report, long-run status,
 rank/head-to-head standings, promotion audit, and long-run check into a compact
-triage artifact. Its `health.blockers` list highlights candidate strategy issues,
-blocked long-run status, failed promotion audits, missing historical-opponent
-sampling, and failed long-run checks in one place, while `health.warnings`
-records missing source artifacts.
+triage artifact. When the latest status points at a run eval directory, league
+health reads strategy, rank, promotion, and verifier artifacts from that run
+instead of mixing in older runs. Its `health.blockers` list highlights candidate
+strategy issues, blocked long-run status, failed promotion audits, missing
+historical-opponent sampling, and failed long-run checks in one place, while
+`health.warnings` records missing source artifacts.
 
 ## 9. Promotion Criteria
 

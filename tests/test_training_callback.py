@@ -3892,6 +3892,70 @@ def test_build_league_health_blocks_on_latest_long_run_status(tmp_path):
     assert report["signals"]["long_run"]["latest_check_passed"] is True
 
 
+def test_build_league_health_scopes_sources_to_latest_status_run(tmp_path):
+    artifact_dir = tmp_path / "evals"
+    older_run = artifact_dir / "older-run"
+    latest_run = artifact_dir / "latest-run"
+    older_run.mkdir(parents=True)
+    latest_run.mkdir(parents=True)
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 0,
+        "issues": [],
+        "weakness_count": 0,
+        "weaknesses": [],
+    }
+    long_run_status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "candidate_evidence_ready": True,
+        "blocked_reason": None,
+        "missing_evidence": [],
+        "latest_manifest": {
+            "run_id": "latest-run",
+            "eval_dir": str(latest_run),
+            "checkpoint_opponent_pool": {
+                "min_opponent_historical_samples": 1,
+                "max_historical_samples": 2,
+                "meets_min_opponent_historical_samples": True,
+            },
+        },
+    }
+    long_run_check = {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": True,
+        "candidate": {"label": "candidate", "score": 0.5},
+        "checks": [
+            {
+                "id": "promotion_audit_passed",
+                "required": True,
+                "passed": True,
+            }
+        ],
+    }
+    (latest_run / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+    (latest_run / "status.json").write_text(json.dumps(long_run_status) + "\n")
+    (latest_run / "check.json").write_text(json.dumps(long_run_check) + "\n")
+    (latest_run / "promotion.json").write_text(
+        json.dumps(_promotion_audit_summary()) + "\n"
+    )
+    (older_run / "newer-but-unrelated-rank.json").write_text(
+        json.dumps(_rank_summary(label="unrelated", score=0.99)) + "\n"
+    )
+
+    report = build_league_health_report(artifact_dir)
+
+    assert report["health_config"]["artifact_scope_dir"] == str(latest_run)
+    assert report["source_artifacts"]["rank"] is None
+    assert report["source_artifacts"]["strategy_report"] == str(
+        latest_run / "strategy.json"
+    )
+    assert report["health"]["ready"] is False
+    assert report["health"]["blockers"] == []
+    assert report["health"]["warnings"] == ["missing_rank"]
+    assert report["signals"]["candidate"]["rank_score"] is None
+    assert report["signals"]["head_to_head"]["candidate_label"] is None
+
+
 def test_run_league_health_can_save_indexable_artifact(tmp_path, capsys):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()

@@ -378,6 +378,9 @@ League health mode rolls the latest strategy report, long-run status,
 rank/head-to-head standings, promotion audit, and long-run check into one
 promotion-health artifact with `health.blockers`, `health.warnings`, opponent-pool
 readiness, long-run status blockers, weakest maps, and head-to-head candidate Elo.
+When the latest status includes an eval directory, those source artifacts are
+scoped to that run so unrelated older artifacts do not make a blocked run look
+healthy.
 
 Single eval output records the current curriculum under
 `eval_config.curriculum`; suite output records it under

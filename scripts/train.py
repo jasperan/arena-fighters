@@ -3841,12 +3841,24 @@ def run_long_run_status(
         print(f"Saved long-run status to {path}")
 
 
-def _latest_artifact_entry(index: dict, artifact_type: str) -> dict | None:
+def _latest_artifact_entry(
+    index: dict,
+    artifact_type: str,
+    *,
+    scope_dir: str | Path | None = None,
+) -> dict | None:
     entries = [
         entry
         for entry in index.get("artifacts", [])
         if entry.get("artifact_type") == artifact_type
     ]
+    if scope_dir is not None:
+        scope_path = Path(scope_dir)
+        entries = [
+            entry
+            for entry in entries
+            if _path_is_relative_to(Path(entry["path"]), scope_path)
+        ]
     if not entries:
         return None
     return max(
@@ -3923,23 +3935,34 @@ def build_league_health_report(
 ) -> dict:
     root = Path(artifact_dir)
     index = build_artifact_index(root, recursive=recursive)
-    latest_entries = {
-        artifact_type: _latest_artifact_entry(index, artifact_type)
-        for artifact_type in (
-            "strategy_report",
-            "long_run_status",
-            "rank",
-            "promotion_audit",
-            "long_run_check",
+    status_entry = _latest_artifact_entry(index, "long_run_status")
+    status_artifact = _load_indexed_artifact(status_entry, "long_run_status")
+    status = status_artifact or {}
+    latest_manifest = status.get("latest_manifest") or {}
+    if not isinstance(latest_manifest, dict):
+        latest_manifest = {}
+    artifact_scope_dir = latest_manifest.get("eval_dir")
+    if not isinstance(artifact_scope_dir, str) or not artifact_scope_dir:
+        artifact_scope_dir = None
+    latest_entries = {"long_run_status": status_entry}
+    for artifact_type in (
+        "strategy_report",
+        "rank",
+        "promotion_audit",
+        "long_run_check",
+    ):
+        latest_entries[artifact_type] = _latest_artifact_entry(
+            index,
+            artifact_type,
+            scope_dir=artifact_scope_dir,
         )
-    }
     latest = {
         artifact_type: _load_indexed_artifact(entry, artifact_type)
         for artifact_type, entry in latest_entries.items()
     }
+    latest["long_run_status"] = status_artifact
 
     strategy = latest["strategy_report"] or {}
-    status = latest["long_run_status"] or {}
     rank = latest["rank"] or {}
     promotion = latest["promotion_audit"] or {}
     long_run_check = latest["long_run_check"] or {}
@@ -3964,9 +3987,6 @@ def build_league_health_report(
         {weakness.get("map_name") for weakness in weaknesses if weakness.get("map_name")}
     )
 
-    latest_manifest = status.get("latest_manifest") or {}
-    if not isinstance(latest_manifest, dict):
-        latest_manifest = {}
     checkpoint_pool = latest_manifest.get("checkpoint_opponent_pool") or {}
     if not isinstance(checkpoint_pool, dict):
         checkpoint_pool = {}
@@ -4023,6 +4043,7 @@ def build_league_health_report(
         "health_config": {
             "artifact_dir": str(root),
             "recursive": recursive,
+            "artifact_scope_dir": artifact_scope_dir,
         },
         "source_artifacts": source_artifacts,
         "health": {
