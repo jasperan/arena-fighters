@@ -431,6 +431,9 @@ required by `long_run_check`.
 Training writes sampled episode replay JSON files to `--replay-dir` every
 `Config.training.replay_save_interval` episodes, which keeps long runs
 inspectable without saving every rollout.
+Replay frames include the actions that produced each post-step state, so replay
+analysis can report action counts, action distributions, idle rate, and
+dominant-action rate from real training episodes.
 Directory analysis samples representative agent 0 wins, agent 1 wins, draws,
 combat episodes, no-damage episodes, and no-attack episodes when those buckets
 are present, then writes a `replay_analysis_batch` manifest alongside the

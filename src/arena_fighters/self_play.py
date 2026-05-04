@@ -184,6 +184,10 @@ class SelfPlayWrapper(gym.Env):
         info = info_dict.get("agent_0", {})
 
         state = self._env.get_state()
+        state["actions"] = {
+            agent_name: int(agent_action)
+            for agent_name, agent_action in actions.items()
+        }
         if self.replay_logger is not None:
             self._episode_frames.append(copy.deepcopy(state))
             if terminated or truncated:

@@ -102,8 +102,8 @@ python scripts/train.py --mode analyze --replay-dir replays --replay-samples-per
 
 Training replays are sampled during `--mode train`; use `--replay-dir` to choose
 where those episode JSON files are written. Replay analysis flags no-damage,
-no-hit, no-shot, no-melee-attempt, and no-attack episodes for later strategy
-reports.
+no-hit, no-shot, no-melee-attempt, no-attack, idle-heavy, and dominant-action
+episodes for later strategy reports.
 
 ### Evaluate
 
@@ -418,6 +418,9 @@ python scripts/train.py --mode analyze \
 
 Saved replay-analysis artifacts are indexed by `artifact_index` and can satisfy
 `long_run_check --long-run-require-replay-analysis` when they show combat.
+Training replay frames include the actions that produced each post-step state,
+so replay analysis can compute action counts, action distributions, idle rate,
+and dominant-action rate from real training episodes.
 When `analyze` is run with `--replay-dir` instead of `--episode`, it samples
 representative agent 0 wins, agent 1 wins, draws, combat episodes, per-map
 combat episodes, no-damage episodes, and no-attack episodes, then writes individual

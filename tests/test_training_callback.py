@@ -1775,6 +1775,30 @@ def test_build_strategy_report_flags_no_damage_replay_analysis(tmp_path):
     assert all(issue["artifact_type"] == "replay_analysis" for issue in report["issues"])
 
 
+def test_build_strategy_report_flags_replay_action_collapse(tmp_path):
+    replay_summary = {
+        "artifact": artifact_metadata("replay_analysis"),
+        "episode_id": 11,
+        "winner": "draw",
+        "map_name": "flat",
+        "flags": {"no_damage": False, "no_attacks": False},
+        "totals": {"damage_dealt": 10},
+        "behavior": {
+            "avg_idle_rate": {"agent_0": 1.0, "agent_1": 0.0},
+            "avg_dominant_action_rate": {"agent_0": 1.0, "agent_1": 0.5},
+        },
+    }
+    (tmp_path / "idle-replay.json").write_text(json.dumps(replay_summary) + "\n")
+
+    report = build_strategy_report(tmp_path)
+
+    issue_metrics = {issue["metric"] for issue in report["issues"]}
+    assert {
+        "replay_idle_rate_agent_0",
+        "replay_dominant_action_rate_agent_0",
+    }.issubset(issue_metrics)
+
+
 def test_build_strategy_report_flags_candidate_draw_rate(tmp_path):
     promotion = _promotion_audit_summary()
     promotion["candidate"]["mean_draw_rate"] = 1.0

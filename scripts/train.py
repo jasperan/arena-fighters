@@ -1567,6 +1567,7 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "map_name": data.get("map_name"),
             "flags": data.get("flags", {}),
             "totals": data.get("totals", {}),
+            "behavior": data.get("behavior", {}),
         }
     if artifact_type == "replay_analysis_batch":
         return {
@@ -2023,6 +2024,7 @@ def replay_analysis_strategy_issues(
     scope = f"replay:{episode_id if episode_id is not None else Path(path).stem}"
     flags = summary.get("flags", {})
     totals = summary.get("totals", {})
+    behavior = summary.get("behavior", {})
     no_damage = flags.get("no_damage")
     if no_damage is None and "damage_dealt" in totals:
         no_damage = int(totals.get("damage_dealt", 0)) == 0
@@ -2064,6 +2066,28 @@ def replay_analysis_strategy_issues(
             threshold=thresholds["max_low_engagement_rate"],
             reason="replay_no_attacks_draw",
         )
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="replay_idle_rate_agent_0",
+        value=behavior.get("avg_idle_rate", {}).get("agent_0"),
+        threshold=thresholds["max_idle_rate"],
+        reason="replay_agent_0_idle_rate_above_threshold",
+    )
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="replay_dominant_action_rate_agent_0",
+        value=behavior.get("avg_dominant_action_rate", {}).get("agent_0"),
+        threshold=thresholds["max_dominant_action_rate"],
+        reason="replay_agent_0_dominant_action_rate_above_threshold",
+    )
     return issues
 
 

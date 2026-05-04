@@ -145,6 +145,8 @@ def test_self_play_wrapper_saves_training_replay_on_episode_end(tmp_path):
     assert replay["length"] == 1
     assert replay["map_name"] == "flat"
     assert len(replay["frames"]) == 2
+    assert replay["frames"][-1]["actions"]["agent_0"] == IDLE
+    assert replay["action_counts"]["agent_0"][str(IDLE)] == 1
     assert replay["event_totals"]["agent_0"]["damage_dealt"] == 0
 
 

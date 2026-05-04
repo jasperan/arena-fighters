@@ -168,7 +168,7 @@ All source lives in `src/arena_fighters/`:
 - `docs/long_run_protocol.md` contains the conservative real-compute training and promotion workflow; do not run it by default
 - Dict observation space: `{"grid": Box(6,20,40), "vector": Box(6,)}` with `MultiInputPolicy`
 - Milestone checkpoints auto-saved at 100K, 500K, 1M, 5M, 10M steps into `checkpoints/`
-- Episode frames logged as JSON to `replays/` with top-level map and event metadata for post-hoc analysis
+- Episode frames logged as JSON to `replays/` with top-level map, action, and event metadata for post-hoc analysis
 
 ## Observation & Action Space
 
