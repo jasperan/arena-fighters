@@ -18,6 +18,8 @@ from scripts.train import (
     build_strategy_report,
     build_training_wrapper,
     candidate_per_map_scores,
+    checkpoint_file_sha256,
+    checkpoint_metadata_integrity,
     checkpoint_metadata_maps,
     checkpoint_metadata,
     curriculum_metadata,
@@ -472,6 +474,40 @@ def test_checkpoint_metadata_round_trip_supports_zip_checkpoint_paths(tmp_path):
     assert metadata_path.name == "ppo_final.meta.json"
     assert loaded["num_timesteps"] == 250_000
     assert loaded["curriculum"]["stage"]["name"] == "classic_duel"
+
+
+def test_checkpoint_metadata_records_checkpoint_file_digest(tmp_path):
+    checkpoint = tmp_path / "ppo_final.zip"
+    checkpoint.write_bytes(b"checkpoint-bytes")
+
+    metadata_path = write_checkpoint_metadata(
+        tmp_path / "ppo_final",
+        Config(),
+        num_timesteps=100,
+    )
+    loaded = read_checkpoint_metadata(checkpoint)
+
+    assert metadata_path.name == "ppo_final.meta.json"
+    assert loaded["checkpoint_file"] == {
+        "file_name": "ppo_final.zip",
+        "size_bytes": len(b"checkpoint-bytes"),
+        "sha256": checkpoint_file_sha256(checkpoint),
+    }
+
+
+def test_checkpoint_metadata_integrity_detects_stale_sidecar(tmp_path):
+    checkpoint = tmp_path / "ppo_final.zip"
+    checkpoint.write_bytes(b"original")
+    write_checkpoint_metadata(tmp_path / "ppo_final", Config(), num_timesteps=100)
+    metadata = read_checkpoint_metadata(checkpoint)
+
+    passing = checkpoint_metadata_integrity(checkpoint, metadata)
+    checkpoint.write_bytes(b"changed")
+    failing = checkpoint_metadata_integrity(checkpoint, metadata)
+
+    assert passing["passed"] is True
+    assert failing["passed"] is False
+    assert failing["reason"] == "sha256_mismatch"
 
 
 def test_discover_checkpoints_uses_metadata_order_and_ignores_sidecars(tmp_path):
@@ -2449,6 +2485,51 @@ def test_build_long_run_check_can_require_candidate_metadata(tmp_path):
     assert failing_check["passed"] is False
 
 
+def test_build_long_run_check_can_require_candidate_integrity(tmp_path):
+    promotion = _long_run_promotion_audit()
+    checkpoint = tmp_path / "candidate.zip"
+    checkpoint.write_bytes(b"candidate-v1")
+    write_checkpoint_metadata(tmp_path / "candidate", Config(), num_timesteps=100)
+    promotion["candidate"]["checkpoint"] = str(checkpoint)
+
+    passing = build_long_run_check(
+        promotion,
+        _long_run_strategy_report(),
+        _long_run_artifact_index(),
+        min_maps=2,
+        require_candidate_metadata=True,
+        require_candidate_integrity=True,
+        require_replay_analysis=True,
+    )
+    checkpoint.write_bytes(b"candidate-v2")
+    failing = build_long_run_check(
+        promotion,
+        _long_run_strategy_report(),
+        _long_run_artifact_index(),
+        min_maps=2,
+        require_candidate_metadata=True,
+        require_candidate_integrity=True,
+        require_replay_analysis=True,
+    )
+
+    passing_check = next(
+        check
+        for check in passing["checks"]
+        if check["id"] == "candidate_checkpoint_integrity"
+    )
+    failing_check = next(
+        check
+        for check in failing["checks"]
+        if check["id"] == "candidate_checkpoint_integrity"
+    )
+
+    assert passing["passed"] is True
+    assert passing_check["passed"] is True
+    assert failing["passed"] is False
+    assert failing_check["passed"] is False
+    assert failing_check["details"]["reason"] == "sha256_mismatch"
+
+
 def test_build_long_run_check_validates_candidate_metadata_required_maps(tmp_path):
     promotion = _long_run_promotion_audit()
     checkpoint = tmp_path / "candidate.zip"
@@ -2721,6 +2802,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert "--long-run-min-head-to-head-map-episodes" not in manifest["shell_script"]
     assert "--long-run-require-candidate-checkpoint" in manifest["shell_script"]
     assert "--long-run-require-candidate-metadata" in manifest["shell_script"]
+    assert "--long-run-require-candidate-integrity" in manifest["shell_script"]
     assert "--long-run-require-head-to-head" not in manifest["shell_script"]
     assert "--long-run-required-curriculum-stage full_map_pool" in manifest["shell_script"]
     assert "--long-run-required-reward-preset anti_stall" in manifest["shell_script"]
@@ -2739,6 +2821,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert manifest["manifest_config"]["min_head_to_head_map_episodes"] is None
     assert manifest["manifest_config"]["require_candidate_checkpoint"] is True
     assert manifest["manifest_config"]["require_candidate_metadata"] is True
+    assert manifest["manifest_config"]["require_candidate_integrity"] is True
     assert manifest["manifest_config"]["require_head_to_head"] is False
     assert manifest["manifest_config"]["required_curriculum_stage"] == "full_map_pool"
     assert manifest["manifest_config"]["required_reward_preset"] == "anti_stall"
@@ -2947,6 +3030,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     assert manifest_entry["summary"]["min_head_to_head_map_episodes"] == 6
     assert manifest_entry["summary"]["require_candidate_checkpoint"] is True
     assert manifest_entry["summary"]["require_candidate_metadata"] is True
+    assert manifest_entry["summary"]["require_candidate_integrity"] is True
     assert manifest_entry["summary"]["require_head_to_head"] is True
     assert manifest_entry["summary"]["required_curriculum_stage"] == "full_map_pool"
     assert manifest_entry["summary"]["required_reward_preset"] == "anti_stall"
@@ -2972,6 +3056,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     assert saved["manifest_config"]["min_head_to_head_map_episodes"] == 6
     assert saved["manifest_config"]["require_candidate_checkpoint"] is True
     assert saved["manifest_config"]["require_candidate_metadata"] is True
+    assert saved["manifest_config"]["require_candidate_integrity"] is True
     assert saved["manifest_config"]["require_head_to_head"] is True
     assert saved["manifest_config"]["required_curriculum_stage"] == "full_map_pool"
     assert saved["manifest_config"]["required_reward_preset"] == "anti_stall"
@@ -3345,23 +3430,27 @@ def test_build_long_run_manifest_auto_pins_replay_interval_for_tiny_runs():
     assert "--long-run-min-head-to-head-episodes" not in tiny["shell_script"]
     assert "--long-run-min-head-to-head-map-episodes" not in tiny["shell_script"]
     assert "--long-run-min-replay-combat-maps 4" in tiny["shell_script"]
+    assert "--long-run-require-candidate-integrity" in tiny["shell_script"]
     assert tiny["manifest_config"]["replay_save_interval"] == 1
     assert tiny["manifest_config"]["replay_save_interval_source"] == "auto_small_run"
     assert tiny["manifest_config"]["require_head_to_head"] is False
     assert tiny["manifest_config"]["min_replay_combat_maps"] == 4
     assert tiny["manifest_config"]["min_head_to_head_episodes"] == 0
     assert tiny["manifest_config"]["min_head_to_head_map_episodes"] is None
+    assert tiny["manifest_config"]["require_candidate_integrity"] is True
     assert "--replay-save-interval" not in long["shell_script"]
     assert "--long-run-require-head-to-head" in long["shell_script"]
     assert "--long-run-min-head-to-head-episodes 160" in long["shell_script"]
     assert "--long-run-min-head-to-head-map-episodes 40" in long["shell_script"]
     assert "--long-run-min-replay-combat-maps 4" in long["shell_script"]
+    assert "--long-run-require-candidate-integrity" in long["shell_script"]
     assert long["manifest_config"]["replay_save_interval"] is None
     assert long["manifest_config"]["replay_save_interval_source"] == "config"
     assert long["manifest_config"]["require_head_to_head"] is True
     assert long["manifest_config"]["min_replay_combat_maps"] == 4
     assert long["manifest_config"]["min_head_to_head_episodes"] == 160
     assert long["manifest_config"]["min_head_to_head_map_episodes"] == 40
+    assert long["manifest_config"]["require_candidate_integrity"] is True
 
 
 def test_run_compare_rejects_non_eval_artifacts(tmp_path):

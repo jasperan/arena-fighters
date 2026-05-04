@@ -192,6 +192,7 @@ python scripts/train.py --mode long_run_check \
   --long-run-min-replay-combat-maps 4 \
   --long-run-require-candidate-checkpoint \
   --long-run-require-candidate-metadata \
+  --long-run-require-candidate-integrity \
   --long-run-require-head-to-head \
   --long-run-min-head-to-head-episodes 160 \
   --long-run-min-head-to-head-map-episodes 40 \
@@ -240,6 +241,9 @@ whose selected checkpoint path is missing.
 Use `--long-run-require-candidate-metadata` to require the checkpoint metadata
 sidecar that records map, reward, and curriculum context. When required maps
 are configured, the metadata must include those maps.
+Use `--long-run-require-candidate-integrity` to require the sidecar's SHA-256
+and size metadata to match the selected checkpoint file, which catches stale
+metadata or checkpoint replacement before promotion.
 Use `--long-run-require-head-to-head` to require checkpoint-vs-checkpoint
 standings from rank mode. Generated real-run launchers enable this automatically
 so a bundle cannot pass without evidence against historical snapshots; tiny
@@ -287,6 +291,7 @@ Promote a checkpoint only when:
 - replay analysis from sampled episodes shows actual combat interactions
 - selected candidate checkpoint still exists
 - selected candidate checkpoint metadata sidecar still exists
+- selected candidate checkpoint metadata digest still matches the checkpoint file
 - selected candidate metadata includes the required map set
 - selected candidate metadata reached the required curriculum stage and reward preset
 

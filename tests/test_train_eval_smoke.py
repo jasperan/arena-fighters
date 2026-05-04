@@ -71,6 +71,7 @@ def test_long_run_check_smoke_command_uses_suite_coverage_thresholds(tmp_path):
     assert command[command.index("--long-run-min-map-episodes") + 1] == "8"
     assert "--long-run-require-candidate-checkpoint" in command
     assert "--long-run-require-candidate-metadata" in command
+    assert "--long-run-require-candidate-integrity" in command
 
 
 def test_validate_smoke_long_run_check_allows_expected_strategy_failure(tmp_path):

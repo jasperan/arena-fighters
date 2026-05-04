@@ -17,7 +17,8 @@ python scripts/train.py --mode eval \
 
 For checkpoint evals, add `--checkpoint checkpoints/ppo_final`. If a companion
 checkpoint metadata file exists, eval output records it under
-`eval_config.checkpoint_metadata`.
+`eval_config.checkpoint_metadata`. New checkpoint sidecars also record file size
+and SHA-256 digest so verifier runs can catch stale or replaced candidates.
 Only load Stable-Baselines3 checkpoints from local or trusted sources. External
 checkpoint `.zip` files should be treated as executable serialized artifacts and
 verified by provenance and digest before use.

@@ -116,6 +116,7 @@ def build_long_run_check_command(
         str(rounds * opponent_count),
         "--long-run-require-candidate-checkpoint",
         "--long-run-require-candidate-metadata",
+        "--long-run-require-candidate-integrity",
         "--eval-output-dir",
         str(eval_dir),
         "--eval-label",

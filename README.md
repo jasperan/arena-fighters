@@ -13,7 +13,7 @@ Two agents spawn on a multi-platform arena, shoot projectiles, swing melee attac
 - **Curriculum training**: named map-progression stages update the active training map pool and reward preset over time
 - **Opponent pool**: samples frozen historical snapshots (80% latest, 20% random older) and logs latest-vs-historical sampling telemetry to prevent silent strategy cycling
 - **Evaluation harness**: checkpoint-vs-baseline matchups with win rate, draw rate, episode length, action counts, damage metrics, and behavior diagnostics
-- **Checkpoint metadata**: saved checkpoints get companion `.meta.json` files with map, reward, and curriculum state
+- **Checkpoint metadata**: saved checkpoints get companion `.meta.json` files with map, reward, curriculum state, size, and SHA-256 digest
 - **Combat event counters**: env infos expose shots fired, melee attempts/hits, projectile hits, and damage totals
 - **Eval comparison**: compare saved evaluation JSON files to report metric deltas across experiments
 - **Eval gate**: fail saved-eval comparisons when key metrics regress beyond default thresholds
@@ -62,8 +62,9 @@ python scripts/train.py --mode train --curriculum map_progression
 
 Training logs go to `./tb_logs/` (viewable with `tensorboard --logdir tb_logs`).
 Saved checkpoints also get companion `.meta.json` files recording map settings,
-reward config, and active curriculum stage. Eval mode can find this metadata even
-when you pass the Stable Baselines `.zip` checkpoint path.
+reward config, active curriculum stage, file size, and SHA-256 digest. Eval mode
+can find this metadata even when you pass the Stable Baselines `.zip` checkpoint
+path.
 Training also writes sampled episode replays to `--replay-dir` every
 `Config.training.replay_save_interval` episodes so long-run artifact analysis can
 inspect real training behavior without saving every rollout.
@@ -317,6 +318,7 @@ python scripts/train.py --mode long_run_check \
   --long-run-min-replay-combat-maps 4 \
   --long-run-require-candidate-checkpoint \
   --long-run-require-candidate-metadata \
+  --long-run-require-candidate-integrity \
   --long-run-require-head-to-head \
   --long-run-min-head-to-head-episodes 160 \
   --long-run-min-head-to-head-map-episodes 40 \
@@ -375,7 +377,9 @@ episode summaries instead of accepting config-only standings. Use
 cover each required map instead of concentrating all evidence on one map.
 Use `--long-run-require-candidate-metadata` to require the companion checkpoint
 metadata sidecar with map, reward, and curriculum context. When required maps
-are configured, the metadata must include those maps.
+are configured, the metadata must include those maps. Use
+`--long-run-require-candidate-integrity` to require that the sidecar's SHA-256
+and size metadata still match the selected checkpoint file.
 Use `--long-run-required-curriculum-stage` and
 `--long-run-required-reward-preset` to ensure the candidate reached the expected
 curriculum stage and reward preset.

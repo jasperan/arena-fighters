@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
@@ -123,6 +124,37 @@ def effective_reward_config(cfg: Config, step: int = 0):
     return reward_config_for_preset(stage.reward_preset)
 
 
+def checkpoint_file_path(path: str | Path) -> Path:
+    checkpoint_path = Path(path)
+    if checkpoint_path.is_file():
+        return checkpoint_path
+    if checkpoint_path.suffix != ".zip":
+        zip_path = Path(f"{checkpoint_path}.zip")
+        if zip_path.is_file():
+            return zip_path
+    return checkpoint_path
+
+
+def checkpoint_file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as checkpoint_file:
+        for chunk in iter(lambda: checkpoint_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def checkpoint_file_metadata(path: str | Path) -> dict | None:
+    checkpoint_path = checkpoint_file_path(path)
+    if not checkpoint_path.is_file():
+        return None
+    stat = checkpoint_path.stat()
+    return {
+        "file_name": checkpoint_path.name,
+        "size_bytes": stat.st_size,
+        "sha256": checkpoint_file_sha256(checkpoint_path),
+    }
+
+
 def checkpoint_metadata(cfg: Config, num_timesteps: int) -> dict:
     return {
         "num_timesteps": num_timesteps,
@@ -136,9 +168,12 @@ def checkpoint_metadata(cfg: Config, num_timesteps: int) -> dict:
 
 def write_checkpoint_metadata(path: str | Path, cfg: Config, num_timesteps: int) -> Path:
     metadata_path = Path(f"{path}.meta.json")
+    metadata = checkpoint_metadata(cfg, num_timesteps)
+    file_metadata = checkpoint_file_metadata(path)
+    if file_metadata is not None:
+        metadata["checkpoint_file"] = file_metadata
     metadata_path.write_text(
-        json.dumps(checkpoint_metadata(cfg, num_timesteps), indent=2, sort_keys=True)
-        + "\n"
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
     )
     return metadata_path
 
@@ -162,6 +197,51 @@ def read_checkpoint_metadata(path: str | Path | None) -> dict | None:
         if metadata_path.exists():
             return json.loads(metadata_path.read_text())
     return None
+
+
+def checkpoint_metadata_integrity(
+    path: str | Path | None,
+    metadata: dict | None,
+) -> dict:
+    details = {
+        "checkpoint": str(path) if path is not None else None,
+        "metadata_present": isinstance(metadata, dict),
+    }
+    if path is None:
+        return {**details, "passed": False, "reason": "missing_checkpoint_path"}
+
+    checkpoint_path = checkpoint_file_path(path)
+    details["checkpoint_path"] = str(checkpoint_path)
+    if not checkpoint_path.is_file():
+        return {**details, "passed": False, "reason": "checkpoint_missing"}
+    if not isinstance(metadata, dict):
+        return {**details, "passed": False, "reason": "metadata_missing"}
+
+    checkpoint_file = metadata.get("checkpoint_file") or {}
+    expected_sha256 = checkpoint_file.get("sha256")
+    expected_size = checkpoint_file.get("size_bytes")
+    actual_size = checkpoint_path.stat().st_size
+    actual_sha256 = checkpoint_file_sha256(checkpoint_path)
+    details.update(
+        {
+            "expected_sha256": expected_sha256,
+            "actual_sha256": actual_sha256,
+            "expected_size_bytes": expected_size,
+            "actual_size_bytes": actual_size,
+        }
+    )
+    if not expected_sha256:
+        return {**details, "passed": False, "reason": "metadata_sha256_missing"}
+
+    sha256_matches = expected_sha256 == actual_sha256
+    size_matches = expected_size is None or expected_size == actual_size
+    if sha256_matches and size_matches:
+        return {**details, "passed": True}
+    if not sha256_matches:
+        reason = "sha256_mismatch"
+    else:
+        reason = "size_mismatch"
+    return {**details, "passed": False, "reason": reason}
 
 
 def load_trusted_ppo_checkpoint(path: str | Path):
@@ -1445,6 +1525,7 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             ),
             "require_candidate_checkpoint": cfg.get("require_candidate_checkpoint"),
             "require_candidate_metadata": cfg.get("require_candidate_metadata"),
+            "require_candidate_integrity": cfg.get("require_candidate_integrity"),
             "required_curriculum_stage": cfg.get("required_curriculum_stage"),
             "required_reward_preset": cfg.get("required_reward_preset"),
             "require_head_to_head": cfg.get("require_head_to_head"),
@@ -2469,6 +2550,7 @@ def build_long_run_check(
     min_replay_combat_maps: int = 0,
     require_candidate_checkpoint: bool = False,
     require_candidate_metadata: bool = False,
+    require_candidate_integrity: bool = False,
     required_curriculum_stage: str | None = None,
     required_reward_preset: str | None = None,
     require_head_to_head: bool = False,
@@ -2502,6 +2584,11 @@ def build_long_run_check(
             candidate_metadata = read_checkpoint_metadata(candidate_checkpoint)
         except (OSError, json.JSONDecodeError) as exc:
             candidate_metadata_error = f"{type(exc).__name__}: {exc}"
+    candidate_integrity = checkpoint_metadata_integrity(
+        candidate_checkpoint,
+        candidate_metadata,
+    )
+    candidate_integrity["metadata_error"] = candidate_metadata_error
 
     checks = [
         check_result(
@@ -2754,6 +2841,15 @@ def build_long_run_check(
             )
         )
 
+    if require_candidate_integrity:
+        checks.append(
+            check_result(
+                "candidate_checkpoint_integrity",
+                bool(candidate_integrity.get("passed")),
+                candidate_integrity,
+            )
+        )
+
     if require_candidate_metadata and required_maps:
         metadata_maps = checkpoint_metadata_maps(candidate_metadata)
         missing_metadata_maps = missing_required_maps(metadata_maps, required_maps)
@@ -2864,6 +2960,7 @@ def build_long_run_check(
             "min_head_to_head_map_episodes": min_head_to_head_map_episodes,
             "require_candidate_checkpoint": require_candidate_checkpoint,
             "require_candidate_metadata": require_candidate_metadata,
+            "require_candidate_integrity": require_candidate_integrity,
             "required_curriculum_stage": required_curriculum_stage,
             "required_reward_preset": required_reward_preset,
             "require_head_to_head": require_head_to_head,
@@ -2884,6 +2981,7 @@ def build_long_run_input_error_check(
     min_replay_combat_maps: int = 0,
     require_candidate_checkpoint: bool = False,
     require_candidate_metadata: bool = False,
+    require_candidate_integrity: bool = False,
     required_curriculum_stage: str | None = None,
     required_reward_preset: str | None = None,
     require_head_to_head: bool = False,
@@ -2911,6 +3009,7 @@ def build_long_run_input_error_check(
             "min_head_to_head_map_episodes": min_head_to_head_map_episodes,
             "require_candidate_checkpoint": require_candidate_checkpoint,
             "require_candidate_metadata": require_candidate_metadata,
+            "require_candidate_integrity": require_candidate_integrity,
             "required_curriculum_stage": required_curriculum_stage,
             "required_reward_preset": required_reward_preset,
             "require_head_to_head": require_head_to_head,
@@ -2963,6 +3062,7 @@ def run_long_run_check(
     min_replay_combat_maps: int = 0,
     require_candidate_checkpoint: bool = False,
     require_candidate_metadata: bool = False,
+    require_candidate_integrity: bool = False,
     required_curriculum_stage: str | None = None,
     required_reward_preset: str | None = None,
     require_head_to_head: bool = False,
@@ -2997,6 +3097,7 @@ def run_long_run_check(
             min_replay_combat_maps=min_replay_combat_maps,
             require_candidate_checkpoint=require_candidate_checkpoint,
             require_candidate_metadata=require_candidate_metadata,
+            require_candidate_integrity=require_candidate_integrity,
             required_curriculum_stage=required_curriculum_stage,
             required_reward_preset=required_reward_preset,
             require_head_to_head=require_head_to_head,
@@ -3019,6 +3120,7 @@ def run_long_run_check(
             min_replay_combat_maps=min_replay_combat_maps,
             require_candidate_checkpoint=require_candidate_checkpoint,
             require_candidate_metadata=require_candidate_metadata,
+            require_candidate_integrity=require_candidate_integrity,
             required_curriculum_stage=required_curriculum_stage,
             required_reward_preset=required_reward_preset,
             require_head_to_head=require_head_to_head,
@@ -3202,6 +3304,7 @@ def _manifest_status_entry(
         "min_head_to_head_episodes": cfg.get("min_head_to_head_episodes"),
         "min_head_to_head_map_episodes": cfg.get("min_head_to_head_map_episodes"),
         "source_commit": source_control.get("commit"),
+        "require_candidate_integrity": cfg.get("require_candidate_integrity"),
         "source_dirty": source_control.get("dirty"),
         "source_status_short_count": source_control.get("status_short_count"),
         **source_status,
@@ -3501,6 +3604,7 @@ def build_long_run_manifest(
     min_head_to_head_map_episodes: int | None = None,
     require_candidate_checkpoint: bool = True,
     require_candidate_metadata: bool = True,
+    require_candidate_integrity: bool = True,
     required_curriculum_stage: str | None = "full_map_pool",
     required_reward_preset: str | None = "anti_stall",
     require_head_to_head: bool | None = None,
@@ -3632,6 +3736,8 @@ def build_long_run_manifest(
         long_run_check_parts.append("  --long-run-require-candidate-checkpoint \\")
     if require_candidate_metadata:
         long_run_check_parts.append("  --long-run-require-candidate-metadata \\")
+    if require_candidate_integrity:
+        long_run_check_parts.append("  --long-run-require-candidate-integrity \\")
     if required_curriculum_stage is not None:
         long_run_check_parts.append(
             "  --long-run-required-curriculum-stage "
@@ -3992,6 +4098,7 @@ def build_long_run_manifest(
             ),
             "require_candidate_checkpoint": require_candidate_checkpoint,
             "require_candidate_metadata": require_candidate_metadata,
+            "require_candidate_integrity": require_candidate_integrity,
             "required_curriculum_stage": required_curriculum_stage,
             "required_reward_preset": required_reward_preset,
             "require_head_to_head": effective_require_head_to_head,
@@ -4041,6 +4148,7 @@ def run_long_run_manifest(
     min_head_to_head_map_episodes: int | None = None,
     require_candidate_checkpoint: bool = True,
     require_candidate_metadata: bool = True,
+    require_candidate_integrity: bool = True,
     required_curriculum_stage: str | None = "full_map_pool",
     required_reward_preset: str | None = "anti_stall",
     require_head_to_head: bool | None = None,
@@ -4082,6 +4190,7 @@ def run_long_run_manifest(
         min_head_to_head_map_episodes=min_head_to_head_map_episodes,
         require_candidate_checkpoint=require_candidate_checkpoint,
         require_candidate_metadata=require_candidate_metadata,
+        require_candidate_integrity=require_candidate_integrity,
         required_curriculum_stage=required_curriculum_stage,
         required_reward_preset=required_reward_preset,
         require_head_to_head=require_head_to_head,
@@ -4524,6 +4633,11 @@ def main():
         help="Require the promoted candidate checkpoint metadata sidecar to exist",
     )
     parser.add_argument(
+        "--long-run-require-candidate-integrity",
+        action="store_true",
+        help="Require candidate metadata SHA-256 to match the checkpoint file",
+    )
+    parser.add_argument(
         "--long-run-require-head-to-head",
         action="store_true",
         help="Require head-to-head checkpoint standings in long_run_check mode",
@@ -4752,6 +4866,7 @@ def main():
             ),
             require_candidate_checkpoint=args.long_run_require_candidate_checkpoint,
             require_candidate_metadata=args.long_run_require_candidate_metadata,
+            require_candidate_integrity=args.long_run_require_candidate_integrity,
             required_curriculum_stage=args.long_run_required_curriculum_stage,
             required_reward_preset=args.long_run_required_reward_preset,
             require_head_to_head=args.long_run_require_head_to_head,
@@ -4828,6 +4943,7 @@ def main():
                 ),
                 require_candidate_checkpoint=True,
                 require_candidate_metadata=True,
+                require_candidate_integrity=True,
                 required_curriculum_stage=(
                     args.long_run_required_curriculum_stage or "full_map_pool"
                 ),
