@@ -13,14 +13,16 @@ from scripts.smoke_suite import (
 
 def test_build_smoke_commands_defaults_to_no_training_smokes(tmp_path):
     commands = build_smoke_commands(Path("/repo"), tmp_path)
-    reward, long_run_artifact = commands
+    reward, self_play_sampling, long_run_artifact = commands
 
     assert [command["id"] for command in commands] == [
         "reward_shaping",
+        "self_play_sampling",
         "long_run_artifact",
     ]
     assert [command["compute_class"] for command in commands] == [
         "no_training_eval",
+        "no_training_self_play",
         "no_training_artifact",
     ]
     assert all(command["id"] != "train_eval" for command in commands)
@@ -31,6 +33,16 @@ def test_build_smoke_commands_defaults_to_no_training_smokes(tmp_path):
     assert (
         reward["cmd"][reward["cmd"].index("--summary-output") + 1]
         == str(reward["summary_output"])
+    )
+    assert self_play_sampling["summary_output"] == (
+        tmp_path / "self-play-sampling" / "sampling-summary.json"
+    )
+    assert "--summary-output" in self_play_sampling["cmd"]
+    assert (
+        self_play_sampling["cmd"][
+            self_play_sampling["cmd"].index("--summary-output") + 1
+        ]
+        == str(self_play_sampling["summary_output"])
     )
     assert long_run_artifact["summary_output"] == (
         tmp_path / "long-run-artifact" / "artifact-smoke-summary.json"
@@ -57,6 +69,7 @@ def test_build_smoke_commands_can_include_tiny_training_smoke(tmp_path):
 
     assert [command["id"] for command in commands] == [
         "reward_shaping",
+        "self_play_sampling",
         "long_run_artifact",
         "train_eval",
     ]
@@ -74,10 +87,12 @@ def test_build_smoke_commands_can_include_tiny_training_smoke(tmp_path):
 
 def test_build_smoke_suite_summary_reads_no_training_smokes(tmp_path):
     reward_dir = tmp_path / "reward-shaping"
+    self_play_dir = tmp_path / "self-play-sampling"
     artifact_output = tmp_path / "long-run-artifact"
     artifact_root = artifact_output / "evals"
     eval_dir = artifact_root / "artifact-smoke"
     reward_dir.mkdir()
+    self_play_dir.mkdir()
     eval_dir.mkdir(parents=True)
     (reward_dir / "20260504T000000Z_idle-default.json").write_text("{}\n")
     (reward_dir / "20260504T000001Z_idle-anti-stall.json").write_text("{}\n")
@@ -89,6 +104,17 @@ def test_build_smoke_suite_summary_reads_no_training_smokes(tmp_path):
     )
     (reward_dir / "20260504T000004Z_artifact-index.json").write_text(
         json.dumps({"index_config": {"artifact_count": 5}}) + "\n"
+    )
+    (self_play_dir / "sampling-summary.json").write_text(
+        json.dumps(
+            {
+                "artifact": artifact_metadata("self_play_sampling_smoke"),
+                "passed": True,
+                "historical_samples": 12,
+                "unique_maps_seen": 4,
+            }
+        )
+        + "\n"
     )
     (artifact_root / "20260504T000000Z_artifact-smoke-plan.json").write_text(
         json.dumps({"artifact": artifact_metadata("long_run_manifest")}) + "\n"
@@ -132,17 +158,24 @@ def test_build_smoke_suite_summary_reads_no_training_smokes(tmp_path):
     summary = build_smoke_suite_summary(tmp_path, commands)
 
     assert summary["artifact"] == {"artifact_type": "smoke_suite", "schema_version": 1}
-    assert summary["smoke_count"] == 2
-    assert summary["smoke_order"] == ["reward_shaping", "long_run_artifact"]
+    assert summary["smoke_count"] == 3
+    assert summary["smoke_order"] == [
+        "reward_shaping",
+        "self_play_sampling",
+        "long_run_artifact",
+    ]
     assert summary["compute_classes"] == {
         "reward_shaping": "no_training_eval",
+        "self_play_sampling": "no_training_self_play",
         "long_run_artifact": "no_training_artifact",
     }
     assert summary["summary_paths"] == {
         "reward_shaping": str(reward_dir / "reward-summary.json"),
+        "self_play_sampling": str(self_play_dir / "sampling-summary.json"),
         "long_run_artifact": str(artifact_output / "artifact-smoke-summary.json"),
     }
     assert summary["smokes"]["reward_shaping"]["strategy_issue_count"] == 2
+    assert summary["smokes"]["self_play_sampling"]["historical_samples"] == 12
     assert (
         summary["smokes"]["long_run_artifact"]["health_artifact_scope_dir"]
         == str(eval_dir)

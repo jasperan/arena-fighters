@@ -4,7 +4,8 @@
 By default this suite runs only no-training checks:
 
 1. reward-shaping artifact smoke
-2. long-run manifest/status/league-health artifact smoke
+2. self-play historical sampling smoke
+3. long-run manifest/status/league-health artifact smoke
 
 The tiny train/eval smoke is opt-in because it starts a short training job.
 """
@@ -68,8 +69,10 @@ def build_smoke_commands(
 ) -> list[dict]:
     scripts_dir = repo_root / "scripts"
     reward_output_dir = output_dir / "reward-shaping"
+    self_play_output_dir = output_dir / "self-play-sampling"
     long_run_artifact_output_dir = output_dir / "long-run-artifact"
     reward_summary = reward_output_dir / "reward-summary.json"
+    self_play_summary = self_play_output_dir / "sampling-summary.json"
     long_run_artifact_summary = (
         long_run_artifact_output_dir / "artifact-smoke-summary.json"
     )
@@ -91,6 +94,21 @@ def build_smoke_commands(
                 reward_map,
                 "--summary-output",
                 str(reward_summary),
+            ],
+        },
+        {
+            "id": "self_play_sampling",
+            "compute_class": "no_training_self_play",
+            "output_dir": self_play_output_dir,
+            "stdout_path": output_dir / "self-play-sampling.out",
+            "summary_output": self_play_summary,
+            "cmd": [
+                sys.executable,
+                str(scripts_dir / "self_play_sampling_smoke.py"),
+                "--output-dir",
+                str(self_play_output_dir),
+                "--summary-output",
+                str(self_play_summary),
             ],
         },
         {
@@ -148,6 +166,11 @@ def build_smoke_suite_summary(output_dir: Path, commands: list[dict]) -> dict:
     reward_command = command_by_id.get("reward_shaping")
     if reward_command:
         smokes["reward_shaping"] = build_reward_summary(reward_command["output_dir"])
+    self_play_command = command_by_id.get("self_play_sampling")
+    if self_play_command and self_play_command.get("summary_output"):
+        smokes["self_play_sampling"] = json.loads(
+            Path(self_play_command["summary_output"]).read_text()
+        )
     artifact_command = command_by_id.get("long_run_artifact")
     if artifact_command:
         artifact_output = artifact_command["output_dir"]

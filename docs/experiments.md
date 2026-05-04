@@ -240,7 +240,8 @@ The report flags all-draw behavior, no-damage episodes or replay analyses, low
 engagement, high agent 0 idle rate, high agent 0 dominant-action rate, saved
 long-run-status artifacts whose checkpoint metadata still lacks required
 historical-opponent samples, reward-shaping smoke regressions, and failed
-smoke-suite or long-run-artifact-smoke health/strategy signals.
+smoke-suite, self-play-sampling-smoke, or long-run-artifact-smoke
+health/strategy signals.
 Tune thresholds with
 `--strategy-max-draw-rate`, `--strategy-max-no-damage-rate`,
 `--strategy-max-low-engagement-rate`, `--strategy-max-idle-rate`, and
@@ -324,6 +325,18 @@ is retained as diagnostic context, but expected idle/no-training strategy issues
 do not fail the smoke by themselves.
 Use `--command-timeout-seconds` to bound each child command.
 
+For a no-training self-play league sampling check, use:
+
+```bash
+python scripts/self_play_sampling_smoke.py
+python scripts/self_play_sampling_smoke.py --summary-output /tmp/arena-self-play-sampling-summary.json
+```
+
+This seeds an opponent pool, loads frozen snapshots through the training
+wrapper's reset path, and verifies that historical opponent snapshots are
+sampled while map-pool resets cover multiple maps. Strategy reports scan saved
+`self_play_sampling_smoke` artifacts and flag failed historical-sampling checks.
+
 For a short training-to-evaluation wiring check, use:
 
 ```bash
@@ -382,8 +395,9 @@ python scripts/smoke_suite.py --summary-output /tmp/arena-smoke-summary.json
 python scripts/smoke_suite.py --include-train-eval
 ```
 
-The default smoke suite avoids training; `--include-train-eval` opts into the
-tiny train/eval smoke. Use `--summary-output` when an autonomous run should
+The default smoke suite avoids training and includes reward shaping, self-play
+sampling, and long-run artifact plumbing checks; `--include-train-eval` opts into
+the tiny train/eval smoke. Use `--summary-output` when an autonomous run should
 archive the combined smoke result as an indexable `smoke_suite` JSON artifact
 that strategy reports can scan. The suite also tells child no-training smokes to
 write their own indexable summary artifacts and records those paths in

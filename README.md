@@ -132,8 +132,9 @@ Evaluation prints JSON with win rates, draw rate, average episode length, averag
 Saved eval, suite, rank, comparison, gate, rank-gate, promotion-audit,
 audit-summary, artifact-index, strategy-report, long-run-manifest,
 long-run-check, long-run-status, league-health, reward-shaping-smoke,
-smoke-suite, long-run-artifact-smoke, and replay-analysis/replay-analysis-batch
-JSON include an `artifact` block with `artifact_type` and `schema_version`.
+smoke-suite, long-run-artifact-smoke, self-play-sampling-smoke, and
+replay-analysis/replay-analysis-batch JSON include an `artifact` block with
+`artifact_type` and `schema_version`.
 
 Only load Stable-Baselines3 checkpoints that were produced locally or obtained
 from trusted sources. Checkpoints are serialized model artifacts, not inert data;
@@ -252,8 +253,8 @@ python scripts/train.py --mode strategy_report --artifact-dir evals --recursive-
 
 Strategy report scans saved eval, suite, rank, rank-gate, promotion-audit,
 audit-summary, replay-analysis, long-run-status, reward-shaping-smoke,
-long-run-artifact-smoke, and smoke-suite artifacts and flags likely bad
-strategies: all-draw behavior, no-damage episodes/replays, low
+long-run-artifact-smoke, self-play-sampling-smoke, and smoke-suite artifacts and
+flags likely bad strategies: all-draw behavior, no-damage episodes/replays, low
 engagement, high agent 0 idle rate, high dominant action rate, checkpoint
 metadata that still lacks required historical-opponent samples, reward-smoke
 regressions, or failed smoke health/strategy signals. Tune thresholds with
@@ -448,8 +449,8 @@ python scripts/smoke_suite.py --include-train-eval
 ```
 
 The smoke suite runs cheap checks in compute-cost order. By default it runs only
-the no-training reward-shaping and long-run artifact smokes; add
-`--include-train-eval` to include the tiny training smoke. The suite asks
+the no-training reward-shaping, self-play sampling, and long-run artifact
+smokes; add `--include-train-eval` to include the tiny training smoke. The suite asks
 child smokes to save their own indexable summary artifacts and records those
 paths in the combined summary. Use `--command-timeout-seconds` to bound each
 child smoke command in unattended runs.
@@ -492,6 +493,19 @@ indexable `long_run_artifact_smoke` summary artifact. Its summary records
 explicit validation checks so expected no-training long-run blockers do not
 become strategy blockers by themselves. Use `--command-timeout-seconds` to
 bound each child command.
+
+### Self-Play Sampling Smoke
+
+```bash
+python scripts/self_play_sampling_smoke.py
+python scripts/self_play_sampling_smoke.py --summary-output /tmp/arena-self-play-sampling-summary.json
+```
+
+The self-play sampling smoke does not train. It seeds an `OpponentPool`, loads
+frozen snapshots through `SelfPlayWrapper.reset()`, and verifies that both latest
+and historical opponents are sampled while map-pool resets cover multiple maps.
+Use it when changing opponent-pool sampling, curriculum map pools, or unattended
+smoke-suite wiring.
 
 ### Train/Eval Smoke
 
@@ -567,8 +581,8 @@ python scripts/smoke_suite.py --include-train-eval
 ```
 
 Use the default smoke suite for quick pre-commit artifact plumbing checks. It
-runs reward-shaping and long-run artifact smokes without training. Use full
-pytest as the broader gate before pushing code changes, and opt into
+runs reward-shaping, self-play sampling, and long-run artifact smokes without
+training. Use full pytest as the broader gate before pushing code changes, and opt into
 `--include-train-eval` when you need to verify the tiny train-to-eval path.
 When saved with `--summary-output`, the smoke-suite summary is an indexable
 `smoke_suite` artifact that strategy reports can scan for aggregate smoke

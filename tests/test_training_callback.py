@@ -1356,10 +1356,15 @@ def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
         json.dumps(
             {
                 "artifact": artifact_metadata("smoke_suite"),
-                "smoke_count": 2,
-                "smoke_order": ["reward_shaping", "long_run_artifact"],
+                "smoke_count": 3,
+                "smoke_order": [
+                    "reward_shaping",
+                    "self_play_sampling",
+                    "long_run_artifact",
+                ],
                 "compute_classes": {
                     "reward_shaping": "no_training_eval",
+                    "self_play_sampling": "no_training_self_play",
                     "long_run_artifact": "no_training_artifact",
                 },
                 "smokes": {
@@ -1371,6 +1376,11 @@ def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
                         "no_damage_episodes_delta": -1,
                         "low_engagement_episodes_delta": -1,
                         "damage_events_delta_agent_0": 2,
+                    },
+                    "self_play_sampling": {
+                        "passed": True,
+                        "historical_samples": 12,
+                        "unique_maps_seen": 4,
                     },
                     "long_run_artifact": {
                         "health_ready": False,
@@ -1389,10 +1399,15 @@ def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
     [entry] = index["artifacts"]
     assert entry["artifact_type"] == "smoke_suite"
     assert entry["summary"] == {
-        "smoke_count": 2,
-        "smoke_order": ["reward_shaping", "long_run_artifact"],
+        "smoke_count": 3,
+        "smoke_order": [
+            "reward_shaping",
+            "self_play_sampling",
+            "long_run_artifact",
+        ],
         "compute_classes": {
             "reward_shaping": "no_training_eval",
+            "self_play_sampling": "no_training_self_play",
             "long_run_artifact": "no_training_artifact",
         },
         "summary_paths": {},
@@ -1403,10 +1418,45 @@ def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
         "reward_no_damage_episodes_delta": -1,
         "reward_low_engagement_episodes_delta": -1,
         "reward_damage_events_delta_agent_0": 2,
+        "self_play_sampling_passed": True,
+        "self_play_sampling_historical_samples": 12,
+        "self_play_sampling_unique_maps_seen": 4,
         "long_run_artifact_health_ready": False,
         "long_run_artifact_health_blockers": ["long_run_status_blocked"],
         "long_run_artifact_health_warnings": ["missing_rank"],
         "train_eval_long_run_check_passed": None,
+    }
+
+
+def test_build_artifact_index_summarizes_self_play_sampling_smoke_artifacts(tmp_path):
+    sampling_path = tmp_path / "sampling-summary.json"
+    sampling_path.write_text(
+        json.dumps(
+            {
+                "artifact": artifact_metadata("self_play_sampling_smoke"),
+                "passed": True,
+                "latest_samples": 52,
+                "historical_samples": 12,
+                "historical_sample_rate": 0.1875,
+                "unique_maps_seen": 4,
+                "map_counts": {"classic": 12, "flat": 20},
+            }
+        )
+        + "\n"
+    )
+
+    index = build_artifact_index(tmp_path)
+
+    assert index["artifact_counts"] == {"self_play_sampling_smoke": 1}
+    [entry] = index["artifacts"]
+    assert entry["artifact_type"] == "self_play_sampling_smoke"
+    assert entry["summary"] == {
+        "passed": True,
+        "latest_samples": 52,
+        "historical_samples": 12,
+        "historical_sample_rate": 0.1875,
+        "unique_maps_seen": 4,
+        "map_counts": {"classic": 12, "flat": 20},
     }
 
 
@@ -2142,6 +2192,12 @@ def test_build_strategy_report_flags_smoke_suite_failures(tmp_path):
                     {"id": "required_artifacts_indexed", "passed": False},
                 ],
             },
+            "self_play_sampling": {
+                "passed": False,
+                "checks": [
+                    {"id": "historical_samples_meet_minimum", "passed": False},
+                ],
+            },
             "train_eval": {
                 "long_run_check_passed": False,
                 "long_run_check_failed_checks": [
@@ -2158,7 +2214,7 @@ def test_build_strategy_report_flags_smoke_suite_failures(tmp_path):
     report = build_strategy_report(tmp_path)
 
     issue_by_metric = {issue["metric"]: issue for issue in report["issues"]}
-    assert report["issue_count"] == 4
+    assert report["issue_count"] == 5
     assert {
         "artifact_type": "smoke_suite",
         "scope": "smoke:reward_shaping",
@@ -2179,6 +2235,15 @@ def test_build_strategy_report_flags_smoke_suite_failures(tmp_path):
         "blockers": ["long_run_status_blocked"],
         "warnings": ["missing_rank"],
     }.items() <= issue_by_metric["smoke_long_run_artifact_failed"].items()
+    assert {
+        "artifact_type": "smoke_suite",
+        "scope": "smoke:self_play_sampling",
+        "metric": "smoke_self_play_sampling_failed",
+        "value": 1,
+        "threshold": 0,
+        "reason": "smoke_self_play_sampling_checks_failed",
+        "failed_checks": ["historical_samples_meet_minimum"],
+    }.items() <= issue_by_metric["smoke_self_play_sampling_failed"].items()
     assert {
         "artifact_type": "smoke_suite",
         "scope": "smoke:train_eval",
@@ -2214,6 +2279,10 @@ def test_build_strategy_report_ignores_healthy_smoke_suite(tmp_path):
                 "health_warnings": ["missing_rank"],
                 "passed": True,
             },
+            "self_play_sampling": {
+                "passed": True,
+                "historical_samples": 12,
+            },
             "train_eval": {
                 "long_run_check_passed": True,
                 "long_run_check_failed_checks": [],
@@ -2229,6 +2298,32 @@ def test_build_strategy_report_ignores_healthy_smoke_suite(tmp_path):
 
     assert report["issue_count"] == 0
     assert report["issues"] == []
+
+
+def test_build_strategy_report_flags_self_play_sampling_smoke_failures(tmp_path):
+    sampling_smoke = {
+        "artifact": artifact_metadata("self_play_sampling_smoke"),
+        "passed": False,
+        "checks": [
+            {"id": "historical_samples_meet_minimum", "passed": False},
+        ],
+    }
+    (tmp_path / "sampling-summary.json").write_text(
+        json.dumps(sampling_smoke) + "\n"
+    )
+
+    report = build_strategy_report(tmp_path)
+
+    assert report["issue_count"] == 1
+    assert {
+        "artifact_type": "self_play_sampling_smoke",
+        "scope": "smoke:self_play_sampling",
+        "metric": "self_play_sampling_smoke_failed",
+        "value": 1,
+        "threshold": 0,
+        "reason": "self_play_sampling_smoke_checks_failed",
+        "failed_checks": ["historical_samples_meet_minimum"],
+    }.items() <= report["issues"][0].items()
 
 
 def test_build_strategy_report_flags_reward_shaping_smoke_failures(tmp_path):

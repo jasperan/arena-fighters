@@ -1993,9 +1993,19 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "indexed_long_run_status_count": counts.get("long_run_status"),
             "indexed_league_health_count": counts.get("league_health"),
         }
+    if artifact_type == "self_play_sampling_smoke":
+        return {
+            "passed": data.get("passed"),
+            "latest_samples": data.get("latest_samples"),
+            "historical_samples": data.get("historical_samples"),
+            "historical_sample_rate": data.get("historical_sample_rate"),
+            "unique_maps_seen": data.get("unique_maps_seen"),
+            "map_counts": data.get("map_counts", {}),
+        }
     if artifact_type == "smoke_suite":
         smokes = data.get("smokes", {})
         reward = smokes.get("reward_shaping", {})
+        self_play_sampling = smokes.get("self_play_sampling", {})
         long_run_artifact = smokes.get("long_run_artifact", {})
         train_eval = smokes.get("train_eval", {})
         return {
@@ -2019,6 +2029,13 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             ),
             "reward_damage_events_delta_agent_0": reward.get(
                 "damage_events_delta_agent_0"
+            ),
+            "self_play_sampling_passed": self_play_sampling.get("passed"),
+            "self_play_sampling_historical_samples": self_play_sampling.get(
+                "historical_samples"
+            ),
+            "self_play_sampling_unique_maps_seen": self_play_sampling.get(
+                "unique_maps_seen"
             ),
             "long_run_artifact_health_ready": long_run_artifact.get("health_ready"),
             "long_run_artifact_health_blockers": long_run_artifact.get(
@@ -2487,6 +2504,9 @@ def smoke_suite_strategy_issues(
     long_run_artifact = smokes.get("long_run_artifact")
     if not isinstance(long_run_artifact, dict):
         long_run_artifact = {}
+    self_play_sampling = smokes.get("self_play_sampling")
+    if not isinstance(self_play_sampling, dict):
+        self_play_sampling = {}
     train_eval = smokes.get("train_eval")
     if not isinstance(train_eval, dict):
         train_eval = {}
@@ -2532,6 +2552,22 @@ def smoke_suite_strategy_issues(
             }
         )
 
+    self_play_failed_checks = failed_smoke_check_ids(self_play_sampling)
+    if self_play_sampling.get("passed") is False:
+        issues.append(
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": "smoke:self_play_sampling",
+                "metric": "smoke_self_play_sampling_failed",
+                "value": len(self_play_failed_checks),
+                "threshold": 0,
+                "reason": "smoke_self_play_sampling_checks_failed",
+                "failed_checks": self_play_failed_checks,
+            }
+        )
+
     train_eval_issue_count = json_non_negative_int(
         train_eval.get("strategy_issue_count")
     )
@@ -2568,6 +2604,31 @@ def smoke_suite_strategy_issues(
         )
 
     return issues
+
+
+def self_play_sampling_smoke_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+) -> list[dict]:
+    failed_checks = failed_smoke_check_ids(summary)
+    if summary.get("passed") is not False:
+        return []
+    return [
+        {
+            "path": path,
+            "relative_path": relative_path,
+            "artifact_type": artifact_type,
+            "scope": "smoke:self_play_sampling",
+            "metric": "self_play_sampling_smoke_failed",
+            "value": len(failed_checks),
+            "threshold": 0,
+            "reason": "self_play_sampling_smoke_checks_failed",
+            "failed_checks": failed_checks,
+        }
+    ]
 
 
 def failed_smoke_check_ids(summary: dict) -> list[str]:
@@ -2768,6 +2829,13 @@ def strategy_issues_for_artifact(
         )
     if artifact_type == "long_run_artifact_smoke":
         return long_run_artifact_smoke_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+        )
+    if artifact_type == "self_play_sampling_smoke":
+        return self_play_sampling_smoke_strategy_issues(
             data,
             path=path,
             relative_path=relative_path,
