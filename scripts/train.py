@@ -7,8 +7,8 @@ import argparse
 import copy
 import hashlib
 import json
-import os
 import re
+import shutil
 import shlex
 import subprocess
 import sys
@@ -67,6 +67,10 @@ _JSON_SECRET_RE = re.compile(
     rf'(?i)("({_SECRET_NAME_PATTERN})"\s*:\s*")[^"]+(")'
 )
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def clear_terminal() -> None:
+    print("\033[2J\033[H", end="")
 
 
 def clone_policy_for_opponent(model):
@@ -540,7 +544,7 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
 
     model.learn(total_timesteps=cfg.training.total_timesteps, callback=callback)
 
-    final_path = os.path.join(checkpoint_dir, "ppo_final")
+    final_path = str(Path(checkpoint_dir) / "ppo_final")
     model.save(final_path)
     write_checkpoint_metadata(
         final_path,
@@ -574,7 +578,7 @@ def run_watch(cfg: Config, checkpoint: str | None, num_rounds: int = 0) -> None:
             obs_dict, _ = env.reset()
 
             # Round start splash
-            os.system("clear" if os.name != "nt" else "cls")
+            clear_terminal()
             print(f"\033[1;36m{'ARENA FIGHTERS':^44}\033[0m")
             print(f"\033[90m{'=' * 44}\033[0m")
             print(f"\n  \033[1mRound {round_num}\033[0m")
@@ -601,7 +605,7 @@ def run_watch(cfg: Config, checkpoint: str | None, num_rounds: int = 0) -> None:
 
                 obs_dict, rewards, terminations, truncations, infos = env.step(actions)
 
-                os.system("clear" if os.name != "nt" else "cls")
+                clear_terminal()
                 frame = env._render_ansi(score=tuple(score))
                 print(frame)
                 time.sleep(0.08)
@@ -624,7 +628,7 @@ def run_watch(cfg: Config, checkpoint: str | None, num_rounds: int = 0) -> None:
                 draws += 1
 
             # Round result splash
-            os.system("clear" if os.name != "nt" else "cls")
+            clear_terminal()
             print(f"\033[1;36m{'ARENA FIGHTERS':^44}\033[0m")
             print(f"\033[90m{'=' * 44}\033[0m")
             print(f"\n  \033[1mRound {round_num} Result\033[0m\n")
@@ -715,7 +719,7 @@ def run_replay(cfg: Config, episode_path: str) -> None:
         hp1 = agents.get("agent_1", {}).get("hp", "?")
         header = f"Tick {tick}/{cfg.arena.max_ticks}  HP: @={hp0}  X={hp1}"
 
-        os.system("clear" if os.name != "nt" else "cls")
+        clear_terminal()
         print(header)
         for row in display:
             print("".join(row))
@@ -2127,6 +2131,103 @@ def long_run_status_strategy_issues(
     ]
 
 
+def smoke_suite_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+) -> list[dict]:
+    smokes = summary.get("smokes")
+    if not isinstance(smokes, dict):
+        smokes = {}
+
+    reward = smokes.get("reward_shaping")
+    if not isinstance(reward, dict):
+        reward = {}
+    long_run_artifact = smokes.get("long_run_artifact")
+    if not isinstance(long_run_artifact, dict):
+        long_run_artifact = {}
+    train_eval = smokes.get("train_eval")
+    if not isinstance(train_eval, dict):
+        train_eval = {}
+
+    issues: list[dict] = []
+    reward_issue_count = json_non_negative_int(reward.get("strategy_issue_count"))
+    if reward_issue_count and reward_issue_count > 0:
+        issues.append(
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": "smoke:reward_shaping",
+                "metric": "smoke_reward_strategy_issue_count",
+                "value": reward_issue_count,
+                "threshold": 0,
+                "reason": "smoke_reward_strategy_issues_present",
+            }
+        )
+
+    health_blockers = long_run_artifact.get("health_blockers", [])
+    if not isinstance(health_blockers, list):
+        health_blockers = []
+    health_warnings = long_run_artifact.get("health_warnings", [])
+    if not isinstance(health_warnings, list):
+        health_warnings = []
+    if long_run_artifact.get("health_ready") is False and health_blockers:
+        issues.append(
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": "smoke:long_run_artifact",
+                "metric": "smoke_long_run_artifact_health_blockers",
+                "value": len(health_blockers),
+                "threshold": 0,
+                "reason": "smoke_long_run_artifact_health_blocked",
+                "blockers": health_blockers,
+                "warnings": health_warnings,
+            }
+        )
+
+    train_eval_issue_count = json_non_negative_int(
+        train_eval.get("strategy_issue_count")
+    )
+    if train_eval_issue_count and train_eval_issue_count > 0:
+        issues.append(
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": "smoke:train_eval",
+                "metric": "smoke_train_eval_strategy_issue_count",
+                "value": train_eval_issue_count,
+                "threshold": 0,
+                "reason": "smoke_train_eval_strategy_issues_present",
+            }
+        )
+
+    failed_checks = train_eval.get("long_run_check_failed_checks", [])
+    if not isinstance(failed_checks, list):
+        failed_checks = []
+    if train_eval.get("long_run_check_passed") is False:
+        issues.append(
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": "smoke:train_eval",
+                "metric": "smoke_train_eval_long_run_check_failed",
+                "value": 1,
+                "threshold": 0,
+                "reason": "smoke_train_eval_long_run_check_failed",
+                "failed_checks": failed_checks,
+            }
+        )
+
+    return issues
+
+
 def strategy_issues_for_artifact(
     data: dict,
     *,
@@ -2185,6 +2286,13 @@ def strategy_issues_for_artifact(
         )
     if artifact_type == "long_run_status":
         return long_run_status_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+        )
+    if artifact_type == "smoke_suite":
+        return smoke_suite_strategy_issues(
             data,
             path=path,
             relative_path=relative_path,
@@ -4152,9 +4260,12 @@ def _with_output_redirect(parts: list[str], output_path: str) -> list[str]:
 
 
 def _run_git_metadata(args: list[str]) -> tuple[str | None, str | None]:
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return None, "git executable not found"
     try:
         result = subprocess.run(
-            ["git", *args],
+            [git_executable, *args],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

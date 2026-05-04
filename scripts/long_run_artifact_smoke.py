@@ -12,6 +12,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -114,7 +115,7 @@ def main() -> None:
         "--output-dir",
         type=str,
         default=None,
-        help="Output directory (default: /tmp timestamped dir)",
+        help="Output directory (default: system temp dir)",
     )
     parser.add_argument(
         "--run-id",
@@ -134,7 +135,8 @@ def main() -> None:
     train_py = repo_root / "scripts" / "train.py"
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     output_dir = Path(
-        args.output_dir or f"/tmp/arena-long-run-artifact-smoke-{timestamp}"
+        args.output_dir
+        or Path(tempfile.gettempdir()) / f"arena-long-run-artifact-smoke-{timestamp}"
     )
     run_id = args.run_id or f"artifact-smoke-{timestamp}"
     artifact_root = output_dir / "evals"

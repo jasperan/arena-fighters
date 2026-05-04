@@ -15,6 +15,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -155,7 +156,7 @@ def main() -> None:
         "--output-dir",
         type=str,
         default=None,
-        help="Output directory (default: /tmp timestamped dir)",
+        help="Output directory (default: system temp dir)",
     )
     parser.add_argument(
         "--summary-output",
@@ -196,7 +197,10 @@ def main() -> None:
 
     repo_root = REPO_ROOT
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    output_dir = Path(args.output_dir or f"/tmp/arena-smoke-suite-{timestamp}")
+    output_dir = Path(
+        args.output_dir
+        or Path(tempfile.gettempdir()) / f"arena-smoke-suite-{timestamp}"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     commands = build_smoke_commands(
         repo_root,

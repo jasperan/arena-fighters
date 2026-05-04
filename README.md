@@ -248,10 +248,11 @@ python scripts/train.py --mode strategy_report --artifact-dir evals --recursive-
 ```
 
 Strategy report scans saved eval, suite, rank, rank-gate, promotion-audit,
-audit-summary, replay-analysis, and long-run-status artifacts and flags likely
-bad strategies: all-draw behavior, no-damage episodes/replays, low engagement,
-high agent 0 idle rate, high dominant action rate, or checkpoint metadata that
-still lacks required historical-opponent samples. Tune thresholds with
+audit-summary, replay-analysis, long-run-status, and smoke-suite artifacts and
+flags likely bad strategies: all-draw behavior, no-damage episodes/replays, low
+engagement, high agent 0 idle rate, high dominant action rate, checkpoint
+metadata that still lacks required historical-opponent samples, or failed smoke
+health/strategy signals. Tune thresholds with
 `--strategy-max-draw-rate`,
 `--strategy-max-no-damage-rate`, `--strategy-max-low-engagement-rate`,
 `--strategy-max-idle-rate`, and `--strategy-max-dominant-action-rate`. The
@@ -532,7 +533,8 @@ runs reward-shaping and long-run artifact smokes without training. Use full
 pytest as the broader gate before pushing code changes, and opt into
 `--include-train-eval` when you need to verify the tiny train-to-eval path.
 When saved with `--summary-output`, the smoke-suite summary is an indexable
-`smoke_suite` artifact.
+`smoke_suite` artifact that strategy reports can scan for aggregate smoke
+health and strategy signals.
 The test suite covers the environment, network, self-play wrapper, evaluation
 harness, renderer, replay system, and training metadata.
 

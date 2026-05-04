@@ -234,9 +234,10 @@ python scripts/train.py --mode strategy_report \
 ```
 
 The report flags all-draw behavior, no-damage episodes or replay analyses, low
-engagement, high agent 0 idle rate, high agent 0 dominant-action rate, and saved
+engagement, high agent 0 idle rate, high agent 0 dominant-action rate, saved
 long-run-status artifacts whose checkpoint metadata still lacks required
-historical-opponent samples. Tune thresholds with
+historical-opponent samples, and failed smoke-suite health or strategy signals.
+Tune thresholds with
 `--strategy-max-draw-rate`, `--strategy-max-no-damage-rate`,
 `--strategy-max-low-engagement-rate`, `--strategy-max-idle-rate`, and
 `--strategy-max-dominant-action-rate`. It also reports the weakest suite/rank
@@ -359,7 +360,8 @@ python scripts/smoke_suite.py --include-train-eval
 
 The default smoke suite avoids training; `--include-train-eval` opts into the
 tiny train/eval smoke. Use `--summary-output` when an autonomous run should
-archive the combined smoke result as an indexable `smoke_suite` JSON artifact.
+archive the combined smoke result as an indexable `smoke_suite` JSON artifact
+that strategy reports can scan.
 
 Manifest generation also writes a `.preflight.sh` launcher so that exact smoke
 can be run safely without entering the expensive training path.

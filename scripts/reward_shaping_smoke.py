@@ -12,6 +12,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -66,7 +67,7 @@ def main() -> None:
         "--output-dir",
         type=str,
         default=None,
-        help="Output directory for artifacts (default: /tmp timestamped dir)",
+        help="Output directory for artifacts (default: system temp dir)",
     )
     parser.add_argument(
         "--rounds",
@@ -91,7 +92,10 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     train_py = repo_root / "scripts" / "train.py"
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    output_dir = Path(args.output_dir or f"/tmp/arena-reward-shaping-smoke-{timestamp}")
+    output_dir = Path(
+        args.output_dir
+        or Path(tempfile.gettempdir()) / f"arena-reward-shaping-smoke-{timestamp}"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     base_cmd = [sys.executable, str(train_py)]

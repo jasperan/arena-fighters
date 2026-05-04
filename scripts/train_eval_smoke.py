@@ -13,6 +13,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -222,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=str,
         default=None,
-        help="Output directory (default: /tmp timestamped dir)",
+        help="Output directory (default: system temp dir)",
     )
     parser.add_argument(
         "--timesteps",
@@ -280,7 +281,10 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     train_py = repo_root / "scripts" / "train.py"
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    output_dir = Path(args.output_dir or f"/tmp/arena-train-eval-smoke-{timestamp}")
+    output_dir = Path(
+        args.output_dir
+        or Path(tempfile.gettempdir()) / f"arena-train-eval-smoke-{timestamp}"
+    )
     checkpoint_dir = output_dir / "checkpoints"
     replay_dir = output_dir / "replays"
     eval_dir = output_dir / "evals"

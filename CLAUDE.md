@@ -141,6 +141,7 @@ All source lives in `src/arena_fighters/`:
 - Checkpoint metadata records latest opponent-pool stats; generated real-run long-run checks require historical opponent samples
 - Long-run status summarizes checkpoint opponent-pool metadata and flags missing historical-opponent sample evidence
 - Strategy report treats missing historical-opponent evidence from long-run status as a candidate bad-strategy issue
+- Strategy report scans smoke-suite summaries for aggregate smoke health and strategy failures
 - League health summarizes strategy, opponent-pool, head-to-head, map weakness, and long-run gate signals in one artifact
 - Checkpoints get companion `.meta.json` files with map settings, reward config, active curriculum stage, file size, and SHA-256 digest
 - Eval JSON includes average cumulative rewards and behavior diagnostics for idle rate, action spam, no-damage episodes, low-engagement episodes, and damage events

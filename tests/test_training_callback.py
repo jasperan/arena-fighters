@@ -1820,6 +1820,104 @@ def test_build_strategy_report_flags_long_run_status_missing_historical_samples(
     }.items() <= report["issues"][0].items()
 
 
+def test_build_strategy_report_flags_smoke_suite_failures(tmp_path):
+    smoke_suite = {
+        "artifact": artifact_metadata("smoke_suite"),
+        "smokes": {
+            "reward_shaping": {
+                "strategy_issue_count": 15,
+                "indexed_artifact_count": 11,
+            },
+            "long_run_artifact": {
+                "health_ready": False,
+                "health_blockers": ["long_run_status_blocked"],
+                "health_warnings": ["missing_rank"],
+            },
+            "train_eval": {
+                "long_run_check_passed": False,
+                "long_run_check_failed_checks": [
+                    "no_candidate_bad_strategy_issues",
+                ],
+                "strategy_issue_count": 2,
+            },
+        },
+    }
+    (tmp_path / "smoke-suite-summary.json").write_text(
+        json.dumps(smoke_suite) + "\n"
+    )
+
+    report = build_strategy_report(tmp_path)
+
+    issue_by_metric = {issue["metric"]: issue for issue in report["issues"]}
+    assert report["issue_count"] == 4
+    assert {
+        "artifact_type": "smoke_suite",
+        "scope": "smoke:reward_shaping",
+        "metric": "smoke_reward_strategy_issue_count",
+        "value": 15,
+        "threshold": 0,
+        "reason": "smoke_reward_strategy_issues_present",
+    }.items() <= issue_by_metric["smoke_reward_strategy_issue_count"].items()
+    assert {
+        "artifact_type": "smoke_suite",
+        "scope": "smoke:long_run_artifact",
+        "metric": "smoke_long_run_artifact_health_blockers",
+        "value": 1,
+        "threshold": 0,
+        "reason": "smoke_long_run_artifact_health_blocked",
+        "blockers": ["long_run_status_blocked"],
+        "warnings": ["missing_rank"],
+    }.items() <= issue_by_metric[
+        "smoke_long_run_artifact_health_blockers"
+    ].items()
+    assert {
+        "artifact_type": "smoke_suite",
+        "scope": "smoke:train_eval",
+        "metric": "smoke_train_eval_strategy_issue_count",
+        "value": 2,
+        "threshold": 0,
+        "reason": "smoke_train_eval_strategy_issues_present",
+    }.items() <= issue_by_metric["smoke_train_eval_strategy_issue_count"].items()
+    assert {
+        "artifact_type": "smoke_suite",
+        "scope": "smoke:train_eval",
+        "metric": "smoke_train_eval_long_run_check_failed",
+        "value": 1,
+        "threshold": 0,
+        "reason": "smoke_train_eval_long_run_check_failed",
+        "failed_checks": ["no_candidate_bad_strategy_issues"],
+    }.items() <= issue_by_metric[
+        "smoke_train_eval_long_run_check_failed"
+    ].items()
+
+
+def test_build_strategy_report_ignores_healthy_smoke_suite(tmp_path):
+    smoke_suite = {
+        "artifact": artifact_metadata("smoke_suite"),
+        "smokes": {
+            "reward_shaping": {"strategy_issue_count": 0},
+            "long_run_artifact": {
+                "health_ready": True,
+                "health_blockers": [],
+                "health_warnings": [],
+            },
+            "train_eval": {
+                "long_run_check_passed": True,
+                "long_run_check_failed_checks": [],
+                "strategy_issue_count": 0,
+            },
+        },
+    }
+    (tmp_path / "smoke-suite-summary.json").write_text(
+        json.dumps(smoke_suite) + "\n"
+    )
+
+    report = build_strategy_report(tmp_path)
+
+    assert report["issue_count"] == 0
+    assert report["issues"] == []
+
+
 def test_build_strategy_report_allows_values_at_max_thresholds(tmp_path):
     eval_summary = _eval_summary(
         "threshold",
