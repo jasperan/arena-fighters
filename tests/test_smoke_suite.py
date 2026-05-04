@@ -51,6 +51,7 @@ def test_build_smoke_commands_can_include_tiny_training_smoke(tmp_path):
         include_train_eval=True,
         train_eval_timesteps=64,
         train_eval_rounds=2,
+        train_eval_opponent_pool_seed=123,
     )
     train_eval = commands[-1]
 
@@ -64,6 +65,11 @@ def test_build_smoke_commands_can_include_tiny_training_smoke(tmp_path):
     assert train_eval["cmd"][train_eval["cmd"].index("--timesteps") + 1] == "64"
     assert "--rounds" in train_eval["cmd"]
     assert train_eval["cmd"][train_eval["cmd"].index("--rounds") + 1] == "2"
+    assert "--opponent-pool-seed" in train_eval["cmd"]
+    assert (
+        train_eval["cmd"][train_eval["cmd"].index("--opponent-pool-seed") + 1]
+        == "123"
+    )
 
 
 def test_build_smoke_suite_summary_reads_no_training_smokes(tmp_path):

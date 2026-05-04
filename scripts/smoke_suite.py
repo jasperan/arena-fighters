@@ -64,6 +64,7 @@ def build_smoke_commands(
     reward_map: str = "flat",
     train_eval_timesteps: int = 128,
     train_eval_rounds: int = 1,
+    train_eval_opponent_pool_seed: int | None = None,
 ) -> list[dict]:
     scripts_dir = repo_root / "scripts"
     reward_output_dir = output_dir / "reward-shaping"
@@ -112,22 +113,30 @@ def build_smoke_commands(
         },
     ]
     if include_train_eval:
+        train_eval_cmd = [
+            sys.executable,
+            str(scripts_dir / "train_eval_smoke.py"),
+            "--output-dir",
+            str(output_dir / "train-eval"),
+            "--timesteps",
+            str(train_eval_timesteps),
+            "--rounds",
+            str(train_eval_rounds),
+        ]
+        if train_eval_opponent_pool_seed is not None:
+            train_eval_cmd.extend(
+                [
+                    "--opponent-pool-seed",
+                    str(train_eval_opponent_pool_seed),
+                ]
+            )
         commands.append(
             {
                 "id": "train_eval",
                 "compute_class": "tiny_training",
                 "output_dir": output_dir / "train-eval",
                 "stdout_path": output_dir / "train-eval.out",
-                "cmd": [
-                    sys.executable,
-                    str(scripts_dir / "train_eval_smoke.py"),
-                    "--output-dir",
-                    str(output_dir / "train-eval"),
-                    "--timesteps",
-                    str(train_eval_timesteps),
-                    "--rounds",
-                    str(train_eval_rounds),
-                ],
+                "cmd": train_eval_cmd,
             }
         )
     return commands
@@ -225,12 +234,23 @@ def main() -> None:
         help="Tiny train/eval smoke rounds when enabled (default: 1)",
     )
     parser.add_argument(
+        "--train-eval-opponent-pool-seed",
+        type=int,
+        default=None,
+        help="Seed for reproducible opponent-pool sampling in train/eval smoke",
+    )
+    parser.add_argument(
         "--command-timeout-seconds",
         type=float,
         default=900.0,
         help="Per-child smoke command timeout in seconds (default: 900)",
     )
     args = parser.parse_args()
+    if (
+        args.train_eval_opponent_pool_seed is not None
+        and args.train_eval_opponent_pool_seed < 0
+    ):
+        parser.error("--train-eval-opponent-pool-seed must be non-negative")
 
     repo_root = REPO_ROOT
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -247,6 +267,7 @@ def main() -> None:
         reward_map=args.reward_map,
         train_eval_timesteps=args.train_eval_timesteps,
         train_eval_rounds=args.train_eval_rounds,
+        train_eval_opponent_pool_seed=args.train_eval_opponent_pool_seed,
     )
 
     for command in commands:

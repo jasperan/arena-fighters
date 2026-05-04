@@ -497,7 +497,7 @@ bound each child command.
 
 ```bash
 python scripts/train_eval_smoke.py
-python scripts/train_eval_smoke.py --output-dir /tmp/arena-train-eval-smoke --timesteps 128 --rounds 1
+python scripts/train_eval_smoke.py --output-dir /tmp/arena-train-eval-smoke --timesteps 128 --rounds 1 --opponent-pool-seed 123
 ```
 
 The train/eval smoke runs a tiny curriculum training job, forces sampled replay
@@ -510,7 +510,9 @@ default it uses the long-run baseline coverage set: `idle,scripted,aggressive,ev
 opponents across `classic,flat,split,tower` maps. The relaxed audit allows
 smoke-sized draw, no-damage, and low-engagement outcomes so the command checks
 artifact plumbing rather than policy quality. It is only a wiring check; it
-does not prove learning quality.
+does not prove learning quality. Use `--opponent-pool-seed` to make the tiny
+self-play opponent sampling reproducible and record the checkpoint opponent-pool
+config in the smoke summary.
 Use `--command-timeout-seconds` to bound each child command.
 
 ## Architecture

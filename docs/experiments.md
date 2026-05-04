@@ -327,7 +327,7 @@ Use `--command-timeout-seconds` to bound each child command.
 For a short training-to-evaluation wiring check, use:
 
 ```bash
-python scripts/train_eval_smoke.py
+python scripts/train_eval_smoke.py --opponent-pool-seed 123
 ```
 
 This runs a tiny curriculum training job, forces sampled replay capture,
@@ -341,7 +341,9 @@ coverage set as the long-run manifest: `idle,scripted,aggressive,evasive` oppone
 `classic,flat,split,tower` maps. The relaxed promotion audit allows smoke-sized
 draw, no-damage, and low-engagement outcomes so the command validates artifact
 plumbing instead of policy quality. Treat it as a smoke check only; real policy
-quality still needs longer training.
+quality still needs longer training. Use `--opponent-pool-seed` to make the
+smoke's self-play opponent sampling reproducible and record the checkpoint
+opponent-pool config in the smoke summary.
 Use `--command-timeout-seconds` to bound each child command.
 
 For actual compute runs, use `docs/long_run_protocol.md`. To create the full

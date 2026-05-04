@@ -5105,6 +5105,11 @@ def build_long_run_manifest(
         f"  --suite-opponents {_shell_arg(suite_opponents_csv)} \\",
         f"  --suite-maps {_shell_arg(suite_maps_csv)}",
     ]
+    if opponent_pool_seed is not None:
+        preflight_parts[-1] = f"{preflight_parts[-1]} \\"
+        preflight_parts.append(
+            f"  --opponent-pool-seed {_shell_arg(opponent_pool_seed)}"
+        )
     final_artifact_index_parts = [
         "python scripts/train.py --mode artifact_index \\",
         '  --artifact-dir "$EVAL_DIR" \\',

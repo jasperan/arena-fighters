@@ -11,7 +11,8 @@ Before spending real compute, run the tiny end-to-end smoke once:
 python scripts/train_eval_smoke.py \
   --output-dir /tmp/arena-train-eval-smoke \
   --timesteps 128 \
-  --rounds 1
+  --rounds 1 \
+  --opponent-pool-seed 123
 ```
 
 This trains a tiny curriculum policy, writes a final checkpoint and metadata,
@@ -26,7 +27,9 @@ the smoke. Its default suite coverage matches the long-run baseline set:
 draw/no-damage/low-engagement outcomes so the preflight validates artifact
 plumbing instead of policy quality. Treat any strategy issues and failing smoke
 long-run checks as expected diagnostics; real policy quality still requires the
-long-run flow below.
+long-run flow below. Use `--opponent-pool-seed` when you need reproducible
+latest-vs-historical self-play sampling in the smoke; the summary records the
+resulting checkpoint opponent-pool config.
 
 ## 0. Generate A Run Manifest
 
@@ -47,9 +50,11 @@ a stale environment or broken verifier path fails before real compute is spent
 without contaminating the real run's recursive artifact scans. Add
 `--replay-save-interval N` for
 diagnostic runs that should capture training replays more frequently than the
-default config. Rank-gate thresholds passed while generating the manifest are
-pinned into the generated promotion-audit command for reproducibility;
-strategy-report thresholds are pinned the same way.
+default config. Add `--opponent-pool-seed N` when generating the manifest to
+seed both the embedded smoke preflight and the real self-play training command.
+Rank-gate thresholds passed while generating the manifest are pinned into the
+generated promotion-audit command for reproducibility; strategy-report
+thresholds are pinned the same way.
 The generated launcher copies itself into `$EVAL_DIR/long-run-launcher.sh`
 before training starts so the final run bundle keeps the exact script that
 produced it. The manifest also records a compact git source snapshot with
@@ -95,7 +100,8 @@ python scripts/train_eval_smoke.py \
   --timesteps 128 \
   --rounds 1 \
   --suite-opponents idle,scripted,aggressive,evasive \
-  --suite-maps classic,flat,split,tower
+  --suite-maps classic,flat,split,tower \
+  --opponent-pool-seed 123
 ```
 
 This is the same smoke described above, embedded in the generated launcher. It

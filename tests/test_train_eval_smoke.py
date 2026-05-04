@@ -9,6 +9,7 @@ from scripts.train_eval_smoke import (
     build_long_run_check_command,
     build_parser,
     build_promotion_audit_command,
+    build_train_command,
     build_train_eval_summary,
     run_command,
     validate_smoke_long_run_check,
@@ -21,8 +22,15 @@ def test_default_smoke_suite_matches_long_run_coverage():
     assert args.suite_opponents == DEFAULT_SMOKE_SUITE_OPPONENTS
     assert args.suite_maps == DEFAULT_SMOKE_SUITE_MAPS
     assert args.command_timeout_seconds == 1200.0
+    assert args.opponent_pool_seed is None
     assert args.suite_opponents == "idle,scripted,aggressive,evasive"
     assert args.suite_maps == "classic,flat,split,tower"
+
+
+def test_smoke_parser_accepts_opponent_pool_seed():
+    args = build_parser().parse_args(["--opponent-pool-seed", "123"])
+
+    assert args.opponent_pool_seed == 123
 
 
 def test_run_command_times_out_and_marks_stdout(tmp_path):
@@ -69,6 +77,24 @@ def test_promotion_audit_smoke_command_relaxes_expected_tiny_run_failures(tmp_pa
     assert command[command.index("--rank-max-no-damage-rate") + 1] == "1"
     assert "--rank-max-low-engagement-rate" in command
     assert command[command.index("--rank-max-low-engagement-rate") + 1] == "1"
+
+
+def test_train_smoke_command_can_seed_opponent_pool(tmp_path):
+    command = build_train_command(
+        ["python", "scripts/train.py"],
+        128,
+        tmp_path / "checkpoints",
+        tmp_path / "replays",
+        1,
+        opponent_pool_seed=123,
+    )
+
+    assert "--curriculum" in command
+    assert command[command.index("--curriculum") + 1] == "map_progression"
+    assert "--replay-save-interval" in command
+    assert command[command.index("--replay-save-interval") + 1] == "1"
+    assert "--opponent-pool-seed" in command
+    assert command[command.index("--opponent-pool-seed") + 1] == "123"
 
 
 def test_long_run_check_smoke_command_uses_suite_coverage_thresholds(tmp_path):
@@ -150,7 +176,22 @@ def test_build_train_eval_summary_reads_expected_artifacts(tmp_path):
     eval_dir.mkdir()
     replay_dir.mkdir()
     (checkpoint_dir / "ppo_final.zip").touch()
-    (checkpoint_dir / "ppo_final.meta.json").write_text("{}\n")
+    (checkpoint_dir / "ppo_final.meta.json").write_text(
+        json.dumps(
+            {
+                "opponent_pool_config": {
+                    "max_size": 20,
+                    "latest_opponent_prob": 0.8,
+                    "seed": 123,
+                },
+                "opponent_pool": {
+                    "historical_samples": 2,
+                    "historical_sample_rate": 0.25,
+                },
+            }
+        )
+        + "\n"
+    )
     (replay_dir / "episode_0001.json").write_text("{}\n")
     (eval_dir / "20260504T000000Z_train-smoke-suite.json").write_text(
         json.dumps(
@@ -214,6 +255,13 @@ def test_build_train_eval_summary_reads_expected_artifacts(tmp_path):
         "checkpoint_exists": True,
         "metadata": str(checkpoint_dir / "ppo_final.meta.json"),
         "metadata_exists": True,
+        "checkpoint_opponent_pool_config": {
+            "max_size": 20,
+            "latest_opponent_prob": 0.8,
+            "seed": 123,
+        },
+        "checkpoint_historical_opponent_samples": 2,
+        "checkpoint_historical_sample_rate": 0.25,
         "replay_count": 1,
         "replay_analysis_batch": str(
             eval_dir / "20260504T000001Z_train-smoke-replay-batch.json"

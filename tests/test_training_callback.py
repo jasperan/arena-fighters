@@ -3541,6 +3541,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
         "contains_expensive_training_command": True,
     }
     assert "python scripts/train_eval_smoke.py" in manifest["preflight_shell_script"]
+    assert "--opponent-pool-seed 123" in manifest["preflight_shell_script"]
     assert "python scripts/train.py --mode train" not in manifest[
         "preflight_shell_script"
     ]

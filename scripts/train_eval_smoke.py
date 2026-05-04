@@ -63,6 +63,33 @@ def latest_artifact(output_dir: Path, label: str) -> Path:
     return matches[-1]
 
 
+def build_train_command(
+    base_cmd: list[str],
+    timesteps: int,
+    checkpoint_dir: Path,
+    replay_dir: Path,
+    replay_save_interval: int,
+    opponent_pool_seed: int | None = None,
+) -> list[str]:
+    cmd = base_cmd + [
+        "--mode",
+        "train",
+        "--timesteps",
+        str(timesteps),
+        "--checkpoint-dir",
+        str(checkpoint_dir),
+        "--replay-dir",
+        str(replay_dir),
+        "--curriculum",
+        "map_progression",
+        "--replay-save-interval",
+        str(replay_save_interval),
+    ]
+    if opponent_pool_seed is not None:
+        cmd.extend(["--opponent-pool-seed", str(opponent_pool_seed)])
+    return cmd
+
+
 def build_promotion_audit_command(
     base_cmd: list[str],
     checkpoint: Path,
@@ -168,6 +195,9 @@ def validate_smoke_long_run_check(long_run_check: Path, exit_code: int) -> None:
 def build_train_eval_summary(output_dir: Path) -> dict:
     checkpoint = output_dir / "checkpoints" / "ppo_final.zip"
     metadata = output_dir / "checkpoints" / "ppo_final.meta.json"
+    metadata_data = json.loads(metadata.read_text()) if metadata.exists() else {}
+    opponent_pool_config = metadata_data.get("opponent_pool_config") or {}
+    opponent_pool_stats = metadata_data.get("opponent_pool") or {}
     suite = latest_artifact(output_dir / "evals", "train-smoke-suite")
     suite_data = json.loads(suite.read_text())
     suite_config = suite_data.get("suite_config", {})
@@ -206,6 +236,13 @@ def build_train_eval_summary(output_dir: Path) -> dict:
         "checkpoint_exists": checkpoint.exists(),
         "metadata": str(metadata),
         "metadata_exists": metadata.exists(),
+        "checkpoint_opponent_pool_config": opponent_pool_config,
+        "checkpoint_historical_opponent_samples": opponent_pool_stats.get(
+            "historical_samples"
+        ),
+        "checkpoint_historical_sample_rate": opponent_pool_stats.get(
+            "historical_sample_rate"
+        ),
         "replay_count": len(list((output_dir / "replays").glob("*.json"))),
         "replay_analysis_batch": str(replay_batch),
         "replay_analysis_count": replay_analysis_count,
@@ -285,6 +322,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save one training replay every N completed episodes (default: 1)",
     )
     parser.add_argument(
+        "--opponent-pool-seed",
+        type=int,
+        default=None,
+        help="Seed for reproducible opponent-pool sampling during the tiny train step",
+    )
+    parser.add_argument(
         "--command-timeout-seconds",
         type=float,
         default=1200.0,
@@ -296,6 +339,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.replay_save_interval < 1:
+        parser.error("--replay-save-interval must be at least 1")
+    if args.opponent_pool_seed is not None and args.opponent_pool_seed < 0:
+        parser.error("--opponent-pool-seed must be non-negative")
 
     repo_root = Path(__file__).resolve().parents[1]
     train_py = repo_root / "scripts" / "train.py"
@@ -313,21 +360,14 @@ def main() -> None:
 
     base_cmd = [sys.executable, str(train_py)]
     run_command(
-        base_cmd
-        + [
-            "--mode",
-            "train",
-            "--timesteps",
-            str(args.timesteps),
-            "--checkpoint-dir",
-            str(checkpoint_dir),
-            "--replay-dir",
-            str(replay_dir),
-            "--curriculum",
-            "map_progression",
-            "--replay-save-interval",
-            str(args.replay_save_interval),
-        ],
+        build_train_command(
+            base_cmd,
+            args.timesteps,
+            checkpoint_dir,
+            replay_dir,
+            args.replay_save_interval,
+            args.opponent_pool_seed,
+        ),
         repo_root,
         output_dir / "train.out",
         timeout_seconds=args.command_timeout_seconds,
