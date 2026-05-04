@@ -16,6 +16,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from arena_fighters.evaluation import artifact_metadata
+
 
 ALLOWED_NO_TRAINING_BLOCKED_REASONS = {
     "latest_launcher_not_executed",
@@ -56,6 +58,7 @@ def build_artifact_smoke_summary(
     health_data = json.loads(health.read_text())
     index_data = json.loads(artifact_index.read_text())
     return {
+        "artifact": artifact_metadata("long_run_artifact_smoke"),
         "output_dir": str(output_dir),
         "artifact_root": str(artifact_root),
         "run_id": run_id,
@@ -107,6 +110,13 @@ def validate_artifact_smoke_summary(summary: dict, eval_dir: Path) -> None:
         )
 
 
+def write_artifact_smoke_summary(summary: dict, path: str | Path) -> Path:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    return output_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run no-training long-run artifact smoke"
@@ -128,6 +138,12 @@ def main() -> None:
         type=int,
         default=128,
         help="Manifest timesteps value without executing training (default: 128)",
+    )
+    parser.add_argument(
+        "--summary-output",
+        type=str,
+        default=None,
+        help="Optional path for saving the long-run artifact smoke summary JSON",
     )
     args = parser.parse_args()
 
@@ -213,6 +229,9 @@ def main() -> None:
 
     summary = build_artifact_smoke_summary(output_dir, artifact_root, run_id)
     validate_artifact_smoke_summary(summary, eval_dir)
+    if args.summary_output:
+        summary["summary_output"] = str(Path(args.summary_output))
+        write_artifact_smoke_summary(summary, args.summary_output)
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 

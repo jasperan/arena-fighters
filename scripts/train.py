@@ -1581,6 +1581,13 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
                     if str(issue.get("scope", "")).startswith("candidate:")
                 ]
             ),
+            "smoke_issue_count": len(
+                [
+                    issue
+                    for issue in issues
+                    if str(issue.get("scope", "")).startswith("smoke:")
+                ]
+            ),
             "issue_metrics": sorted(
                 {issue.get("metric") for issue in issues if issue.get("metric")}
             ),
@@ -1723,6 +1730,9 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "replay_strategy_issue_count": signals.get("strategy", {}).get(
                 "replay_issue_count"
             ),
+            "smoke_strategy_issue_count": signals.get("strategy", {}).get(
+                "smoke_issue_count"
+            ),
         }
     if artifact_type == "reward_shaping_smoke":
         return {
@@ -1742,6 +1752,21 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             ),
             "strategy_issue_count": data.get("strategy_issue_count"),
             "indexed_artifact_count": data.get("indexed_artifact_count"),
+        }
+    if artifact_type == "long_run_artifact_smoke":
+        counts = data.get("indexed_artifact_counts", {})
+        return {
+            "run_id": data.get("run_id"),
+            "status_blocked_reason": data.get("status_blocked_reason"),
+            "status_missing_evidence": data.get("status_missing_evidence", []),
+            "health_ready": data.get("health_ready"),
+            "health_blockers": data.get("health_blockers", []),
+            "health_warnings": data.get("health_warnings", []),
+            "health_artifact_scope_dir": data.get("health_artifact_scope_dir"),
+            "indexed_artifact_count": data.get("indexed_artifact_count"),
+            "indexed_long_run_manifest_count": counts.get("long_run_manifest"),
+            "indexed_long_run_status_count": counts.get("long_run_status"),
+            "indexed_league_health_count": counts.get("league_health"),
         }
     if artifact_type == "smoke_suite":
         smokes = data.get("smokes", {})
@@ -2373,6 +2398,37 @@ def reward_shaping_smoke_strategy_issues(
     return issues
 
 
+def long_run_artifact_smoke_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+) -> list[dict]:
+    health_blockers = summary.get("health_blockers", [])
+    if not isinstance(health_blockers, list):
+        health_blockers = []
+    health_warnings = summary.get("health_warnings", [])
+    if not isinstance(health_warnings, list):
+        health_warnings = []
+    if summary.get("health_ready") is not False or not health_blockers:
+        return []
+    return [
+        {
+            "path": path,
+            "relative_path": relative_path,
+            "artifact_type": artifact_type,
+            "scope": "smoke:long_run_artifact",
+            "metric": "long_run_artifact_smoke_health_blockers",
+            "value": len(health_blockers),
+            "threshold": 0,
+            "reason": "long_run_artifact_smoke_health_blocked",
+            "blockers": health_blockers,
+            "warnings": health_warnings,
+        }
+    ]
+
+
 def strategy_issues_for_artifact(
     data: dict,
     *,
@@ -2445,6 +2501,13 @@ def strategy_issues_for_artifact(
         )
     if artifact_type == "reward_shaping_smoke":
         return reward_shaping_smoke_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+        )
+    if artifact_type == "long_run_artifact_smoke":
+        return long_run_artifact_smoke_strategy_issues(
             data,
             path=path,
             relative_path=relative_path,

@@ -236,7 +236,8 @@ python scripts/train.py --mode strategy_report \
 The report flags all-draw behavior, no-damage episodes or replay analyses, low
 engagement, high agent 0 idle rate, high agent 0 dominant-action rate, saved
 long-run-status artifacts whose checkpoint metadata still lacks required
-historical-opponent samples, and failed smoke-suite health or strategy signals.
+historical-opponent samples, reward-shaping smoke regressions, and failed
+smoke-suite or long-run-artifact-smoke health/strategy signals.
 Tune thresholds with
 `--strategy-max-draw-rate`, `--strategy-max-no-damage-rate`,
 `--strategy-max-low-engagement-rate`, `--strategy-max-idle-rate`, and
@@ -355,7 +356,12 @@ artifact-index plumbing, run:
 
 ```bash
 python scripts/long_run_artifact_smoke.py
+python scripts/long_run_artifact_smoke.py --summary-output /tmp/arena-long-run-artifact-summary.json
 ```
+
+Use `--summary-output` when an autonomous run should archive the no-training
+manifest/status/health/index smoke as an indexable `long_run_artifact_smoke`
+JSON artifact.
 
 To run the cheap smoke bundle in compute-cost order, use:
 

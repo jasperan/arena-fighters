@@ -4,6 +4,7 @@ from arena_fighters.evaluation import artifact_metadata
 from scripts.long_run_artifact_smoke import (
     build_artifact_smoke_summary,
     validate_artifact_smoke_summary,
+    write_artifact_smoke_summary,
 )
 
 
@@ -55,6 +56,7 @@ def test_build_artifact_smoke_summary_reads_expected_artifacts(tmp_path):
     summary = build_artifact_smoke_summary(tmp_path, artifact_root, run_id)
 
     assert summary == {
+        "artifact": {"artifact_type": "long_run_artifact_smoke", "schema_version": 1},
         "output_dir": str(tmp_path),
         "artifact_root": str(artifact_root),
         "run_id": run_id,
@@ -81,6 +83,20 @@ def test_build_artifact_smoke_summary_reads_expected_artifacts(tmp_path):
         },
         "indexed_artifact_count": 3,
     }
+
+
+def test_write_artifact_smoke_summary_creates_parent_dirs(tmp_path):
+    summary = {
+        "artifact": {"artifact_type": "long_run_artifact_smoke", "schema_version": 1},
+        "run_id": "artifact-smoke",
+        "health_ready": False,
+    }
+    path = tmp_path / "nested" / "artifact-smoke-summary.json"
+
+    written = write_artifact_smoke_summary(summary, path)
+
+    assert written == path
+    assert json.loads(path.read_text()) == summary
 
 
 def test_validate_artifact_smoke_summary_rejects_missing_artifact_counts(tmp_path):

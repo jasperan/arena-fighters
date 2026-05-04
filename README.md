@@ -130,9 +130,9 @@ python scripts/train.py --mode eval --opponent scripted --rounds 20 --eval-outpu
 Evaluation prints JSON with win rates, draw rate, average episode length, average cumulative rewards, action counts, normalized action distributions, event totals, damage dealt, behavior diagnostics, and per-map metrics. Per-map summaries include the same action, damage, event, and behavior breakdowns so map-specific failures are easier to isolate. Timeout episodes are counted as draws even when shaped rewards differ; knockouts use terminal HP. The eval config records map settings, reward preset, active curriculum metadata, and checkpoint metadata when a companion `.meta.json` file exists. Built-in opponents are `random`, `idle`, `scripted`, `aggressive`, and `evasive`; use `--agent-policy` to choose a built-in agent 0 policy when no checkpoint is supplied. Behavior diagnostics include idle rate, dominant-action rate, no-damage episodes, low-engagement episodes, and damage-event counts. Use `--eval-output-dir` to save timestamped JSON summaries under an ignored artifact directory such as `evals/`.
 Saved eval, suite, rank, comparison, gate, rank-gate, promotion-audit,
 audit-summary, artifact-index, strategy-report, long-run-manifest,
-long-run-check, long-run-status, league-health, smoke-suite, and
-replay-analysis/replay-analysis-batch JSON include an `artifact` block with
-`artifact_type` and `schema_version`.
+long-run-check, long-run-status, league-health, reward-shaping-smoke,
+smoke-suite, long-run-artifact-smoke, and replay-analysis/replay-analysis-batch
+JSON include an `artifact` block with `artifact_type` and `schema_version`.
 
 Only load Stable-Baselines3 checkpoints that were produced locally or obtained
 from trusted sources. Checkpoints are serialized model artifacts, not inert data;
@@ -248,11 +248,12 @@ python scripts/train.py --mode strategy_report --artifact-dir evals --recursive-
 ```
 
 Strategy report scans saved eval, suite, rank, rank-gate, promotion-audit,
-audit-summary, replay-analysis, long-run-status, and smoke-suite artifacts and
-flags likely bad strategies: all-draw behavior, no-damage episodes/replays, low
+audit-summary, replay-analysis, long-run-status, reward-shaping-smoke,
+long-run-artifact-smoke, and smoke-suite artifacts and flags likely bad
+strategies: all-draw behavior, no-damage episodes/replays, low
 engagement, high agent 0 idle rate, high dominant action rate, checkpoint
-metadata that still lacks required historical-opponent samples, or failed smoke
-health/strategy signals. Tune thresholds with
+metadata that still lacks required historical-opponent samples, reward-smoke
+regressions, or failed smoke health/strategy signals. Tune thresholds with
 `--strategy-max-draw-rate`,
 `--strategy-max-no-damage-rate`, `--strategy-max-low-engagement-rate`,
 `--strategy-max-idle-rate`, and `--strategy-max-dominant-action-rate`. The
@@ -471,12 +472,14 @@ still reports issues.
 ```bash
 python scripts/long_run_artifact_smoke.py
 python scripts/long_run_artifact_smoke.py --output-dir /tmp/arena-long-run-artifact-smoke --run-id artifact-smoke
+python scripts/long_run_artifact_smoke.py --summary-output /tmp/arena-long-run-artifact-summary.json
 ```
 
 The long-run artifact smoke does not train or execute a generated launcher. It
 uses the CLI to generate a long-run manifest, save long-run status and league
 health artifacts, recursively index the bundle, and verify the health artifact
-is scoped to the generated run eval directory.
+is scoped to the generated run eval directory. Use `--summary-output` to save an
+indexable `long_run_artifact_smoke` summary artifact.
 
 ### Train/Eval Smoke
 

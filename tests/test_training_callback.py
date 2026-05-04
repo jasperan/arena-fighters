@@ -1229,6 +1229,7 @@ def test_build_artifact_index_summarizes_artifacts_and_links(tmp_path):
         "weakness_count": 0,
         "worst_weakness": None,
         "candidate_issue_count": 1,
+        "smoke_issue_count": 0,
         "issue_metrics": ["draw_rate", "no_damage_rate"],
         "scanned_artifacts": 4,
     }
@@ -1344,6 +1345,50 @@ def test_build_artifact_index_summarizes_reward_shaping_smoke_artifacts(tmp_path
         "damage_events_delta_agent_0": 2,
         "strategy_issue_count": 15,
         "indexed_artifact_count": 11,
+    }
+
+
+def test_build_artifact_index_summarizes_long_run_artifact_smoke_artifacts(tmp_path):
+    smoke_path = tmp_path / "artifact-smoke-summary.json"
+    smoke_path.write_text(
+        json.dumps(
+            {
+                "artifact": artifact_metadata("long_run_artifact_smoke"),
+                "run_id": "artifact-smoke",
+                "status_blocked_reason": "latest_launcher_not_executed",
+                "status_missing_evidence": ["train_exitcode"],
+                "health_ready": False,
+                "health_blockers": ["long_run_status_blocked"],
+                "health_warnings": ["missing_rank"],
+                "health_artifact_scope_dir": "/tmp/evals/artifact-smoke",
+                "indexed_artifact_counts": {
+                    "long_run_manifest": 1,
+                    "long_run_status": 1,
+                    "league_health": 1,
+                },
+                "indexed_artifact_count": 3,
+            }
+        )
+        + "\n"
+    )
+
+    index = build_artifact_index(tmp_path)
+
+    assert index["artifact_counts"] == {"long_run_artifact_smoke": 1}
+    [entry] = index["artifacts"]
+    assert entry["artifact_type"] == "long_run_artifact_smoke"
+    assert entry["summary"] == {
+        "run_id": "artifact-smoke",
+        "status_blocked_reason": "latest_launcher_not_executed",
+        "status_missing_evidence": ["train_exitcode"],
+        "health_ready": False,
+        "health_blockers": ["long_run_status_blocked"],
+        "health_warnings": ["missing_rank"],
+        "health_artifact_scope_dir": "/tmp/evals/artifact-smoke",
+        "indexed_artifact_count": 3,
+        "indexed_long_run_manifest_count": 1,
+        "indexed_long_run_status_count": 1,
+        "indexed_league_health_count": 1,
     }
 
 
@@ -2121,6 +2166,49 @@ def test_build_strategy_report_ignores_healthy_reward_shaping_smoke(tmp_path):
         "strategy_issue_count": 0,
     }
     (tmp_path / "reward-summary.json").write_text(json.dumps(reward_smoke) + "\n")
+
+    report = build_strategy_report(tmp_path)
+
+    assert report["issue_count"] == 0
+    assert report["issues"] == []
+
+
+def test_build_strategy_report_flags_long_run_artifact_smoke_failures(tmp_path):
+    artifact_smoke = {
+        "artifact": artifact_metadata("long_run_artifact_smoke"),
+        "health_ready": False,
+        "health_blockers": ["long_run_status_blocked"],
+        "health_warnings": ["missing_rank"],
+    }
+    (tmp_path / "artifact-smoke-summary.json").write_text(
+        json.dumps(artifact_smoke) + "\n"
+    )
+
+    report = build_strategy_report(tmp_path)
+
+    assert report["issue_count"] == 1
+    assert {
+        "artifact_type": "long_run_artifact_smoke",
+        "scope": "smoke:long_run_artifact",
+        "metric": "long_run_artifact_smoke_health_blockers",
+        "value": 1,
+        "threshold": 0,
+        "reason": "long_run_artifact_smoke_health_blocked",
+        "blockers": ["long_run_status_blocked"],
+        "warnings": ["missing_rank"],
+    }.items() <= report["issues"][0].items()
+
+
+def test_build_strategy_report_ignores_healthy_long_run_artifact_smoke(tmp_path):
+    artifact_smoke = {
+        "artifact": artifact_metadata("long_run_artifact_smoke"),
+        "health_ready": True,
+        "health_blockers": [],
+        "health_warnings": [],
+    }
+    (tmp_path / "artifact-smoke-summary.json").write_text(
+        json.dumps(artifact_smoke) + "\n"
+    )
 
     report = build_strategy_report(tmp_path)
 
