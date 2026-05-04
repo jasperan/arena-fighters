@@ -1477,6 +1477,12 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "candidate_evidence_ready": data.get("candidate_evidence_ready"),
             "blocked_reason": data.get("blocked_reason"),
             "missing_evidence": data.get("missing_evidence", []),
+            "latest_manifest_source_safe_to_launch": latest.get(
+                "source_safe_to_launch"
+            ),
+            "latest_manifest_source_stale_reasons": latest.get(
+                "source_stale_reasons", []
+            ),
             "next_command": data.get("next_command"),
             "next_preflight_command": data.get("next_preflight_command"),
         }
@@ -3053,7 +3059,43 @@ def _directory_file_count(path: Path | None) -> int:
     return sum(1 for child in path.iterdir() if child.is_file())
 
 
-def _manifest_status_entry(manifest_path: Path, manifest: dict) -> dict:
+def _manifest_source_status(manifest_source: dict, current_source: dict) -> dict:
+    source_commit = manifest_source.get("commit")
+    current_commit = current_source.get("commit")
+    manifest_dirty = manifest_source.get("dirty")
+    current_dirty = current_source.get("dirty")
+    source_available = bool(manifest_source.get("available", source_commit is not None))
+    current_available = bool(current_source.get("available"))
+    commit_matches_current = None
+    if source_commit is not None and current_commit is not None:
+        commit_matches_current = source_commit == current_commit
+
+    stale_reasons = []
+    if not source_available or not current_available:
+        stale_reasons.append("source_unavailable")
+    if commit_matches_current is False:
+        stale_reasons.append("commit_mismatch")
+    if manifest_dirty is True:
+        stale_reasons.append("manifest_created_from_dirty_worktree")
+    if current_dirty is True:
+        stale_reasons.append("current_worktree_dirty")
+
+    return {
+        "source_current_commit": current_commit,
+        "source_current_dirty": current_dirty,
+        "source_commit_matches_current": commit_matches_current,
+        "source_manifest_clean": manifest_dirty is False,
+        "source_current_clean": current_dirty is False,
+        "source_safe_to_launch": not stale_reasons,
+        "source_stale_reasons": stale_reasons,
+    }
+
+
+def _manifest_status_entry(
+    manifest_path: Path,
+    manifest: dict,
+    current_source: dict,
+) -> dict:
     cfg = manifest.get("manifest_config", {})
     eval_dir = cfg.get("eval_dir")
     eval_path = Path(eval_dir) if eval_dir else None
@@ -3068,6 +3110,7 @@ def _manifest_status_entry(manifest_path: Path, manifest: dict) -> dict:
         manifest,
     )
     source_control = cfg.get("source_control", {})
+    source_status = _manifest_source_status(source_control, current_source)
     return {
         "path": str(manifest_path),
         "run_id": cfg.get("run_id"),
@@ -3115,6 +3158,7 @@ def _manifest_status_entry(manifest_path: Path, manifest: dict) -> dict:
         "source_commit": source_control.get("commit"),
         "source_dirty": source_control.get("dirty"),
         "source_status_short_count": source_control.get("status_short_count"),
+        **source_status,
     }
 
 
@@ -3175,6 +3219,7 @@ def build_long_run_status(
 ) -> dict:
     root = Path(artifact_dir)
     index = build_artifact_index(root, recursive=recursive)
+    current_source = source_control_snapshot()
     manifests = []
     long_run_checks = []
 
@@ -3192,7 +3237,11 @@ def build_long_run_status(
                     }
                 )
                 continue
-            status_entry = _manifest_status_entry(artifact_path, manifest)
+            status_entry = _manifest_status_entry(
+                artifact_path,
+                manifest,
+                current_source,
+            )
             status_entry["mtime"] = artifact_path.stat().st_mtime
             manifests.append(status_entry)
         elif entry.get("artifact_type") == "long_run_check":
@@ -3275,6 +3324,7 @@ def build_long_run_status(
         "status_config": {
             "artifact_dir": str(root),
             "recursive": recursive,
+            "source_control": current_source,
         },
         "manifest_count": len(manifests),
         "long_run_check_count": len(long_run_checks),

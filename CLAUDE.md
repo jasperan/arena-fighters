@@ -95,7 +95,8 @@ Use `long_run_status` to recursively inspect generated manifests and run
 directories without starting training; it reports whether the latest launcher
 has produced a passing long-run-check artifact and prints the next launcher
 commands when its preflight or full run has not run. The status artifact also
-includes `missing_evidence` for machine-readable blocker reporting.
+includes `missing_evidence` for machine-readable blocker reporting and
+`source_safe_to_launch`/`source_stale_reasons` for stale-manifest detection.
 
 ## Architecture
 

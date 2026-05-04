@@ -355,7 +355,10 @@ python scripts/train.py --mode long_run_status --artifact-dir evals
 The status output reports the latest manifest, whether the run directory exists,
 passing long-run-check counts, the next launcher command when the plan has not
 been executed, and `missing_evidence` entries for absent exit-code sidecars,
-checkpoint files, replay files, or latest-run verifier artifacts.
+checkpoint files, replay files, or latest-run verifier artifacts. It also
+compares the latest manifest source snapshot with the current git state and
+reports `source_safe_to_launch` plus `source_stale_reasons` before a long run is
+started.
 
 Single eval output records the current curriculum under
 `eval_config.curriculum`; suite output records it under

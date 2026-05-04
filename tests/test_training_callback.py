@@ -2998,6 +2998,52 @@ def test_build_long_run_status_reports_latest_manifest_execution_state(tmp_path)
     assert latest["source_dirty"] in {True, False, None}
 
 
+def test_build_long_run_status_reports_manifest_source_freshness(tmp_path, monkeypatch):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    manifest = build_long_run_manifest(
+        run_id="stale-source-run",
+        checkpoint_root=str(tmp_path / "checkpoints"),
+        eval_root=str(artifact_dir),
+        replay_root=str(tmp_path / "replays"),
+        timesteps=5_000_000,
+    )
+    manifest["manifest_config"]["source_control"] = {
+        "vcs": "git",
+        "available": True,
+        "commit": "old-commit",
+        "dirty": True,
+        "status_short_count": 1,
+    }
+    manifest_path = artifact_dir / "stale-source-plan.json"
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    monkeypatch.setattr(
+        "scripts.train.source_control_snapshot",
+        lambda: {
+            "vcs": "git",
+            "available": True,
+            "commit": "new-commit",
+            "dirty": False,
+            "status_short_count": 0,
+        },
+    )
+
+    status = build_long_run_status(artifact_dir)
+
+    latest = status["latest_manifest"]
+    assert latest["source_current_commit"] == "new-commit"
+    assert latest["source_current_dirty"] is False
+    assert latest["source_commit_matches_current"] is False
+    assert latest["source_manifest_clean"] is False
+    assert latest["source_current_clean"] is True
+    assert latest["source_safe_to_launch"] is False
+    assert latest["source_stale_reasons"] == [
+        "commit_mismatch",
+        "manifest_created_from_dirty_worktree",
+    ]
+    assert status["status_config"]["source_control"]["commit"] == "new-commit"
+
+
 def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()
