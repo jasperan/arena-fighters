@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 
-DEFAULT_SMOKE_SUITE_OPPONENTS = "idle,scripted,evasive"
+DEFAULT_SMOKE_SUITE_OPPONENTS = "idle,scripted,aggressive,evasive"
 DEFAULT_SMOKE_SUITE_MAPS = "classic,flat,split,tower"
 ALLOWED_SMOKE_LONG_RUN_FAILURES = {"no_candidate_bad_strategy_issues"}
 

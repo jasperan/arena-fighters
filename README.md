@@ -155,7 +155,7 @@ Gate mode exits non-zero when a comparison regresses default guardrail metrics: 
 ### Suite
 
 ```bash
-python scripts/train.py --mode suite --suite-opponents idle,scripted,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label baseline-suite
+python scripts/train.py --mode suite --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label baseline-suite
 python scripts/train.py --mode suite --agent-policy idle --suite-opponents idle --suite-maps flat --rounds 1 --reward-preset anti_stall --eval-output-dir evals --eval-label idle-suite
 ```
 
@@ -164,7 +164,7 @@ Suite mode evaluates one checkpoint or built-in agent policy against multiple bu
 ### Rank
 
 ```bash
-python scripts/train.py --mode rank --checkpoint-dir checkpoints --suite-opponents idle,scripted,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-rank
+python scripts/train.py --mode rank --checkpoint-dir checkpoints --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-rank
 python scripts/train.py --mode rank --rank-checkpoints checkpoints/ppo_1M.zip,checkpoints/ppo_final.zip --suite-opponents scripted --suite-maps classic --rounds 20 --rank-head-to-head
 ```
 
@@ -199,7 +199,7 @@ promotion gate exits.
 ### Promotion Audit
 
 ```bash
-python scripts/train.py --mode promotion_audit --checkpoint-dir checkpoints --suite-opponents idle,scripted,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-promotion
+python scripts/train.py --mode promotion_audit --checkpoint-dir checkpoints --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-promotion
 ```
 
 Promotion audit runs the same baseline ranking and rank-gate checks in one
@@ -310,8 +310,8 @@ python scripts/train.py --mode long_run_check \
   --strategy-report-summary evals/run/strategy-report.json \
   --artifact-index-summary evals/run/artifact-index.json \
   --long-run-required-maps classic,flat,split,tower \
-  --long-run-min-eval-episodes 240 \
-  --long-run-min-map-episodes 60 \
+  --long-run-min-eval-episodes 320 \
+  --long-run-min-map-episodes 80 \
   --long-run-min-map-score 0.0 \
   --long-run-require-replay-analysis \
   --long-run-min-replay-combat-maps 4 \
@@ -421,7 +421,7 @@ replay analysis plus a relaxed promotion audit, then writes a strategy report
 and artifact index. It also runs a diagnostic `long_run_check` and records that
 verifier's artifact and exit code without failing the smoke when expected weak
 policy checks fail; unexpected verifier failures still fail the smoke. By
-default it uses the long-run baseline coverage set: `idle,scripted,evasive`
+default it uses the long-run baseline coverage set: `idle,scripted,aggressive,evasive`
 opponents across `classic,flat,split,tower` maps. The relaxed audit allows
 smoke-sized draw, no-damage, and low-engagement outcomes so the command checks
 artifact plumbing rather than policy quality. It is only a wiring check; it

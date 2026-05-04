@@ -52,21 +52,21 @@ python scripts/train.py --mode compare --before evals/baseline.json --after eval
 python scripts/train.py --mode gate --before evals/baseline.json --after evals/anti_stall.json --eval-output-dir evals --eval-label anti-stall-gate
 
 # Run a compact baseline suite
-python scripts/train.py --mode suite --suite-opponents idle,scripted,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label baseline-suite
+python scripts/train.py --mode suite --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label baseline-suite
 python scripts/train.py --mode suite --agent-policy idle --suite-opponents idle --suite-maps flat --rounds 1 --reward-preset anti_stall --eval-output-dir evals --eval-label idle-suite
 
 # Rank checkpoints by baseline-suite score
-python scripts/train.py --mode rank --checkpoint-dir checkpoints --suite-opponents idle,scripted,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-rank
+python scripts/train.py --mode rank --checkpoint-dir checkpoints --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-rank
 python scripts/train.py --mode rank --rank-checkpoints checkpoints/ppo_1M.zip,checkpoints/ppo_final.zip --suite-opponents scripted --suite-maps classic --rounds 20 --rank-head-to-head
 python scripts/train.py --mode rank_gate --rank-summary evals/checkpoint-rank.json --eval-output-dir evals --eval-label checkpoint-rank-gate
-python scripts/train.py --mode promotion_audit --checkpoint-dir checkpoints --suite-opponents idle,scripted,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-promotion
+python scripts/train.py --mode promotion_audit --checkpoint-dir checkpoints --suite-opponents idle,scripted,aggressive,evasive --suite-maps classic,flat --rounds 5 --eval-output-dir evals --eval-label checkpoint-promotion
 python scripts/train.py --mode audit_summary --audit-summary evals/checkpoint-promotion.json
 python scripts/train.py --mode analyze --episode replays/episode_0100.json --eval-output-dir evals --eval-label replay-episode-0100
 python scripts/train.py --mode analyze --replay-dir replays --replay-samples-per-bucket 2 --eval-output-dir evals --eval-label replay-sample
 python scripts/train.py --mode artifact_index --artifact-dir evals --recursive-artifacts --eval-output-dir evals --eval-label artifact-index
 python scripts/train.py --mode strategy_report --artifact-dir evals --recursive-artifacts --eval-output-dir evals --eval-label bad-strategy-report
 python scripts/train.py --mode long_run_manifest --run-id arena-manual-001 --timesteps 5000000 --eval-output-dir evals --eval-label arena-manual-001-plan
-python scripts/train.py --mode long_run_check --promotion-audit-summary evals/promotion.json --strategy-report-summary evals/strategy-report.json --artifact-index-summary evals/artifact-index.json --long-run-required-maps classic,flat,split,tower --long-run-min-eval-episodes 240 --long-run-min-map-score 0.0 --eval-output-dir evals --eval-label long-run-check
+python scripts/train.py --mode long_run_check --promotion-audit-summary evals/promotion.json --strategy-report-summary evals/strategy-report.json --artifact-index-summary evals/artifact-index.json --long-run-required-maps classic,flat,split,tower --long-run-min-eval-episodes 320 --long-run-min-map-score 0.0 --eval-output-dir evals --eval-label long-run-check
 python scripts/train.py --mode long_run_status --artifact-dir evals --eval-output-dir evals --eval-label long-run-status
 python scripts/reward_shaping_smoke.py
 python scripts/train_eval_smoke.py

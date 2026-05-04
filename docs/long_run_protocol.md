@@ -21,7 +21,7 @@ index. It also runs a diagnostic `long_run_check` and reports that verifier's
 artifact, pass/fail result, exit code, and failed checks without making expected
 weak-policy failures abort the smoke. Unexpected verifier failures still fail
 the smoke. Its default suite coverage matches the long-run baseline set:
-`idle,scripted,evasive` opponents across
+`idle,scripted,aggressive,evasive` opponents across
 `classic,flat,split,tower` maps. The relaxed audit allows smoke-sized
 draw/no-damage/low-engagement outcomes so the preflight validates artifact
 plumbing instead of policy quality. Treat any strategy issues and failing smoke
@@ -88,7 +88,7 @@ python scripts/train_eval_smoke.py \
   --output-dir "${EVAL_DIR}-preflight-smoke" \
   --timesteps 128 \
   --rounds 1 \
-  --suite-opponents idle,scripted,evasive \
+  --suite-opponents idle,scripted,aggressive,evasive \
   --suite-maps classic,flat,split,tower
 ```
 
@@ -118,7 +118,7 @@ behavior rather than low-engagement draw farming.
 ```bash
 python scripts/train.py --mode promotion_audit \
   --checkpoint-dir "$CHECKPOINT_DIR" \
-  --suite-opponents idle,scripted,evasive \
+  --suite-opponents idle,scripted,aggressive,evasive \
   --suite-maps classic,flat,split,tower \
   --rounds 20 \
   --rank-head-to-head \
@@ -185,8 +185,8 @@ python scripts/train.py --mode long_run_check \
   --strategy-report-summary "$EVAL_DIR"/*_strategy-report.json \
   --artifact-index-summary "$EVAL_DIR"/*_artifact-index.json \
   --long-run-required-maps classic,flat,split,tower \
-  --long-run-min-eval-episodes 240 \
-  --long-run-min-map-episodes 60 \
+  --long-run-min-eval-episodes 320 \
+  --long-run-min-map-episodes 80 \
   --long-run-min-map-score 0.0 \
   --long-run-require-replay-analysis \
   --long-run-min-replay-combat-maps 4 \
@@ -223,11 +223,11 @@ command line, so rerun artifact indexing if you regenerate either input. Use
 counts the promoted candidate's actual nested baseline-suite matchup summaries
 from the rank artifact instead of trusting `rank_config` or other checkpoints'
 episodes; the command above expects at least
-`20 rounds * 4 maps * 3 opponents = 240` candidate baseline evaluation episodes
+`20 rounds * 4 maps * 4 opponents = 320` candidate baseline evaluation episodes
 before considering any head-to-head evidence. Use
 `--long-run-min-map-episodes` to require enough promoted-candidate baseline
 episodes on every evaluated map; the command above expects
-`20 rounds * 3 opponents = 60` episodes per map.
+`20 rounds * 4 opponents = 80` episodes per map.
 Use `--long-run-min-map-score` to reject candidates whose mean score falls below
 the threshold on any evaluated map.
 When replay analysis is required, use `--long-run-min-replay-combat-maps` to

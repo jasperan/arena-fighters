@@ -18,7 +18,7 @@ def test_default_smoke_suite_matches_long_run_coverage():
 
     assert args.suite_opponents == DEFAULT_SMOKE_SUITE_OPPONENTS
     assert args.suite_maps == DEFAULT_SMOKE_SUITE_MAPS
-    assert args.suite_opponents == "idle,scripted,evasive"
+    assert args.suite_opponents == "idle,scripted,aggressive,evasive"
     assert args.suite_maps == "classic,flat,split,tower"
 
 
@@ -56,7 +56,7 @@ def test_long_run_check_smoke_command_uses_suite_coverage_thresholds(tmp_path):
         tmp_path / "evals" / "promotion.json",
         tmp_path / "evals" / "strategy.json",
         tmp_path / "evals" / "index.json",
-        "idle,scripted,evasive",
+        DEFAULT_SMOKE_SUITE_OPPONENTS,
         "classic,flat,split,tower",
         2,
         tmp_path / "evals",
@@ -66,9 +66,9 @@ def test_long_run_check_smoke_command_uses_suite_coverage_thresholds(tmp_path):
     assert command[command.index("--long-run-min-maps") + 1] == "4"
     assert "--long-run-required-maps" not in command
     assert "--long-run-min-eval-episodes" in command
-    assert command[command.index("--long-run-min-eval-episodes") + 1] == "24"
+    assert command[command.index("--long-run-min-eval-episodes") + 1] == "32"
     assert "--long-run-min-map-episodes" in command
-    assert command[command.index("--long-run-min-map-episodes") + 1] == "6"
+    assert command[command.index("--long-run-min-map-episodes") + 1] == "8"
     assert "--long-run-require-candidate-checkpoint" in command
     assert "--long-run-require-candidate-metadata" in command
 

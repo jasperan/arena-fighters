@@ -3474,7 +3474,7 @@ def build_long_run_manifest(
     eval_root: str | Path = "evals",
     replay_root: str | Path = "replays",
     timesteps: int = 5_000_000,
-    suite_opponents: str = "idle,scripted,evasive",
+    suite_opponents: str = "idle,scripted,aggressive,evasive",
     suite_maps: str = "classic,flat,split,tower",
     rounds: int = 20,
     replay_samples_per_bucket: int = 2,
@@ -4769,7 +4769,7 @@ def main():
             suite_opponents = (
                 parse_builtin_opponents(args.suite_opponents)
                 if args.suite_opponents
-                else ("idle", "scripted", "evasive")
+                else ("idle", "scripted", "aggressive", "evasive")
             )
             suite_maps = (
                 parse_suite_maps(args.suite_maps, cfg)

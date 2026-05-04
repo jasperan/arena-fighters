@@ -91,7 +91,7 @@ Use suite mode when checking broad behavior across opponent archetypes and maps.
 
 ```bash
 python scripts/train.py --mode suite \
-  --suite-opponents idle,scripted,evasive \
+  --suite-opponents idle,scripted,aggressive,evasive \
   --suite-maps classic,flat,split,tower \
   --rounds 5 \
   --seed 123 \
@@ -113,7 +113,7 @@ opponents and maps.
 ```bash
 python scripts/train.py --mode rank \
   --checkpoint-dir checkpoints \
-  --suite-opponents idle,scripted,evasive \
+  --suite-opponents idle,scripted,aggressive,evasive \
   --suite-maps classic,flat,split,tower \
   --rounds 5 \
   --seed 123 \
@@ -170,7 +170,7 @@ returning.
 ```bash
 python scripts/train.py --mode promotion_audit \
   --checkpoint-dir checkpoints \
-  --suite-opponents idle,scripted,evasive \
+  --suite-opponents idle,scripted,aggressive,evasive \
   --suite-maps classic,flat,split,tower \
   --rounds 5 \
   --seed 123 \
@@ -312,7 +312,7 @@ artifacts. It also runs a diagnostic `long_run_check` and reports that
 verifier's artifact, pass/fail result, exit code, and failed checks without
 making expected weak-policy failures abort the smoke. Unexpected verifier
 failures still fail the smoke. By default it exercises the same baseline
-coverage set as the long-run manifest: `idle,scripted,evasive` opponents across
+coverage set as the long-run manifest: `idle,scripted,aggressive,evasive` opponents across
 `classic,flat,split,tower` maps. The relaxed promotion audit allows smoke-sized
 draw, no-damage, and low-engagement outcomes so the command validates artifact
 plumbing instead of policy quality. Treat it as a smoke check only; real policy
