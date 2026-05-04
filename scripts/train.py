@@ -2019,6 +2019,9 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "candidate_strategy_issue_count": signals.get("strategy", {}).get(
                 "candidate_issue_count"
             ),
+            "strategy_skipped_artifact_count": signals.get("strategy", {}).get(
+                "skipped_artifact_count"
+            ),
             "historical_sample_ready": signals.get("opponent_pool", {}).get(
                 "historical_sample_ready"
             ),
@@ -4923,6 +4926,9 @@ def build_league_health_report(
         for issue in strategy_issues
         if str(issue.get("scope", "")).startswith("smoke:")
     ]
+    strategy_skipped_artifacts = strategy.get("skipped_artifacts", [])
+    if not isinstance(strategy_skipped_artifacts, list):
+        strategy_skipped_artifacts = []
     weaknesses = strategy.get("weaknesses", [])
     if not isinstance(weaknesses, list):
         weaknesses = []
@@ -4965,6 +4971,8 @@ def build_league_health_report(
         warnings.append("missing_long_run_status")
     if latest["long_run_check"] is None:
         warnings.append("missing_long_run_check")
+    if strategy_skipped_artifacts:
+        warnings.append("strategy_report_skipped_artifacts")
     if status and (
         status.get("blocked_reason") or status.get("candidate_evidence_ready") is False
     ):
@@ -5038,6 +5046,8 @@ def build_league_health_report(
                 "historical_sampling_issue_count": len(historical_sampling_issues),
                 "replay_issue_count": len(replay_strategy_issues),
                 "smoke_issue_count": len(smoke_strategy_issues),
+                "skipped_artifact_count": len(strategy_skipped_artifacts),
+                "skipped_artifacts": strategy_skipped_artifacts,
                 "issue_metrics": sorted(
                     {
                         issue.get("metric")
