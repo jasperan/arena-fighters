@@ -4,7 +4,7 @@ from pathlib import Path
 import shlex
 import sys
 
-from arena_fighters.config import Config, reward_config_for_preset
+from arena_fighters.config import Config, IDLE, reward_config_for_preset
 from arena_fighters.evaluation import artifact_metadata
 from arena_fighters.self_play import OpponentPool
 from scripts.train import (
@@ -1576,6 +1576,66 @@ def test_build_replay_analysis_batch_selects_combat_samples_per_map(tmp_path):
     }
     assert "combat_map:flat" in selected_for
     assert "combat_map:classic" in selected_for
+
+
+def test_build_replay_analysis_batch_selects_action_collapse_samples(tmp_path):
+    replay_path = tmp_path / "idle_heavy.json"
+    replay_path.write_text(
+        json.dumps(
+            {
+                "episode_id": 5,
+                "winner": "draw",
+                "length": 3,
+                "map_name": "flat",
+                "event_totals": {
+                    "agent_0": {
+                        "shots_fired": 1,
+                        "melee_attempts": 0,
+                        "melee_hits": 0,
+                        "projectile_hits": 1,
+                        "damage_dealt": 10,
+                        "damage_taken": 0,
+                    },
+                    "agent_1": {
+                        "shots_fired": 0,
+                        "melee_attempts": 0,
+                        "melee_hits": 0,
+                        "projectile_hits": 0,
+                        "damage_dealt": 0,
+                        "damage_taken": 10,
+                    },
+                },
+                "frames": [
+                    {"tick": 0, "map_name": "flat"},
+                    {
+                        "tick": 1,
+                        "map_name": "flat",
+                        "actions": {"agent_0": IDLE},
+                    },
+                    {
+                        "tick": 2,
+                        "map_name": "flat",
+                        "actions": {"agent_0": IDLE},
+                    },
+                    {
+                        "tick": 3,
+                        "map_name": "flat",
+                        "actions": {"agent_0": IDLE},
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    batch = build_replay_analysis_batch(tmp_path, samples_per_bucket=1)
+
+    assert batch["bucket_counts"]["idle_agent_0"] == 1
+    assert batch["bucket_counts"]["dominant_action_agent_0"] == 1
+    assert {
+        "idle_agent_0",
+        "dominant_action_agent_0",
+    }.issubset(set(batch["selected"][0]["selected_for"]))
 
 
 def test_run_analyze_replay_dir_saves_selected_artifacts_and_batch(

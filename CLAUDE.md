@@ -169,6 +169,7 @@ All source lives in `src/arena_fighters/`:
 - Dict observation space: `{"grid": Box(6,20,40), "vector": Box(6,)}` with `MultiInputPolicy`
 - Milestone checkpoints auto-saved at 100K, 500K, 1M, 5M, 10M steps into `checkpoints/`
 - Episode frames logged as JSON to `replays/` with top-level map, action, and event metadata for post-hoc analysis
+- Replay directory analysis samples action-collapse buckets for idle-heavy and dominant-action episodes
 
 ## Observation & Action Space
 

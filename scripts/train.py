@@ -755,7 +755,11 @@ REPLAY_SAMPLE_BUCKETS = (
     "combat",
     "no_damage",
     "no_attacks",
+    "idle_agent_0",
+    "dominant_action_agent_0",
 )
+REPLAY_IDLE_BUCKET_THRESHOLD = 0.75
+REPLAY_DOMINANT_ACTION_BUCKET_THRESHOLD = 0.95
 
 
 def replay_analysis_buckets(analysis: dict) -> list[str]:
@@ -778,6 +782,16 @@ def replay_analysis_buckets(analysis: dict) -> list[str]:
             buckets.append(f"combat_map:{map_name}")
     if flags.get("no_attacks") is True:
         buckets.append("no_attacks")
+    behavior = analysis.get("behavior", {})
+    idle_rate = behavior.get("avg_idle_rate", {}).get("agent_0")
+    if idle_rate is not None and idle_rate >= REPLAY_IDLE_BUCKET_THRESHOLD:
+        buckets.append("idle_agent_0")
+    dominant_action_rate = behavior.get("avg_dominant_action_rate", {}).get("agent_0")
+    if (
+        dominant_action_rate is not None
+        and dominant_action_rate >= REPLAY_DOMINANT_ACTION_BUCKET_THRESHOLD
+    ):
+        buckets.append("dominant_action_agent_0")
     return buckets
 
 

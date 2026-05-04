@@ -423,8 +423,9 @@ so replay analysis can compute action counts, action distributions, idle rate,
 and dominant-action rate from real training episodes.
 When `analyze` is run with `--replay-dir` instead of `--episode`, it samples
 representative agent 0 wins, agent 1 wins, draws, combat episodes, per-map
-combat episodes, no-damage episodes, and no-attack episodes, then writes individual
-`replay_analysis` artifacts plus a `replay_analysis_batch` manifest.
+combat episodes, no-damage episodes, no-attack episodes, idle-heavy episodes,
+and dominant-action episodes, then writes individual `replay_analysis` artifacts
+plus a `replay_analysis_batch` manifest.
 
 ### Smoke Suite
 
