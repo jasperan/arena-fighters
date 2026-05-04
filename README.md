@@ -369,8 +369,9 @@ whether any passing check is present, and the next `bash ...` commands when the
 latest preflight or full launcher has not been executed yet and the manifest
 source snapshot still matches the current clean checkout. It also emits a
 machine-readable `missing_evidence` list such as `train_exitcode`,
-`real_training_replay_files`, `checkpoint_historical_opponent_samples`, or
-`latest_run_long_run_check`. The latest manifest summary includes
+`self_play_sampling_preflight_exitcode`, `real_training_replay_files`,
+`checkpoint_historical_opponent_samples`, or `latest_run_long_run_check`.
+The latest manifest summary includes
 `source_safe_to_launch`, `source_stale_reasons`, and a checkpoint opponent-pool
 metadata summary. Checkpoint evidence counts only usable checkpoint artifacts,
 and replay evidence counts valid training replay JSON files, so sidecars or

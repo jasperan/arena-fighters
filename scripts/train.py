@@ -4370,6 +4370,14 @@ def _manifest_status_entry(
         manifest,
     )
     source_control = cfg.get("source_control", {})
+    command_ids = {
+        command.get("id")
+        for command in manifest.get("commands", [])
+        if isinstance(command, dict)
+    }
+    expects_self_play_sampling_preflight = (
+        "self_play_sampling_smoke_preflight" in command_ids
+    )
     source_status = _manifest_source_status(source_control, current_source)
     min_opponent_historical_samples = json_non_negative_int(
         cfg.get("min_opponent_historical_samples")
@@ -4387,6 +4395,12 @@ def _manifest_status_entry(
         "eval_dir": eval_dir,
         "eval_dir_exists": eval_path.exists() if eval_path else False,
         "eval_file_count": _directory_file_count(eval_path),
+        "expects_self_play_sampling_preflight": expects_self_play_sampling_preflight,
+        "self_play_sampling_preflight_exitcode_exists": (
+            (eval_path / "self-play-sampling-preflight.exitcode").exists()
+            if eval_path
+            else False
+        ),
         "preflight_exitcode_exists": (
             (eval_path / "preflight.exitcode").exists() if eval_path else False
         ),
@@ -4458,6 +4472,11 @@ def long_run_missing_evidence(
         missing.append("long_run_launcher")
     if not latest_manifest.get("preflight_launcher_exists"):
         missing.append("long_run_preflight_launcher")
+    if (
+        latest_manifest.get("expects_self_play_sampling_preflight")
+        and not latest_manifest.get("self_play_sampling_preflight_exitcode_exists")
+    ):
+        missing.append("self_play_sampling_preflight_exitcode")
     if not latest_manifest.get("preflight_exitcode_exists"):
         missing.append("preflight_exitcode")
     if not latest_manifest.get("train_exitcode_exists"):

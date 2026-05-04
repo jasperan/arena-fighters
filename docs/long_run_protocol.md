@@ -305,9 +305,10 @@ many verifier artifacts are under that run, whether any latest-run verifier
 passed, and the next preflight/full launcher commands when the latest plan has
 not been executed and the manifest source snapshot still matches the current
 clean checkout. It also emits a `missing_evidence` list for automation and human
-triage, including missing exit-code sidecars, usable checkpoint files, valid
-training replay files, or latest-run verifier artifacts. The latest manifest
-summary also scans checkpoint metadata sidecars for opponent-pool
+triage, including missing self-play sampling preflight exit codes, aggregate
+preflight exit codes, usable checkpoint files, valid training replay files, or
+latest-run verifier artifacts. The latest manifest summary also scans checkpoint
+metadata sidecars for opponent-pool
 historical-sample evidence, and `missing_evidence` includes
 `checkpoint_historical_opponent_samples` when a real-run manifest requires that
 evidence but no checkpoint metadata satisfies it.

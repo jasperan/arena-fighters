@@ -4256,6 +4256,7 @@ def test_build_long_run_status_reports_latest_manifest_execution_state(
     assert status["next_command"] == f"bash {launcher_path}"
     assert status["next_preflight_command"] == f"bash {preflight_launcher_path}"
     assert set(status["missing_evidence"]) >= {
+        "self_play_sampling_preflight_exitcode",
         "preflight_exitcode",
         "train_exitcode",
         "promotion_audit_exitcode",
@@ -4413,6 +4414,7 @@ def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkey
     preflight_dir = Path(manifest["manifest_config"]["preflight_dir"])
     eval_dir.mkdir(parents=True)
     preflight_dir.mkdir(parents=True)
+    (eval_dir / "self-play-sampling-preflight.exitcode").write_text("0\n")
     (eval_dir / "preflight.exitcode").write_text("0\n")
 
     status = build_long_run_status(artifact_dir)
@@ -4420,6 +4422,7 @@ def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkey
     assert status["blocked_reason"] == "latest_preflight_only"
     assert status["next_command"] == f"bash {launcher_path}"
     assert status["next_preflight_command"] is None
+    assert "self_play_sampling_preflight_exitcode" not in status["missing_evidence"]
     assert "preflight_exitcode" not in status["missing_evidence"]
     assert set(status["missing_evidence"]) >= {
         "train_exitcode",
@@ -4432,6 +4435,8 @@ def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkey
     latest = status["latest_manifest"]
     assert latest["eval_dir_exists"] is True
     assert latest["preflight_dir_exists"] is True
+    assert latest["expects_self_play_sampling_preflight"] is True
+    assert latest["self_play_sampling_preflight_exitcode_exists"] is True
     assert latest["preflight_exitcode_exists"] is True
     assert latest["train_exitcode_exists"] is False
     assert latest["checkpoint_file_count"] == 0
