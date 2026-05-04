@@ -2052,26 +2052,45 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
         }
     if artifact_type == "league_health":
         health = data.get("health", {})
+        if not isinstance(health, dict):
+            health = {}
         signals = data.get("signals", {})
+        if not isinstance(signals, dict):
+            signals = {}
+        strategy = signals.get("strategy", {})
+        if not isinstance(strategy, dict):
+            strategy = {}
+        trend = signals.get("strategy_trend", {})
+        if not isinstance(trend, dict):
+            trend = {}
+        trend_deltas = trend.get("deltas", {})
+        if not isinstance(trend_deltas, dict):
+            trend_deltas = {}
         return {
             "ready": health.get("ready"),
             "blockers": health.get("blockers", []),
             "warnings": health.get("warnings", []),
             "candidate_label": signals.get("candidate", {}).get("label"),
-            "strategy_issue_count": signals.get("strategy", {}).get("issue_count"),
-            "candidate_strategy_issue_count": signals.get("strategy", {}).get(
-                "candidate_issue_count"
+            "strategy_issue_count": strategy.get("issue_count"),
+            "candidate_strategy_issue_count": strategy.get("candidate_issue_count"),
+            "strategy_invalid_matchup_metric_count": strategy.get(
+                "invalid_matchup_metric_count"
             ),
-            "strategy_invalid_matchup_metric_count": signals.get(
-                "strategy", {}
-            ).get("invalid_matchup_metric_count"),
-            "candidate_strategy_invalid_matchup_metric_count": signals.get(
-                "strategy", {}
-            ).get("candidate_invalid_matchup_metric_count"),
-            "strategy_invalid_matchup_metrics": signals.get("strategy", {}).get(
+            "candidate_strategy_invalid_matchup_metric_count": strategy.get(
+                "candidate_invalid_matchup_metric_count"
+            ),
+            "strategy_invalid_matchup_metrics": strategy.get(
                 "invalid_matchup_metrics"
             ),
-            "strategy_skipped_artifact_count": signals.get("strategy", {}).get(
+            "strategy_skipped_artifact_count": strategy.get("skipped_artifact_count"),
+            "strategy_trend_available": trend.get("available"),
+            "strategy_trend_regressions": trend.get("regressions", []),
+            "strategy_trend_improvements": trend.get("improvements", []),
+            "strategy_issue_count_delta": trend_deltas.get("issue_count"),
+            "strategy_invalid_matchup_metric_count_delta": trend_deltas.get(
+                "invalid_matchup_metric_count"
+            ),
+            "strategy_skipped_artifact_count_delta": trend_deltas.get(
                 "skipped_artifact_count"
             ),
             "historical_sample_ready": signals.get("opponent_pool", {}).get(
@@ -2088,12 +2107,8 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "long_run_check_passed": signals.get("long_run", {}).get(
                 "latest_check_passed"
             ),
-            "replay_strategy_issue_count": signals.get("strategy", {}).get(
-                "replay_issue_count"
-            ),
-            "smoke_strategy_issue_count": signals.get("strategy", {}).get(
-                "smoke_issue_count"
-            ),
+            "replay_strategy_issue_count": strategy.get("replay_issue_count"),
+            "smoke_strategy_issue_count": strategy.get("smoke_issue_count"),
             "self_play_sampling_passed": signals.get("self_play_sampling", {}).get(
                 "passed"
             ),
@@ -4917,6 +4932,25 @@ def _latest_artifact_entry(
     *,
     scope_dir: str | Path | None = None,
 ) -> dict | None:
+    entries = _artifact_entries(index, artifact_type, scope_dir=scope_dir)
+    if not entries:
+        return None
+    return max(entries, key=_artifact_entry_sort_key)
+
+
+def _artifact_entry_sort_key(entry: dict) -> tuple[float, str]:
+    return (
+        Path(entry["path"]).stat().st_mtime,
+        entry.get("relative_path") or entry["path"],
+    )
+
+
+def _artifact_entries(
+    index: dict,
+    artifact_type: str,
+    *,
+    scope_dir: str | Path | None = None,
+) -> list[dict]:
     entries = [
         entry
         for entry in index.get("artifacts", [])
@@ -4929,15 +4963,27 @@ def _latest_artifact_entry(
             for entry in entries
             if _path_is_relative_to(Path(entry["path"]), scope_path)
         ]
+    return entries
+
+
+def _previous_artifact_entry(
+    index: dict,
+    artifact_type: str,
+    latest_entry: dict | None,
+    *,
+    scope_dir: str | Path | None = None,
+) -> dict | None:
+    entries = _artifact_entries(index, artifact_type, scope_dir=scope_dir)
+    if latest_entry is not None:
+        latest_path = Path(latest_entry["path"]).resolve()
+        entries = [
+            entry
+            for entry in entries
+            if Path(entry["path"]).resolve() != latest_path
+        ]
     if not entries:
         return None
-    return max(
-        entries,
-        key=lambda entry: (
-            Path(entry["path"]).stat().st_mtime,
-            entry.get("relative_path") or entry["path"],
-        ),
-    )
+    return max(entries, key=_artifact_entry_sort_key)
 
 
 def _load_indexed_artifact(entry: dict | None, expected_type: str) -> dict | None:
@@ -5025,6 +5071,65 @@ def _candidate_rank_map_score_signal(rank_top: dict | None) -> dict:
     }
 
 
+STRATEGY_TREND_COUNT_FIELDS = (
+    "issue_count",
+    "candidate_issue_count",
+    "invalid_matchup_metric_count",
+    "candidate_invalid_matchup_metric_count",
+    "skipped_artifact_count",
+    "weakness_count",
+)
+
+
+def _summary_count(summary: dict, key: str) -> int:
+    return json_non_negative_int(summary.get(key)) or 0
+
+
+def _strategy_trend_signal(
+    current_strategy: dict,
+    previous_strategy: dict | None,
+    *,
+    current_entry: dict | None,
+    previous_entry: dict | None,
+) -> dict:
+    current_summary = compact_artifact_summary(current_strategy, "strategy_report")
+    current_counts = {
+        key: _summary_count(current_summary, key)
+        for key in STRATEGY_TREND_COUNT_FIELDS
+    }
+    if previous_strategy is None:
+        return {
+            "available": False,
+            "current_path": current_entry.get("path") if current_entry else None,
+            "previous_path": None,
+            "current": current_counts,
+            "previous": {},
+            "deltas": {},
+            "regressions": [],
+            "improvements": [],
+        }
+
+    previous_summary = compact_artifact_summary(previous_strategy, "strategy_report")
+    previous_counts = {
+        key: _summary_count(previous_summary, key)
+        for key in STRATEGY_TREND_COUNT_FIELDS
+    }
+    deltas = {
+        key: current_counts[key] - previous_counts[key]
+        for key in STRATEGY_TREND_COUNT_FIELDS
+    }
+    return {
+        "available": True,
+        "current_path": current_entry.get("path") if current_entry else None,
+        "previous_path": previous_entry.get("path") if previous_entry else None,
+        "current": current_counts,
+        "previous": previous_counts,
+        "deltas": deltas,
+        "regressions": sorted(key for key, delta in deltas.items() if delta > 0),
+        "improvements": sorted(key for key, delta in deltas.items() if delta < 0),
+    }
+
+
 def build_league_health_report(
     artifact_dir: str | Path,
     *,
@@ -5054,11 +5159,21 @@ def build_league_health_report(
             artifact_type,
             scope_dir=artifact_scope_dir,
         )
+    previous_strategy_entry = _previous_artifact_entry(
+        index,
+        "strategy_report",
+        latest_entries["strategy_report"],
+        scope_dir=artifact_scope_dir,
+    )
     latest = {
         artifact_type: _load_indexed_artifact(entry, artifact_type)
         for artifact_type, entry in latest_entries.items()
     }
     latest["long_run_status"] = status_artifact
+    previous_strategy = _load_indexed_artifact(
+        previous_strategy_entry,
+        "strategy_report",
+    )
 
     strategy = latest["strategy_report"] or {}
     rank = latest["rank"] or {}
@@ -5098,6 +5213,12 @@ def build_league_health_report(
         {weakness.get("map_name") for weakness in weaknesses if weakness.get("map_name")}
     )
     invalid_matchups = _strategy_invalid_matchup_metric_summary(strategy_issues)
+    strategy_trend = _strategy_trend_signal(
+        strategy,
+        previous_strategy,
+        current_entry=latest_entries["strategy_report"],
+        previous_entry=previous_strategy_entry,
+    )
 
     checkpoint_pool = latest_manifest.get("checkpoint_opponent_pool") or {}
     if not isinstance(checkpoint_pool, dict):
@@ -5170,6 +5291,9 @@ def build_league_health_report(
         artifact_type: entry.get("path") if entry else None
         for artifact_type, entry in latest_entries.items()
     }
+    source_artifacts["previous_strategy_report"] = (
+        previous_strategy_entry.get("path") if previous_strategy_entry else None
+    )
     source_artifacts["self_play_sampling_preflight"] = (
         preflight_self_play_sampling.get("path")
     )
@@ -5228,6 +5352,7 @@ def build_league_health_report(
                     }
                 ),
             },
+            "strategy_trend": strategy_trend,
             "map_weaknesses": {
                 "count": strategy.get("weakness_count", len(weaknesses)),
                 "reported_count": len(weaknesses),

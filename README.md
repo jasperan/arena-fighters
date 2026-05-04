@@ -402,9 +402,12 @@ pollute triage. It reports blockers such as blocked long-run status, failed
 promotion audit, candidate or replay strategy issues, failed self-play sampling
 preflights or smokes, missing historical-opponent sampling, or a failed long-run
 check, plus warnings for missing source artifacts or strategy reports that had
-to skip malformed inputs. It also surfaces the top ranked candidate's per-map
-score summary directly from the rank artifact, so weak maps remain visible even
-when the strategy report truncates matchup weaknesses.
+to skip malformed inputs. It also compares the latest strategy report with the
+previous scoped strategy report and surfaces count deltas for issues, candidate
+issues, invalid matchup metrics, skipped artifacts, and weaknesses. It also
+surfaces the top ranked candidate's per-map score summary directly from the rank
+artifact, so weak maps remain visible even when the strategy report truncates
+matchup weaknesses.
 Use it as a triage dashboard before spending time on deeper replay inspection or
 new training runs.
 

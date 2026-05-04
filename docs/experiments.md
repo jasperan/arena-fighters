@@ -467,7 +467,7 @@ promotion-health artifact with `health.blockers`, `health.warnings`, opponent-po
 readiness, self-play sampling smoke status, replay strategy blockers, long-run
 status blockers, strategy-report weakest maps, direct rank-derived per-map score
 signals, malformed candidate map-score checks, skipped malformed strategy-report
-inputs, and head-to-head candidate Elo.
+inputs, previous-strategy count deltas, and head-to-head candidate Elo.
 When the latest status includes an eval directory, those source artifacts are
 scoped to that run so unrelated older artifacts do not make a blocked run look
 healthy.
