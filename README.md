@@ -283,9 +283,10 @@ Long-run manifest mode writes a `long_run_manifest` JSON artifact and executable
 shell launchers without executing training: one full launcher containing the
 train, promotion-audit, sampled-replay, strategy-report, artifact-index, and
 long-run-check command sequence, plus a `.preflight.sh` launcher that runs only
-the tiny train/eval/verifier smoke. The full launcher starts with that same
-preflight before the expensive training step, so environment or verifier
-failures surface before real compute is spent. Add
+the no-training self-play sampling smoke followed by the tiny train/eval/verifier
+smoke. The full launcher starts with that same preflight before the expensive
+training step, so broken historical-opponent sampling, environment failures, or
+verifier failures surface before real compute is spent. Add
 `--replay-save-interval N` when generating a diagnostic launcher that should
 capture training replays more frequently than the default config. Rank-gate and
 strategy-report thresholds passed to the manifest command are pinned into the
@@ -294,6 +295,7 @@ reproducible if defaults change later. The launcher copies itself into the run's
 eval directory as `long-run-launcher.sh` before training starts, and the manifest
 records a compact git source snapshot with commit, branch, dirty flag, and a
 sample of `git status --short`. The launcher captures preflight, training,
+the self-play sampling preflight, train/eval preflight, training,
 promotion-audit, and `long_run_check` exit codes.
 Each generated command writes stdout/stderr to a named `.out` file in the run
 eval directory so the final artifact index keeps lightweight command-log tails.
@@ -302,12 +304,13 @@ exiting with that failing status. If promotion-audit or `long_run_check` fails
 after artifacts were written, it still continues into the diagnostic verifier
 then saves `long_run_status`, `league_health`, and the final artifact index
 before exiting with the verifier status. The captured exit codes are persisted
-as `preflight.exitcode`, `train.exitcode`,
-`promotion-audit.exitcode`, and `long-run-check.exitcode` inside the run's eval
-directory for later inspection. If promotion-audit crashes before writing a
-promotion artifact, the launcher passes a missing-artifact placeholder into
-`long_run_check` so the final verifier records an `input_artifacts_loadable`
-failure instead of stopping at shell artifact resolution.
+as `self-play-sampling-preflight.exitcode`, `preflight.exitcode`,
+`train.exitcode`, `promotion-audit.exitcode`, and `long-run-check.exitcode`
+inside the run's eval directory for later inspection. If promotion-audit crashes
+before writing a promotion artifact, the launcher passes a missing-artifact
+placeholder into `long_run_check` so the final verifier records an
+`input_artifacts_loadable` failure instead of stopping at shell artifact
+resolution.
 Run IDs are restricted to letters, numbers, dots, underscores, and hyphens so
 generated checkpoint, replay, and eval paths stay under their configured roots.
 Diagnostic manifests at `10000` timesteps or below automatically pin

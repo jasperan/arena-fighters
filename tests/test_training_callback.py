@@ -3728,8 +3728,20 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
         "deletes_artifacts": False,
         "contains_expensive_training_command": True,
     }
+    assert "python scripts/self_play_sampling_smoke.py" in manifest[
+        "preflight_shell_script"
+    ]
     assert "python scripts/train_eval_smoke.py" in manifest["preflight_shell_script"]
+    assert manifest["preflight_shell_script"].index(
+        "python scripts/self_play_sampling_smoke.py"
+    ) < manifest["preflight_shell_script"].index("python scripts/train_eval_smoke.py")
     assert "--opponent-pool-seed 123" in manifest["preflight_shell_script"]
+    assert "--pool-seed 123" in manifest["preflight_shell_script"]
+    assert "--map-pool flat,tower" in manifest["preflight_shell_script"]
+    assert "self-play-sampling-summary.json" in manifest["preflight_shell_script"]
+    assert "self-play-sampling-preflight.exitcode" in manifest[
+        "preflight_shell_script"
+    ]
     assert "python scripts/train.py --mode train" not in manifest[
         "preflight_shell_script"
     ]
@@ -3739,6 +3751,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert command_ids == [
         "create_run_dirs",
         "archive_launcher",
+        "self_play_sampling_smoke_preflight",
         "train_eval_smoke_preflight",
         "train",
         "checkpoint_trust_manifest",
@@ -3766,6 +3779,9 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert "PREFLIGHT_EXIT=$?" in manifest["shell_script"]
     assert "preflight.exitcode" in manifest["shell_script"]
     assert "preflight.out" in manifest["shell_script"]
+    assert "SELF_PLAY_SAMPLING_PREFLIGHT_EXIT=$?" in manifest["shell_script"]
+    assert "self-play-sampling-preflight.out" in manifest["shell_script"]
+    assert "self-play-sampling-preflight.exitcode" in manifest["shell_script"]
     assert 'if [ "$PREFLIGHT_EXIT" -ne 0 ]; then' in manifest["shell_script"]
     assert "--eval-label preflight-artifact-index" in manifest["shell_script"]
     assert "preflight-artifact-index.out" in manifest["shell_script"]
@@ -3851,6 +3867,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     )
     assert manifest["manifest_config"]["preflight_timesteps"] == 128
     assert manifest["manifest_config"]["preflight_rounds"] == 1
+    assert manifest["manifest_config"]["self_play_sampling_preflight_min_maps"] == 2
     assert manifest["manifest_config"]["replay_save_interval"] == 5
     assert manifest["manifest_config"]["replay_save_interval_source"] == "user"
     assert manifest["manifest_config"]["opponent_pool_seed"] == 123
@@ -3927,13 +3944,19 @@ def test_build_long_run_manifest_indexes_early_failure_artifacts():
     manifest = build_long_run_manifest(run_id="arena-test", timesteps=1234)
     script = manifest["shell_script"]
 
+    assert (
+        'printf "%s\\n" "$SELF_PLAY_SAMPLING_PREFLIGHT_EXIT" > '
+        '"$EVAL_DIR/self-play-sampling-preflight.exitcode"'
+    ) in script
     assert 'printf "%s\\n" "$PREFLIGHT_EXIT" > "$EVAL_DIR/preflight.exitcode"' in script
     assert 'printf "%s\\n" "$TRAIN_EXIT" > "$EVAL_DIR/train.exitcode"' in script
+    assert 'if [ "$SELF_PLAY_SAMPLING_PREFLIGHT_EXIT" -ne 0 ]; then' in script
     assert 'if [ "$PREFLIGHT_EXIT" -ne 0 ]; then' in script
     assert 'if [ "$TRAIN_EXIT" -ne 0 ]; then' in script
     assert '--artifact-dir "$PREFLIGHT_DIR"' in script
     assert "--eval-label preflight-artifact-index" in script
-    assert script.count("--eval-label final-artifact-index") == 3
+    assert script.count("--eval-label final-artifact-index") == 4
+    assert 'exit "$SELF_PLAY_SAMPLING_PREFLIGHT_EXIT"' in script
     assert 'exit "$PREFLIGHT_EXIT"' in script
     assert 'exit "$TRAIN_EXIT"' in script
 
@@ -3956,6 +3979,7 @@ def test_build_long_run_manifest_redirects_command_logs():
     script = manifest["shell_script"]
 
     for log_name in (
+        "self-play-sampling-preflight.out",
         "preflight.out",
         "train.out",
         "checkpoint-trust-manifest.out",
@@ -4032,7 +4056,13 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     assert saved["preflight_shell_script_path"] == str(preflight_script_path)
     assert script_path.read_text().startswith("#!/usr/bin/env bash")
     assert preflight_script_path.read_text().startswith("#!/usr/bin/env bash")
+    assert "python scripts/self_play_sampling_smoke.py" in (
+        preflight_script_path.read_text()
+    )
     assert "python scripts/train_eval_smoke.py" in preflight_script_path.read_text()
+    assert preflight_script_path.read_text().index(
+        "python scripts/self_play_sampling_smoke.py"
+    ) < preflight_script_path.read_text().index("python scripts/train_eval_smoke.py")
     assert "python scripts/train.py --mode train" not in (
         preflight_script_path.read_text()
     )
@@ -4096,6 +4126,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     )
     assert saved["manifest_config"]["preflight_timesteps"] == 128
     assert saved["manifest_config"]["preflight_rounds"] == 1
+    assert saved["manifest_config"]["self_play_sampling_preflight_min_maps"] == 2
     assert saved["manifest_config"]["replay_save_interval_source"] == "user"
     assert saved["manifest_config"]["rank_gate"]["max_draw_rate"] == 0.8
     assert saved["manifest_config"]["strategy_report"]["max_draw_rate"] == 0.85

@@ -373,9 +373,10 @@ python scripts/train.py --mode long_run_manifest \
   --eval-label arena-manual-001-plan
 ```
 
-The generated launcher embeds the tiny train/eval/verifier smoke preflight
-before the expensive training command. The standalone smoke above is still a
-useful quick check before generating or inspecting a long-run launcher.
+The generated launcher embeds the no-training self-play sampling smoke and then
+the tiny train/eval/verifier smoke before the expensive training command. The
+standalone smoke above is still a useful quick check before generating or
+inspecting a long-run launcher.
 For a no-training check of only the manifest, status, league-health, and
 artifact-index plumbing, run:
 

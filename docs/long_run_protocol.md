@@ -42,12 +42,14 @@ python scripts/train.py --mode long_run_manifest \
 ```
 
 This writes a `long_run_manifest` JSON artifact, an executable full shell
-launcher, and a `.preflight.sh` launcher with only the tiny smoke command. It
-does not run training; inspect the launchers before spending compute. The full
-launcher starts with the same tiny train/eval/verifier smoke preflight in a
-sibling directory next to `$EVAL_DIR` before the expensive training command, so
-a stale environment or broken verifier path fails before real compute is spent
-without contaminating the real run's recursive artifact scans. Add
+launcher, and a `.preflight.sh` launcher with only the no-training self-play
+sampling smoke and tiny train/eval smoke. It does not run training; inspect the
+launchers before spending compute. The full launcher starts with the same
+self-play sampling and tiny train/eval/verifier preflight in a sibling directory
+next to `$EVAL_DIR` before the expensive training command, so broken
+historical-opponent sampling, a stale environment, or broken verifier path fails
+before real compute is spent without contaminating the real run's recursive
+artifact scans. Add
 `--replay-save-interval N` for
 diagnostic runs that should capture training replays more frequently than the
 default config. Add `--opponent-pool-seed N` when generating the manifest to

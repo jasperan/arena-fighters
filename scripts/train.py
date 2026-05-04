@@ -5141,6 +5141,7 @@ def build_long_run_manifest(
     preflight_timesteps = 128
     preflight_rounds = 1
     map_count = len(suite_map_names)
+    self_play_sampling_preflight_min_maps = min(2, map_count)
     opponent_count = len(suite_opponent_names)
     effective_min_eval_episodes = (
         min_eval_episodes
@@ -5272,6 +5273,21 @@ def build_long_run_manifest(
         preflight_parts.append(
             f"  --opponent-pool-seed {_shell_arg(opponent_pool_seed)}"
         )
+    self_play_sampling_preflight_parts = [
+        "python scripts/self_play_sampling_smoke.py \\",
+        '  --output-dir "$PREFLIGHT_DIR/self-play-sampling" \\',
+        '  --summary-output "$PREFLIGHT_DIR/self-play-sampling-summary.json" \\',
+        f"  --map-pool {_shell_arg(suite_maps_csv)} \\",
+        "  --min-historical-samples 1 \\",
+        f"  --min-maps-seen {_shell_arg(self_play_sampling_preflight_min_maps)}",
+    ]
+    if opponent_pool_seed is not None:
+        self_play_sampling_preflight_parts[-1] = (
+            f"{self_play_sampling_preflight_parts[-1]} \\"
+        )
+        self_play_sampling_preflight_parts.append(
+            f"  --pool-seed {_shell_arg(opponent_pool_seed)}"
+        )
     final_artifact_index_parts = [
         "python scripts/train.py --mode artifact_index \\",
         '  --artifact-dir "$EVAL_DIR" \\',
@@ -5353,6 +5369,36 @@ def build_long_run_manifest(
             "fi",
         ]
     )
+    self_play_sampling_preflight_shell = "\n".join(
+        [
+            "set +e",
+            *_with_output_redirect(
+                self_play_sampling_preflight_parts,
+                '"$EVAL_DIR/self-play-sampling-preflight.out"',
+            ),
+            "SELF_PLAY_SAMPLING_PREFLIGHT_EXIT=$?",
+            'printf "%s\\n" "$SELF_PLAY_SAMPLING_PREFLIGHT_EXIT" > "$EVAL_DIR/self-play-sampling-preflight.exitcode"',
+            "set -e",
+            'if [ "$SELF_PLAY_SAMPLING_PREFLIGHT_EXIT" -ne 0 ]; then',
+            '  printf "%s\\n" "$SELF_PLAY_SAMPLING_PREFLIGHT_EXIT" > "$EVAL_DIR/preflight.exitcode"',
+            *(
+                f"  {line}"
+                for line in _with_output_redirect(
+                    preflight_index_parts,
+                    '"$EVAL_DIR/preflight-artifact-index.out"',
+                )
+            ),
+            *(
+                f"  {line}"
+                for line in _with_output_redirect(
+                    final_artifact_index_parts,
+                    '"$EVAL_DIR/final-artifact-index.out"',
+                )
+            ),
+            '  exit "$SELF_PLAY_SAMPLING_PREFLIGHT_EXIT"',
+            "fi",
+        ]
+    )
     train_shell = "\n".join(
         [
             "set +e",
@@ -5385,6 +5431,12 @@ def build_long_run_manifest(
             "description": "Copy this launcher into the run eval directory.",
             "expensive": False,
             "shell": 'cp "$0" "$EVAL_DIR/long-run-launcher.sh"',
+        },
+        {
+            "id": "self_play_sampling_smoke_preflight",
+            "description": "Verify historical opponent sampling before any PPO smoke or real training.",
+            "expensive": False,
+            "shell": self_play_sampling_preflight_shell,
         },
         {
             "id": "train_eval_smoke_preflight",
@@ -5595,6 +5647,7 @@ def build_long_run_manifest(
         [
             *shell_header,
             commands[0]["shell"],
+            self_play_sampling_preflight_shell,
             preflight_shell,
         ]
     )
@@ -5612,6 +5665,9 @@ def build_long_run_manifest(
             ),
             "preflight_timesteps": preflight_timesteps,
             "preflight_rounds": preflight_rounds,
+            "self_play_sampling_preflight_min_maps": (
+                self_play_sampling_preflight_min_maps
+            ),
             "timesteps": timesteps,
             "suite_opponents": suite_opponents_csv,
             "suite_maps": suite_maps_csv,
