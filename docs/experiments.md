@@ -312,7 +312,10 @@ temp directory and prints a compact JSON summary with reward, draw-rate,
 idle-rate, dominant-action, no-damage, low-engagement, and damage-event deltas
 plus strategy issue and indexed artifact counts. Use `--summary-output` when an
 autonomous run should archive the reward-shaping smoke as an indexable
-`reward_shaping_smoke` JSON artifact.
+`reward_shaping_smoke` JSON artifact. Strategy reports scan saved
+`reward_shaping_smoke` summaries and flag regressions when anti-stall idle
+rewards do not decrease, draw rate increases, or the smoke's nested strategy
+report still has issues.
 
 For a short training-to-evaluation wiring check, use:
 

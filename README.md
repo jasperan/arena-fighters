@@ -458,7 +458,10 @@ reward, draw-rate, idle-rate, dominant-action, no-damage, low-engagement, and
 damage-event deltas so reward tuning has an explicit evaluation signal. It
 writes all generated JSON and command output to a timestamped system temp
 directory by default. Use `--summary-output` to save an indexable
-`reward_shaping_smoke` summary artifact.
+`reward_shaping_smoke` summary artifact. Strategy reports scan those saved
+summaries and flag reward-shaping smoke regressions when anti-stall idle rewards
+do not decrease, draw rate increases, or the smoke's nested strategy report
+still reports issues.
 
 ### Long-Run Artifact Smoke
 

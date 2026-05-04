@@ -161,7 +161,7 @@ All source lives in `src/arena_fighters/`:
 - Promotion audit runs rank plus rank gate in one command and saves rank/gate/audit artifacts when `--eval-output-dir` is set; add `--audit-include-nested` to embed full rank/gate JSON in the audit artifact
 - Audit summary reads saved promotion-audit JSON and prints a compact candidate/pass-fail/failure/path summary
 - Artifact index scans saved JSON, `.exitcode`, `.sh`, and `.out` artifacts and emits a lightweight manifest with type counts, compact summaries, command-log tails, and links between related artifacts
-- Strategy report scans saved eval/rank/audit artifacts, flags all-draw, no-damage, low-engagement, idle, or action-spam behavior, and ranks weakest map-opponent matchups
+- Strategy report scans saved eval/rank/audit/smoke artifacts, flags all-draw, no-damage, low-engagement, idle, action-spam, smoke-health, and reward-shaping regression signals, and ranks weakest map-opponent matchups
 - Long-run check validates promotion-audit, strategy-report, and artifact-index artifacts against documented promotion criteria
 - `scripts/reward_shaping_smoke.py` runs deterministic idle-vs-idle reward-shaping eval/compare/suite/report/index artifacts and can save an indexable anti-stall behavior-delta summary
 - `scripts/train_eval_smoke.py` runs tiny train-to-checkpoint-to-suite/promotion/report/index wiring checks in `/tmp`

@@ -175,6 +175,12 @@ def json_non_negative_int(value: object) -> int | None:
     return value if type(value) is int and value >= 0 else None
 
 
+def json_number(value: object) -> float | None:
+    if type(value) in {int, float}:
+        return float(value)
+    return None
+
+
 def checkpoint_metadata(
     cfg: Config,
     num_timesteps: int,
@@ -2310,6 +2316,63 @@ def smoke_suite_strategy_issues(
     return issues
 
 
+def reward_shaping_smoke_strategy_issues(
+    summary: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+) -> list[dict]:
+    issues: list[dict] = []
+    strategy_issue_count = json_non_negative_int(summary.get("strategy_issue_count"))
+    if strategy_issue_count and strategy_issue_count > 0:
+        issues.append(
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": "smoke:reward_shaping",
+                "metric": "reward_smoke_strategy_issue_count",
+                "value": strategy_issue_count,
+                "threshold": 0,
+                "reason": "reward_smoke_strategy_issues_present",
+            }
+        )
+
+    for agent_name in ("agent_0", "agent_1"):
+        metric = f"reward_delta_{agent_name}"
+        reward_delta = json_number(summary.get(metric))
+        if reward_delta is not None and reward_delta >= 0.0:
+            issues.append(
+                {
+                    "path": path,
+                    "relative_path": relative_path,
+                    "artifact_type": artifact_type,
+                    "scope": f"smoke:reward_shaping:{agent_name}",
+                    "metric": metric,
+                    "value": reward_delta,
+                    "threshold": 0.0,
+                    "reason": "anti_stall_idle_reward_not_reduced",
+                }
+            )
+
+    draw_rate_delta = json_number(summary.get("draw_rate_delta"))
+    if draw_rate_delta is not None and draw_rate_delta > 0.0:
+        issues.append(
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": "smoke:reward_shaping",
+                "metric": "draw_rate_delta",
+                "value": draw_rate_delta,
+                "threshold": 0.0,
+                "reason": "anti_stall_draw_rate_increased",
+            }
+        )
+    return issues
+
+
 def strategy_issues_for_artifact(
     data: dict,
     *,
@@ -2375,6 +2438,13 @@ def strategy_issues_for_artifact(
         )
     if artifact_type == "smoke_suite":
         return smoke_suite_strategy_issues(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+        )
+    if artifact_type == "reward_shaping_smoke":
+        return reward_shaping_smoke_strategy_issues(
             data,
             path=path,
             relative_path=relative_path,

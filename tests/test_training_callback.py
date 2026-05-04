@@ -2064,6 +2064,70 @@ def test_build_strategy_report_ignores_healthy_smoke_suite(tmp_path):
     assert report["issues"] == []
 
 
+def test_build_strategy_report_flags_reward_shaping_smoke_failures(tmp_path):
+    reward_smoke = {
+        "artifact": artifact_metadata("reward_shaping_smoke"),
+        "reward_delta_agent_0": 0.0,
+        "reward_delta_agent_1": 1.25,
+        "draw_rate_delta": 0.5,
+        "strategy_issue_count": 3,
+    }
+    (tmp_path / "reward-summary.json").write_text(json.dumps(reward_smoke) + "\n")
+
+    report = build_strategy_report(tmp_path)
+
+    issue_by_metric = {issue["metric"]: issue for issue in report["issues"]}
+    assert report["issue_count"] == 4
+    assert {
+        "artifact_type": "reward_shaping_smoke",
+        "scope": "smoke:reward_shaping",
+        "metric": "reward_smoke_strategy_issue_count",
+        "value": 3,
+        "threshold": 0,
+        "reason": "reward_smoke_strategy_issues_present",
+    }.items() <= issue_by_metric["reward_smoke_strategy_issue_count"].items()
+    assert {
+        "artifact_type": "reward_shaping_smoke",
+        "scope": "smoke:reward_shaping:agent_0",
+        "metric": "reward_delta_agent_0",
+        "value": 0.0,
+        "threshold": 0.0,
+        "reason": "anti_stall_idle_reward_not_reduced",
+    }.items() <= issue_by_metric["reward_delta_agent_0"].items()
+    assert {
+        "artifact_type": "reward_shaping_smoke",
+        "scope": "smoke:reward_shaping:agent_1",
+        "metric": "reward_delta_agent_1",
+        "value": 1.25,
+        "threshold": 0.0,
+        "reason": "anti_stall_idle_reward_not_reduced",
+    }.items() <= issue_by_metric["reward_delta_agent_1"].items()
+    assert {
+        "artifact_type": "reward_shaping_smoke",
+        "scope": "smoke:reward_shaping",
+        "metric": "draw_rate_delta",
+        "value": 0.5,
+        "threshold": 0.0,
+        "reason": "anti_stall_draw_rate_increased",
+    }.items() <= issue_by_metric["draw_rate_delta"].items()
+
+
+def test_build_strategy_report_ignores_healthy_reward_shaping_smoke(tmp_path):
+    reward_smoke = {
+        "artifact": artifact_metadata("reward_shaping_smoke"),
+        "reward_delta_agent_0": -13.5,
+        "reward_delta_agent_1": -13.5,
+        "draw_rate_delta": 0.0,
+        "strategy_issue_count": 0,
+    }
+    (tmp_path / "reward-summary.json").write_text(json.dumps(reward_smoke) + "\n")
+
+    report = build_strategy_report(tmp_path)
+
+    assert report["issue_count"] == 0
+    assert report["issues"] == []
+
+
 def test_build_strategy_report_allows_values_at_max_thresholds(tmp_path):
     eval_summary = _eval_summary(
         "threshold",
