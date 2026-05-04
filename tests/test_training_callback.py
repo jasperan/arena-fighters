@@ -3378,6 +3378,55 @@ def test_build_long_run_check_can_require_minimum_per_map_score():
     ]
 
 
+def test_build_long_run_check_fails_closed_on_invalid_per_map_scores():
+    promotion = _long_run_promotion_audit()
+    promotion["candidate"]["matchup_scores"] = [
+        {"map_name": "classic", "score": 0.5, "episodes": 20},
+        {"map_name": "flat", "score": "nan", "episodes": 20},
+        {"map_name": "split", "episodes": 20},
+    ]
+
+    result = build_long_run_check(
+        promotion,
+        _long_run_strategy_report(),
+        _long_run_artifact_index(),
+        min_maps=2,
+        min_map_score=0.0,
+        require_replay_analysis=True,
+    )
+
+    check = next(
+        check
+        for check in result["checks"]
+        if check["id"] == "candidate_map_scores_valid"
+    )
+
+    assert result["passed"] is False
+    assert check["passed"] is False
+    assert check["details"]["invalid_map_scores"] == [
+        {
+            "map_name": "flat",
+            "matchup_index": 1,
+            "score": "nan",
+            "reason": "invalid_score",
+        },
+        {
+            "map_name": "split",
+            "matchup_index": 2,
+            "score": None,
+            "reason": "missing_score",
+        },
+    ]
+    assert check["details"]["per_map_scores"] == [
+        {
+            "map_name": "classic",
+            "mean_score": 0.5,
+            "matchup_count": 1,
+            "episode_count": 20,
+        }
+    ]
+
+
 def test_build_long_run_check_can_require_candidate_checkpoint(tmp_path):
     promotion = _long_run_promotion_audit()
     checkpoint = tmp_path / "candidate.zip"

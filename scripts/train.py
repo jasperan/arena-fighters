@@ -42,6 +42,7 @@ from arena_fighters.evaluation import (
     load_eval_summary,
     make_builtin_policy,
     rank_baseline_suites,
+    ranking_per_map_score_details,
     score_baseline_suite,
     validate_artifact,
     write_eval_summary,
@@ -3218,27 +3219,8 @@ def checkpoint_metadata_maps(metadata: dict | None) -> list[str]:
 
 
 def candidate_per_map_scores(candidate: dict) -> list[dict]:
-    score_groups: dict[str, list[float]] = {}
-    episode_counts: dict[str, int] = {}
-    for item in candidate.get("matchup_scores", []):
-        map_name = item.get("map_name")
-        if not map_name or "score" not in item:
-            continue
-        score_groups.setdefault(map_name, []).append(float(item["score"]))
-        episode_counts[map_name] = episode_counts.get(map_name, 0) + int(
-            item.get("episodes", 0) or 0
-        )
-
-    return [
-        {
-            "map_name": map_name,
-            "mean_score": sum(scores) / len(scores),
-            "matchup_count": len(scores),
-            "episode_count": episode_counts.get(map_name, 0),
-        }
-        for map_name, scores in sorted(score_groups.items())
-        if scores
-    ]
+    per_map_scores, _ = ranking_per_map_score_details(candidate)
+    return per_map_scores
 
 
 def candidate_strategy_issues_for_check(
@@ -3504,7 +3486,7 @@ def build_long_run_check(
     candidate = promotion_audit.get("candidate") or {}
     candidate_label = candidate.get("label")
     map_names = candidate_map_names(candidate)
-    per_map_scores = candidate_per_map_scores(candidate)
+    per_map_scores, invalid_map_scores = ranking_per_map_score_details(candidate)
     counts = artifact_index.get("artifact_counts", {})
     bad_strategy_issues = candidate_strategy_issues_for_check(
         strategy_report,
@@ -3599,6 +3581,18 @@ def build_long_run_check(
                     "maps": map_names,
                     "required_maps": list(required_maps),
                     "missing_maps": missing_maps,
+                },
+            )
+        )
+
+    if invalid_map_scores:
+        checks.append(
+            check_result(
+                "candidate_map_scores_valid",
+                False,
+                {
+                    "invalid_map_scores": invalid_map_scores,
+                    "per_map_scores": per_map_scores,
                 },
             )
         )

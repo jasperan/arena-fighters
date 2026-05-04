@@ -406,7 +406,9 @@ mismatched run directories. Use
 `--long-run-min-eval-episodes` to reject smoke-sized rank artifacts by counting
 the promoted candidate's actual nested baseline-suite episode summaries, and
 `--long-run-min-map-episodes` to require enough candidate evidence on each map.
-Use `--long-run-min-map-score` to reject candidates that collapse on one map.
+Use `--long-run-min-map-score` to reject candidates that collapse on one map;
+malformed per-map score rows fail the `candidate_map_scores_valid` verifier
+check instead of passing as zero-score evidence.
 When replay analysis is required, `--long-run-min-replay-combat-maps` rejects
 runs whose sampled replay combat evidence only appears on too few required maps.
 Generated long-run manifests default this threshold to the full required-map

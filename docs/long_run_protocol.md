@@ -254,7 +254,10 @@ before considering any head-to-head evidence. Use
 episodes on every evaluated map; the command above expects
 `20 rounds * 4 opponents = 80` episodes per map.
 Use `--long-run-min-map-score` to reject candidates whose mean score falls below
-the threshold on any evaluated map.
+the threshold on any evaluated map. Malformed candidate matchup rows with
+missing, non-numeric, or non-finite map scores fail the
+`candidate_map_scores_valid` verifier check instead of being ignored or treated
+as zero-score evidence.
 When replay analysis is required, use `--long-run-min-replay-combat-maps` to
 reject runs whose sampled combat replay evidence covers too few distinct
 required maps. Generated long-run manifests default this threshold to the full
