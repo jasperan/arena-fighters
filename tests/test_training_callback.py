@@ -2108,11 +2108,19 @@ def test_build_strategy_report_flags_smoke_suite_failures(tmp_path):
             "reward_shaping": {
                 "strategy_issue_count": 15,
                 "indexed_artifact_count": 11,
+                "passed": False,
+                "checks": [
+                    {"id": "reward_delta_agent_0_negative", "passed": False},
+                ],
             },
             "long_run_artifact": {
                 "health_ready": False,
                 "health_blockers": ["long_run_status_blocked"],
                 "health_warnings": ["missing_rank"],
+                "passed": False,
+                "checks": [
+                    {"id": "required_artifacts_indexed", "passed": False},
+                ],
             },
             "train_eval": {
                 "long_run_check_passed": False,
@@ -2134,23 +2142,23 @@ def test_build_strategy_report_flags_smoke_suite_failures(tmp_path):
     assert {
         "artifact_type": "smoke_suite",
         "scope": "smoke:reward_shaping",
-        "metric": "smoke_reward_strategy_issue_count",
-        "value": 15,
+        "metric": "smoke_reward_shaping_failed",
+        "value": 1,
         "threshold": 0,
-        "reason": "smoke_reward_strategy_issues_present",
-    }.items() <= issue_by_metric["smoke_reward_strategy_issue_count"].items()
+        "reason": "smoke_reward_shaping_checks_failed",
+        "failed_checks": ["reward_delta_agent_0_negative"],
+    }.items() <= issue_by_metric["smoke_reward_shaping_failed"].items()
     assert {
         "artifact_type": "smoke_suite",
         "scope": "smoke:long_run_artifact",
-        "metric": "smoke_long_run_artifact_health_blockers",
+        "metric": "smoke_long_run_artifact_failed",
         "value": 1,
         "threshold": 0,
-        "reason": "smoke_long_run_artifact_health_blocked",
+        "reason": "smoke_long_run_artifact_checks_failed",
+        "failed_checks": ["required_artifacts_indexed"],
         "blockers": ["long_run_status_blocked"],
         "warnings": ["missing_rank"],
-    }.items() <= issue_by_metric[
-        "smoke_long_run_artifact_health_blockers"
-    ].items()
+    }.items() <= issue_by_metric["smoke_long_run_artifact_failed"].items()
     assert {
         "artifact_type": "smoke_suite",
         "scope": "smoke:train_eval",
@@ -2176,11 +2184,15 @@ def test_build_strategy_report_ignores_healthy_smoke_suite(tmp_path):
     smoke_suite = {
         "artifact": artifact_metadata("smoke_suite"),
         "smokes": {
-            "reward_shaping": {"strategy_issue_count": 0},
+            "reward_shaping": {
+                "strategy_issue_count": 15,
+                "passed": True,
+            },
             "long_run_artifact": {
-                "health_ready": True,
-                "health_blockers": [],
-                "health_warnings": [],
+                "health_ready": False,
+                "health_blockers": ["long_run_status_blocked"],
+                "health_warnings": ["missing_rank"],
+                "passed": True,
             },
             "train_eval": {
                 "long_run_check_passed": True,
@@ -2206,6 +2218,12 @@ def test_build_strategy_report_flags_reward_shaping_smoke_failures(tmp_path):
         "reward_delta_agent_1": 1.25,
         "draw_rate_delta": 0.5,
         "strategy_issue_count": 3,
+        "passed": False,
+        "checks": [
+            {"id": "reward_delta_agent_0_negative", "passed": False},
+            {"id": "reward_delta_agent_1_negative", "passed": False},
+            {"id": "draw_rate_delta_not_positive", "passed": False},
+        ],
     }
     (tmp_path / "reward-summary.json").write_text(json.dumps(reward_smoke) + "\n")
 
@@ -2216,11 +2234,16 @@ def test_build_strategy_report_flags_reward_shaping_smoke_failures(tmp_path):
     assert {
         "artifact_type": "reward_shaping_smoke",
         "scope": "smoke:reward_shaping",
-        "metric": "reward_smoke_strategy_issue_count",
+        "metric": "reward_shaping_smoke_failed",
         "value": 3,
         "threshold": 0,
-        "reason": "reward_smoke_strategy_issues_present",
-    }.items() <= issue_by_metric["reward_smoke_strategy_issue_count"].items()
+        "reason": "reward_shaping_smoke_checks_failed",
+        "failed_checks": [
+            "reward_delta_agent_0_negative",
+            "reward_delta_agent_1_negative",
+            "draw_rate_delta_not_positive",
+        ],
+    }.items() <= issue_by_metric["reward_shaping_smoke_failed"].items()
     assert {
         "artifact_type": "reward_shaping_smoke",
         "scope": "smoke:reward_shaping:agent_0",
@@ -2253,7 +2276,8 @@ def test_build_strategy_report_ignores_healthy_reward_shaping_smoke(tmp_path):
         "reward_delta_agent_0": -13.5,
         "reward_delta_agent_1": -13.5,
         "draw_rate_delta": 0.0,
-        "strategy_issue_count": 0,
+        "strategy_issue_count": 3,
+        "passed": True,
     }
     (tmp_path / "reward-summary.json").write_text(json.dumps(reward_smoke) + "\n")
 
@@ -2269,6 +2293,10 @@ def test_build_strategy_report_flags_long_run_artifact_smoke_failures(tmp_path):
         "health_ready": False,
         "health_blockers": ["long_run_status_blocked"],
         "health_warnings": ["missing_rank"],
+        "passed": False,
+        "checks": [
+            {"id": "required_artifacts_indexed", "passed": False},
+        ],
     }
     (tmp_path / "artifact-smoke-summary.json").write_text(
         json.dumps(artifact_smoke) + "\n"
@@ -2280,10 +2308,11 @@ def test_build_strategy_report_flags_long_run_artifact_smoke_failures(tmp_path):
     assert {
         "artifact_type": "long_run_artifact_smoke",
         "scope": "smoke:long_run_artifact",
-        "metric": "long_run_artifact_smoke_health_blockers",
+        "metric": "long_run_artifact_smoke_failed",
         "value": 1,
         "threshold": 0,
-        "reason": "long_run_artifact_smoke_health_blocked",
+        "reason": "long_run_artifact_smoke_checks_failed",
+        "failed_checks": ["required_artifacts_indexed"],
         "blockers": ["long_run_status_blocked"],
         "warnings": ["missing_rank"],
     }.items() <= report["issues"][0].items()
@@ -2292,9 +2321,10 @@ def test_build_strategy_report_flags_long_run_artifact_smoke_failures(tmp_path):
 def test_build_strategy_report_ignores_healthy_long_run_artifact_smoke(tmp_path):
     artifact_smoke = {
         "artifact": artifact_metadata("long_run_artifact_smoke"),
-        "health_ready": True,
-        "health_blockers": [],
-        "health_warnings": [],
+        "health_ready": False,
+        "health_blockers": ["long_run_status_blocked"],
+        "health_warnings": ["missing_rank"],
+        "passed": True,
     }
     (tmp_path / "artifact-smoke-summary.json").write_text(
         json.dumps(artifact_smoke) + "\n"

@@ -82,6 +82,40 @@ def test_build_artifact_smoke_summary_reads_expected_artifacts(tmp_path):
             "league_health": 1,
         },
         "indexed_artifact_count": 3,
+        "checks": [
+            {
+                "id": "required_artifacts_indexed",
+                "passed": True,
+                "details": {
+                    "missing_artifact_types": [],
+                    "required_counts": {
+                        "long_run_manifest": 1,
+                        "long_run_status": 1,
+                        "league_health": 1,
+                    },
+                },
+            },
+            {
+                "id": "league_health_scoped_to_eval_dir",
+                "passed": True,
+                "details": {
+                    "expected": str(eval_dir),
+                    "actual": str(eval_dir),
+                },
+            },
+            {
+                "id": "status_blocked_reason_allowed",
+                "passed": True,
+                "details": {
+                    "status_blocked_reason": "latest_launcher_not_executed",
+                    "allowed": [
+                        "latest_launcher_not_executed",
+                        "latest_manifest_source_stale",
+                    ],
+                },
+            },
+        ],
+        "passed": True,
     }
 
 

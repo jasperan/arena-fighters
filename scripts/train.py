@@ -2483,38 +2483,41 @@ def smoke_suite_strategy_issues(
         train_eval = {}
 
     issues: list[dict] = []
-    reward_issue_count = json_non_negative_int(reward.get("strategy_issue_count"))
-    if reward_issue_count and reward_issue_count > 0:
+    reward_failed_checks = failed_smoke_check_ids(reward)
+    if reward.get("passed") is False:
         issues.append(
             {
                 "path": path,
                 "relative_path": relative_path,
                 "artifact_type": artifact_type,
                 "scope": "smoke:reward_shaping",
-                "metric": "smoke_reward_strategy_issue_count",
-                "value": reward_issue_count,
+                "metric": "smoke_reward_shaping_failed",
+                "value": len(reward_failed_checks),
                 "threshold": 0,
-                "reason": "smoke_reward_strategy_issues_present",
+                "reason": "smoke_reward_shaping_checks_failed",
+                "failed_checks": reward_failed_checks,
             }
         )
 
+    long_run_artifact_failed_checks = failed_smoke_check_ids(long_run_artifact)
     health_blockers = long_run_artifact.get("health_blockers", [])
     if not isinstance(health_blockers, list):
         health_blockers = []
     health_warnings = long_run_artifact.get("health_warnings", [])
     if not isinstance(health_warnings, list):
         health_warnings = []
-    if long_run_artifact.get("health_ready") is False and health_blockers:
+    if long_run_artifact.get("passed") is False:
         issues.append(
             {
                 "path": path,
                 "relative_path": relative_path,
                 "artifact_type": artifact_type,
                 "scope": "smoke:long_run_artifact",
-                "metric": "smoke_long_run_artifact_health_blockers",
-                "value": len(health_blockers),
+                "metric": "smoke_long_run_artifact_failed",
+                "value": len(long_run_artifact_failed_checks),
                 "threshold": 0,
-                "reason": "smoke_long_run_artifact_health_blocked",
+                "reason": "smoke_long_run_artifact_checks_failed",
+                "failed_checks": long_run_artifact_failed_checks,
                 "blockers": health_blockers,
                 "warnings": health_warnings,
             }
@@ -2558,6 +2561,17 @@ def smoke_suite_strategy_issues(
     return issues
 
 
+def failed_smoke_check_ids(summary: dict) -> list[str]:
+    checks = summary.get("checks", [])
+    if not isinstance(checks, list):
+        return []
+    return [
+        str(check.get("id"))
+        for check in checks
+        if isinstance(check, dict) and check.get("passed") is False
+    ]
+
+
 def reward_shaping_smoke_strategy_issues(
     summary: dict,
     *,
@@ -2566,18 +2580,19 @@ def reward_shaping_smoke_strategy_issues(
     artifact_type: str,
 ) -> list[dict]:
     issues: list[dict] = []
-    strategy_issue_count = json_non_negative_int(summary.get("strategy_issue_count"))
-    if strategy_issue_count and strategy_issue_count > 0:
+    failed_checks = failed_smoke_check_ids(summary)
+    if summary.get("passed") is False:
         issues.append(
             {
                 "path": path,
                 "relative_path": relative_path,
                 "artifact_type": artifact_type,
                 "scope": "smoke:reward_shaping",
-                "metric": "reward_smoke_strategy_issue_count",
-                "value": strategy_issue_count,
+                "metric": "reward_shaping_smoke_failed",
+                "value": len(failed_checks),
                 "threshold": 0,
-                "reason": "reward_smoke_strategy_issues_present",
+                "reason": "reward_shaping_smoke_checks_failed",
+                "failed_checks": failed_checks,
             }
         )
 
@@ -2628,6 +2643,25 @@ def long_run_artifact_smoke_strategy_issues(
     health_warnings = summary.get("health_warnings", [])
     if not isinstance(health_warnings, list):
         health_warnings = []
+    failed_checks = failed_smoke_check_ids(summary)
+    if summary.get("passed") is True:
+        return []
+    if summary.get("passed") is False:
+        return [
+            {
+                "path": path,
+                "relative_path": relative_path,
+                "artifact_type": artifact_type,
+                "scope": "smoke:long_run_artifact",
+                "metric": "long_run_artifact_smoke_failed",
+                "value": len(failed_checks),
+                "threshold": 0,
+                "reason": "long_run_artifact_smoke_checks_failed",
+                "failed_checks": failed_checks,
+                "blockers": health_blockers,
+                "warnings": health_warnings,
+            }
+        ]
     if summary.get("health_ready") is not False or not health_blockers:
         return []
     return [

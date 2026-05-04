@@ -469,8 +469,9 @@ writes all generated JSON and command output to a timestamped system temp
 directory by default. Use `--summary-output` to save an indexable
 `reward_shaping_smoke` summary artifact. Strategy reports scan those saved
 summaries and flag reward-shaping smoke regressions when anti-stall idle rewards
-do not decrease, draw rate increases, or the smoke's nested strategy report
-still reports issues.
+do not decrease or draw rate increases. The nested strategy issue count is kept
+as diagnostic context, but expected idle/no-training strategy issues do not fail
+the smoke by themselves.
 
 ### Long-Run Artifact Smoke
 
@@ -484,7 +485,9 @@ The long-run artifact smoke does not train or execute a generated launcher. It
 uses the CLI to generate a long-run manifest, save long-run status and league
 health artifacts, recursively index the bundle, and verify the health artifact
 is scoped to the generated run eval directory. Use `--summary-output` to save an
-indexable `long_run_artifact_smoke` summary artifact.
+indexable `long_run_artifact_smoke` summary artifact. Its summary records
+explicit validation checks so expected no-training long-run blockers do not
+become strategy blockers by themselves.
 
 ### Train/Eval Smoke
 

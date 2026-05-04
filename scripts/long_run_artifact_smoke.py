@@ -57,7 +57,7 @@ def build_artifact_smoke_summary(
     status_data = json.loads(status.read_text())
     health_data = json.loads(health.read_text())
     index_data = json.loads(artifact_index.read_text())
-    return {
+    summary = {
         "artifact": artifact_metadata("long_run_artifact_smoke"),
         "output_dir": str(output_dir),
         "artifact_root": str(artifact_root),
@@ -79,9 +79,21 @@ def build_artifact_smoke_summary(
             "artifact_count"
         ),
     }
+    checks = artifact_smoke_checks(summary, eval_dir)
+    summary["checks"] = checks
+    summary["passed"] = all(check["passed"] for check in checks)
+    return summary
 
 
-def validate_artifact_smoke_summary(summary: dict, eval_dir: Path) -> None:
+def _check_result(check_id: str, passed: bool, details: dict) -> dict:
+    return {
+        "id": check_id,
+        "passed": passed,
+        "details": details,
+    }
+
+
+def artifact_smoke_checks(summary: dict, eval_dir: Path) -> list[dict]:
     counts = summary["indexed_artifact_counts"]
     required_counts = {
         "long_run_manifest": 1,
@@ -93,20 +105,64 @@ def validate_artifact_smoke_summary(summary: dict, eval_dir: Path) -> None:
         for artifact_type, minimum in required_counts.items()
         if counts.get(artifact_type, 0) < minimum
     ]
-    if missing:
+    return [
+        _check_result(
+            "required_artifacts_indexed",
+            not missing,
+            {"missing_artifact_types": missing, "required_counts": required_counts},
+        ),
+        _check_result(
+            "league_health_scoped_to_eval_dir",
+            summary["health_artifact_scope_dir"] == str(eval_dir),
+            {
+                "expected": str(eval_dir),
+                "actual": summary["health_artifact_scope_dir"],
+            },
+        ),
+        _check_result(
+            "status_blocked_reason_allowed",
+            summary["status_blocked_reason"] in ALLOWED_NO_TRAINING_BLOCKED_REASONS,
+            {
+                "status_blocked_reason": summary["status_blocked_reason"],
+                "allowed": sorted(ALLOWED_NO_TRAINING_BLOCKED_REASONS),
+            },
+        ),
+    ]
+
+
+def validate_artifact_smoke_summary(summary: dict, eval_dir: Path) -> None:
+    failed_checks = [
+        check for check in artifact_smoke_checks(summary, eval_dir) if not check["passed"]
+    ]
+    if not failed_checks:
+        return
+
+    failed_ids = [check["id"] for check in failed_checks]
+    if "required_artifacts_indexed" in failed_ids:
+        missing = failed_checks[0]["details"].get("missing_artifact_types", [])
         raise RuntimeError(
             "Artifact smoke index is missing required artifact types: "
             + ", ".join(missing)
         )
-    if summary["health_artifact_scope_dir"] != str(eval_dir):
+    if "league_health_scoped_to_eval_dir" in failed_ids:
+        details = next(
+            check["details"]
+            for check in failed_checks
+            if check["id"] == "league_health_scoped_to_eval_dir"
+        )
         raise RuntimeError(
             "League health did not scope artifacts to the generated run eval dir: "
-            f"{summary['health_artifact_scope_dir']!r}"
+            f"{details['actual']!r}"
         )
-    if summary["status_blocked_reason"] not in ALLOWED_NO_TRAINING_BLOCKED_REASONS:
+    if "status_blocked_reason_allowed" in failed_ids:
+        reason = next(
+            check["details"]["status_blocked_reason"]
+            for check in failed_checks
+            if check["id"] == "status_blocked_reason_allowed"
+        )
         raise RuntimeError(
             "Expected no-training status to stop before launcher execution, got "
-            f"{summary['status_blocked_reason']!r}"
+            f"{reason!r}"
         )
 
 

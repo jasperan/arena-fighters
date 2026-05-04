@@ -37,6 +37,52 @@ def latest_artifact(output_dir: Path, label: str) -> Path:
     return matches[-1]
 
 
+def _number(value: object) -> float | None:
+    if type(value) in {int, float}:
+        return float(value)
+    return None
+
+
+def _check_result(check_id: str, passed: bool, details: dict) -> dict:
+    return {
+        "id": check_id,
+        "passed": passed,
+        "details": details,
+    }
+
+
+def reward_smoke_checks(summary: dict) -> list[dict]:
+    checks = []
+    for agent_name in ("agent_0", "agent_1"):
+        metric = f"reward_delta_{agent_name}"
+        reward_delta = _number(summary.get(metric))
+        checks.append(
+            _check_result(
+                f"{metric}_negative",
+                reward_delta is not None and reward_delta < 0.0,
+                {
+                    "metric": metric,
+                    "value": reward_delta,
+                    "threshold": 0.0,
+                },
+            )
+        )
+
+    draw_rate_delta = _number(summary.get("draw_rate_delta"))
+    checks.append(
+        _check_result(
+            "draw_rate_delta_not_positive",
+            draw_rate_delta is not None and draw_rate_delta <= 0.0,
+            {
+                "metric": "draw_rate_delta",
+                "value": draw_rate_delta,
+                "threshold": 0.0,
+            },
+        )
+    )
+    return checks
+
+
 def build_smoke_summary(output_dir: Path) -> dict:
     default_eval = latest_artifact(output_dir, "idle-default")
     anti_eval = latest_artifact(output_dir, "idle-anti-stall")
@@ -50,7 +96,7 @@ def build_smoke_summary(output_dir: Path) -> dict:
         latest_artifact(output_dir, "artifact-index").read_text()
     )
     deltas = comparison["deltas"]
-    return {
+    summary = {
         "artifact": artifact_metadata("reward_shaping_smoke"),
         "output_dir": str(output_dir),
         "default_eval": str(default_eval),
@@ -70,6 +116,10 @@ def build_smoke_summary(output_dir: Path) -> dict:
         "strategy_issue_count": strategy_report["issue_count"],
         "indexed_artifact_count": artifact_index["index_config"]["artifact_count"],
     }
+    checks = reward_smoke_checks(summary)
+    summary["checks"] = checks
+    summary["passed"] = all(check["passed"] for check in checks)
+    return summary
 
 
 def write_smoke_summary(summary: dict, path: str | Path) -> Path:

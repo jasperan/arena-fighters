@@ -318,8 +318,9 @@ plus strategy issue and indexed artifact counts. Use `--summary-output` when an
 autonomous run should archive the reward-shaping smoke as an indexable
 `reward_shaping_smoke` JSON artifact. Strategy reports scan saved
 `reward_shaping_smoke` summaries and flag regressions when anti-stall idle
-rewards do not decrease, draw rate increases, or the smoke's nested strategy
-report still has issues.
+rewards do not decrease or draw rate increases. The nested strategy issue count
+is retained as diagnostic context, but expected idle/no-training strategy issues
+do not fail the smoke by themselves.
 
 For a short training-to-evaluation wiring check, use:
 
@@ -364,7 +365,8 @@ python scripts/long_run_artifact_smoke.py --summary-output /tmp/arena-long-run-a
 
 Use `--summary-output` when an autonomous run should archive the no-training
 manifest/status/health/index smoke as an indexable `long_run_artifact_smoke`
-JSON artifact.
+JSON artifact. The summary records explicit validation checks so expected
+no-training long-run blockers do not become strategy blockers by themselves.
 
 To run the cheap smoke bundle in compute-cost order, use:
 

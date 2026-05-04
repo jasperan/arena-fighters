@@ -47,6 +47,36 @@ def test_build_smoke_summary_reads_expected_artifacts(tmp_path):
         "damage_events_delta_agent_0": 0,
         "strategy_issue_count": 15,
         "indexed_artifact_count": 5,
+        "checks": [
+            {
+                "id": "reward_delta_agent_0_negative",
+                "passed": True,
+                "details": {
+                    "metric": "reward_delta_agent_0",
+                    "value": -13.5,
+                    "threshold": 0.0,
+                },
+            },
+            {
+                "id": "reward_delta_agent_1_negative",
+                "passed": True,
+                "details": {
+                    "metric": "reward_delta_agent_1",
+                    "value": -13.5,
+                    "threshold": 0.0,
+                },
+            },
+            {
+                "id": "draw_rate_delta_not_positive",
+                "passed": True,
+                "details": {
+                    "metric": "draw_rate_delta",
+                    "value": 0.0,
+                    "threshold": 0.0,
+                },
+            },
+        ],
+        "passed": True,
     }
 
 
