@@ -304,12 +304,15 @@ artifact index, use:
 
 ```bash
 python scripts/reward_shaping_smoke.py
+python scripts/reward_shaping_smoke.py --summary-output /tmp/arena-reward-smoke-summary.json
 ```
 
 By default the script writes artifacts and command logs to a timestamped system
 temp directory and prints a compact JSON summary with reward, draw-rate,
 idle-rate, dominant-action, no-damage, low-engagement, and damage-event deltas
-plus strategy issue and indexed artifact counts.
+plus strategy issue and indexed artifact counts. Use `--summary-output` when an
+autonomous run should archive the reward-shaping smoke as an indexable
+`reward_shaping_smoke` JSON artifact.
 
 For a short training-to-evaluation wiring check, use:
 

@@ -16,6 +16,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from arena_fighters.evaluation import artifact_metadata
+
 
 def run_command(cmd: list[str], cwd: Path, stdout_path: Path) -> None:
     with stdout_path.open("w") as stdout:
@@ -49,6 +51,7 @@ def build_smoke_summary(output_dir: Path) -> dict:
     )
     deltas = comparison["deltas"]
     return {
+        "artifact": artifact_metadata("reward_shaping_smoke"),
         "output_dir": str(output_dir),
         "default_eval": str(default_eval),
         "anti_stall_eval": str(anti_eval),
@@ -69,6 +72,13 @@ def build_smoke_summary(output_dir: Path) -> dict:
     }
 
 
+def write_smoke_summary(summary: dict, path: str | Path) -> Path:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    return output_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run deterministic reward-shaping smoke artifacts"
@@ -78,6 +88,12 @@ def main() -> None:
         type=str,
         default=None,
         help="Output directory for artifacts (default: system temp dir)",
+    )
+    parser.add_argument(
+        "--summary-output",
+        type=str,
+        default=None,
+        help="Optional path for saving the reward-shaping smoke summary JSON",
     )
     parser.add_argument(
         "--rounds",
@@ -222,6 +238,9 @@ def main() -> None:
     )
 
     summary = build_smoke_summary(output_dir)
+    if args.summary_output:
+        summary["summary_output"] = str(Path(args.summary_output))
+        write_smoke_summary(summary, args.summary_output)
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 

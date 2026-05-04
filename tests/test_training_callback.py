@@ -1307,6 +1307,46 @@ def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
     }
 
 
+def test_build_artifact_index_summarizes_reward_shaping_smoke_artifacts(tmp_path):
+    reward_summary_path = tmp_path / "reward-summary.json"
+    reward_summary_path.write_text(
+        json.dumps(
+            {
+                "artifact": artifact_metadata("reward_shaping_smoke"),
+                "reward_delta_agent_0": -13.5,
+                "reward_delta_agent_1": -13.5,
+                "draw_rate_delta": 0.0,
+                "idle_rate_delta_agent_0": -0.25,
+                "dominant_action_rate_delta_agent_0": -0.1,
+                "no_damage_episodes_delta": -1,
+                "low_engagement_episodes_delta": -1,
+                "damage_events_delta_agent_0": 2,
+                "strategy_issue_count": 15,
+                "indexed_artifact_count": 11,
+            }
+        )
+        + "\n"
+    )
+
+    index = build_artifact_index(tmp_path)
+
+    assert index["artifact_counts"] == {"reward_shaping_smoke": 1}
+    [entry] = index["artifacts"]
+    assert entry["artifact_type"] == "reward_shaping_smoke"
+    assert entry["summary"] == {
+        "reward_delta_agent_0": -13.5,
+        "reward_delta_agent_1": -13.5,
+        "draw_rate_delta": 0.0,
+        "idle_rate_delta_agent_0": -0.25,
+        "dominant_action_rate_delta_agent_0": -0.1,
+        "no_damage_episodes_delta": -1,
+        "low_engagement_episodes_delta": -1,
+        "damage_events_delta_agent_0": 2,
+        "strategy_issue_count": 15,
+        "indexed_artifact_count": 11,
+    }
+
+
 def test_run_artifact_index_can_save_manifest(tmp_path, capsys):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()

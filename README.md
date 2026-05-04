@@ -448,6 +448,7 @@ the no-training reward-shaping and long-run artifact smokes; add
 ```bash
 python scripts/reward_shaping_smoke.py
 python scripts/reward_shaping_smoke.py --output-dir /tmp/arena-reward-smoke --rounds 1 --map flat
+python scripts/reward_shaping_smoke.py --summary-output /tmp/arena-reward-smoke-summary.json
 ```
 
 The smoke script runs deterministic idle-vs-idle default and anti-stall evals,
@@ -456,7 +457,8 @@ strategy report, and builds an artifact index. Its compact summary includes
 reward, draw-rate, idle-rate, dominant-action, no-damage, low-engagement, and
 damage-event deltas so reward tuning has an explicit evaluation signal. It
 writes all generated JSON and command output to a timestamped system temp
-directory by default.
+directory by default. Use `--summary-output` to save an indexable
+`reward_shaping_smoke` summary artifact.
 
 ### Long-Run Artifact Smoke
 

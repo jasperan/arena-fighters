@@ -1,6 +1,6 @@
 import json
 
-from scripts.reward_shaping_smoke import build_smoke_summary
+from scripts.reward_shaping_smoke import build_smoke_summary, write_smoke_summary
 
 
 def test_build_smoke_summary_reads_expected_artifacts(tmp_path):
@@ -33,6 +33,7 @@ def test_build_smoke_summary_reads_expected_artifacts(tmp_path):
     summary = build_smoke_summary(tmp_path)
 
     assert summary == {
+        "artifact": {"artifact_type": "reward_shaping_smoke", "schema_version": 1},
         "output_dir": str(tmp_path),
         "default_eval": str(tmp_path / "20260504T000000Z_idle-default.json"),
         "anti_stall_eval": str(tmp_path / "20260504T000001Z_idle-anti-stall.json"),
@@ -47,3 +48,16 @@ def test_build_smoke_summary_reads_expected_artifacts(tmp_path):
         "strategy_issue_count": 15,
         "indexed_artifact_count": 5,
     }
+
+
+def test_write_smoke_summary_creates_parent_dirs(tmp_path):
+    summary = {
+        "artifact": {"artifact_type": "reward_shaping_smoke", "schema_version": 1},
+        "reward_delta_agent_0": -1.0,
+    }
+    path = tmp_path / "nested" / "reward-summary.json"
+
+    written = write_smoke_summary(summary, path)
+
+    assert written == path
+    assert json.loads(path.read_text()) == summary

@@ -1718,6 +1718,25 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
                 "replay_issue_count"
             ),
         }
+    if artifact_type == "reward_shaping_smoke":
+        return {
+            "reward_delta_agent_0": data.get("reward_delta_agent_0"),
+            "reward_delta_agent_1": data.get("reward_delta_agent_1"),
+            "draw_rate_delta": data.get("draw_rate_delta"),
+            "idle_rate_delta_agent_0": data.get("idle_rate_delta_agent_0"),
+            "dominant_action_rate_delta_agent_0": data.get(
+                "dominant_action_rate_delta_agent_0"
+            ),
+            "no_damage_episodes_delta": data.get("no_damage_episodes_delta"),
+            "low_engagement_episodes_delta": data.get(
+                "low_engagement_episodes_delta"
+            ),
+            "damage_events_delta_agent_0": data.get(
+                "damage_events_delta_agent_0"
+            ),
+            "strategy_issue_count": data.get("strategy_issue_count"),
+            "indexed_artifact_count": data.get("indexed_artifact_count"),
+        }
     if artifact_type == "smoke_suite":
         smokes = data.get("smokes", {})
         reward = smokes.get("reward_shaping", {})
