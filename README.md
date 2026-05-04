@@ -249,7 +249,8 @@ between artifacts such as compare before/after paths, rank-gate rank summaries,
 promotion-audit rank/gate paths, strategy-report issue counts, and
 long-run-check failed required checks. Rank summaries include the top checkpoint's
 worst map score and invalid map-score count for quick triage. It also indexes
-`.exitcode`, `.sh`, and
+strategy-report skipped artifact counts so malformed analysis inputs are visible.
+It also indexes `.exitcode`, `.sh`, and
 `.out` sidecars from generated long-run launchers with compact summaries. It
 does not copy nested rank or suite JSON into a new shape; it points at the source
 artifacts.
@@ -272,7 +273,9 @@ regressions, or failed smoke health/strategy signals. Tune thresholds with
 `--strategy-max-idle-rate`, and `--strategy-max-dominant-action-rate`. The
 report also ranks the weakest suite/rank map-opponent matchups by score so the
 next curriculum, reward, or training pass can target the most fragile maps.
-Limit that list with `--strategy-max-weaknesses`.
+Limit that list with `--strategy-max-weaknesses`. Malformed but loadable
+artifacts are skipped with a recorded reason instead of aborting the whole
+report.
 
 ### Long-Run Check
 

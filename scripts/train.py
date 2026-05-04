@@ -1866,10 +1866,12 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
     if artifact_type == "strategy_report":
         issues = data.get("issues", [])
         weaknesses = data.get("weaknesses", [])
+        skipped_artifacts = data.get("skipped_artifacts", [])
         return {
             "issue_count": data.get("issue_count", len(issues)),
             "weakness_count": data.get("weakness_count", len(weaknesses)),
             "worst_weakness": weaknesses[0] if weaknesses else None,
+            "skipped_artifact_count": len(skipped_artifacts),
             "candidate_issue_count": len(
                 [
                     issue
@@ -3101,24 +3103,33 @@ def build_strategy_report(
         artifact_type = "unknown"
         if isinstance(artifact, dict):
             artifact_type = artifact.get("artifact_type") or "unknown"
-        scanned += 1
-        issues.extend(
-            strategy_issues_for_artifact(
+        try:
+            artifact_issues = strategy_issues_for_artifact(
                 data,
                 artifact_type=artifact_type,
                 path=str(path),
                 relative_path=relative_path,
                 thresholds=thresholds,
             )
-        )
-        weaknesses.extend(
-            strategy_weaknesses_for_artifact(
+            artifact_weaknesses = strategy_weaknesses_for_artifact(
                 data,
                 artifact_type=artifact_type,
                 path=str(path),
                 relative_path=relative_path,
             )
-        )
+        except Exception as exc:
+            skipped.append(
+                {
+                    "path": str(path),
+                    "relative_path": relative_path,
+                    "artifact_type": artifact_type,
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+        scanned += 1
+        issues.extend(artifact_issues)
+        weaknesses.extend(artifact_weaknesses)
 
     weaknesses.sort(
         key=lambda item: (

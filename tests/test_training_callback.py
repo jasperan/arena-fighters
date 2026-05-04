@@ -1493,6 +1493,7 @@ def test_build_artifact_index_summarizes_artifacts_and_links(tmp_path):
         "issue_count": 2,
         "weakness_count": 0,
         "worst_weakness": None,
+        "skipped_artifact_count": 0,
         "candidate_issue_count": 1,
         "smoke_issue_count": 0,
         "issue_metrics": ["draw_rate", "no_damage_rate"],
@@ -2248,6 +2249,70 @@ def test_build_strategy_report_ranks_low_score_matchup_weaknesses(tmp_path):
             "avg_length": 10.0,
         }
     ]
+
+
+def test_build_strategy_report_skips_malformed_artifacts(tmp_path):
+    healthy_eval = _eval_summary("healthy", win_rate=1.0)
+    malformed_suite = {
+        "artifact": artifact_metadata("suite"),
+        "matchups": {
+            "flat": {
+                "idle": {
+                    "episodes": "not-an-int",
+                    "win_rate_agent_0": 0.0,
+                    "draw_rate": 1.0,
+                }
+            }
+        },
+    }
+    (tmp_path / "healthy-eval.json").write_text(json.dumps(healthy_eval) + "\n")
+    (tmp_path / "malformed-suite.json").write_text(
+        json.dumps(malformed_suite) + "\n"
+    )
+
+    report = build_strategy_report(tmp_path)
+
+    assert report["scanned_artifacts"] == 1
+    assert report["skipped_artifacts"] == [
+        {
+            "path": str(tmp_path / "malformed-suite.json"),
+            "relative_path": "malformed-suite.json",
+            "artifact_type": "suite",
+            "reason": (
+                "ValueError: invalid literal for int() with base 10: 'not-an-int'"
+            ),
+        }
+    ]
+    assert report["weakness_count"] == 0
+
+
+def test_build_artifact_index_summarizes_strategy_report_skips(tmp_path):
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 0,
+        "issues": [],
+        "scanned_artifacts": 1,
+        "skipped_artifacts": [
+            {
+                "path": str(tmp_path / "bad-suite.json"),
+                "relative_path": "bad-suite.json",
+                "artifact_type": "suite",
+                "reason": "ValueError: bad suite metric",
+            }
+        ],
+        "weakness_count": 0,
+        "weaknesses": [],
+    }
+    (tmp_path / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+
+    index = build_artifact_index(tmp_path)
+
+    [strategy_entry] = [
+        entry
+        for entry in index["artifacts"]
+        if entry["artifact_type"] == "strategy_report"
+    ]
+    assert strategy_entry["summary"]["skipped_artifact_count"] == 1
 
 
 def test_build_strategy_report_extracts_rank_matchup_weaknesses(tmp_path):

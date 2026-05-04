@@ -228,6 +228,7 @@ summaries, and links such as compare before/after paths, rank-gate rank
 summaries, promotion-audit rank/gate paths, strategy-report issue counts, and
 long-run-check failed required checks. Rank summaries also include the top
 checkpoint's worst map score and invalid map-score count for quick triage. It
+also records strategy-report skipped artifact counts for malformed inputs. It
 avoids duplicating the full nested JSON in rank and suite artifacts.
 
 ## 11. Detect Bad Strategies
@@ -254,6 +255,8 @@ Tune thresholds with
 `--strategy-max-low-engagement-rate`, `--strategy-max-idle-rate`, and
 `--strategy-max-dominant-action-rate`. It also reports the weakest suite/rank
 map-opponent matchups by score, capped by `--strategy-max-weaknesses`.
+Malformed but loadable artifacts are skipped with a recorded reason so one bad
+file does not hide the rest of the report.
 
 ## 12. Curriculum Planning
 
