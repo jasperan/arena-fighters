@@ -337,6 +337,9 @@ python scripts/train.py --mode long_run_check \
 When replay analysis is required, `long_run_check` also fails if the strategy
 report contains replay-level bad-strategy issues such as no-damage draws,
 no-attack draws, idle-heavy behavior, or dominant-action collapse.
+League-health summaries also block on smoke-scoped strategy issues, which helps
+catch preflight/smoke artifact contamination or failed reward-smoke signals in a
+run directory.
 
 Use long-run status to audit existing plans and run directories without
 launching training:

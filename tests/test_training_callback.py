@@ -4256,6 +4256,47 @@ def test_build_league_health_blocks_on_replay_strategy_issues(tmp_path):
     assert report["signals"]["strategy"]["replay_issue_count"] == 1
 
 
+def test_build_league_health_blocks_on_smoke_strategy_issues(tmp_path):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 1,
+        "issues": [
+            {
+                "scope": "smoke:reward_shaping",
+                "metric": "reward_smoke_strategy_issue_count",
+                "value": 3,
+                "threshold": 0,
+            }
+        ],
+    }
+    long_run_status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "candidate_evidence_ready": True,
+        "latest_manifest": {"run_id": "status-run"},
+    }
+    rank = _rank_summary(label="candidate", score=0.5)
+    promotion = _promotion_audit_summary()
+    long_run_check = {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": True,
+        "candidate": {"label": "candidate", "score": 0.5},
+        "checks": [],
+    }
+    (artifact_dir / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+    (artifact_dir / "status.json").write_text(json.dumps(long_run_status) + "\n")
+    (artifact_dir / "rank.json").write_text(json.dumps(rank) + "\n")
+    (artifact_dir / "promotion.json").write_text(json.dumps(promotion) + "\n")
+    (artifact_dir / "check.json").write_text(json.dumps(long_run_check) + "\n")
+
+    report = build_league_health_report(artifact_dir)
+
+    assert report["health"]["ready"] is False
+    assert "smoke_strategy_issues" in report["health"]["blockers"]
+    assert report["signals"]["strategy"]["smoke_issue_count"] == 1
+
+
 def test_build_league_health_blocks_on_latest_long_run_status(tmp_path):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()

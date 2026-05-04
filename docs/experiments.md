@@ -384,6 +384,9 @@ directory, and artifact indexes summarize those command-log tails.
 After the verifier runs, generated launchers save long-run status and league
 health artifacts before the final artifact index, so each run ends with a compact
 triage bundle even when promotion fails.
+League health blocks on candidate, replay, historical-opponent, and smoke-scoped
+strategy issues, so failed smoke summaries or smoke artifacts mixed into a run
+directory cannot look healthy.
 When a diagnostic manifest uses `--timesteps 10000` or less, the launcher pins
 `--replay-save-interval 1` so replay analysis is covered even in tiny runs.
 To see whether the latest generated plan has actually produced run evidence,

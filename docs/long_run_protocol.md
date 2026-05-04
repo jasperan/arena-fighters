@@ -64,6 +64,9 @@ written. After `long_run_check`, the launcher writes `long_run_status` and
 keeps a compact evidence and blocker summary. Each generated command writes
 stdout/stderr to a named `.out` file in `$EVAL_DIR` so failed runs keep
 command-log tails in the final artifact index.
+League health treats smoke-scoped strategy issues as blockers, which prevents
+preflight or reward-smoke artifacts that were accidentally mixed into a real run
+directory from being ignored in the final triage summary.
 Run IDs are restricted to letters, numbers, dots, underscores, and hyphens so
 generated checkpoint, replay, and eval paths stay under their configured roots.
 For diagnostic manifests with `--timesteps` at or below `10000`, the generated

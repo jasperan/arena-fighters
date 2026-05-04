@@ -4290,6 +4290,11 @@ def build_league_health_report(
         if str(issue.get("scope", "")).startswith("replay:")
         and issue.get("metric") in REPLAY_STRATEGY_METRICS
     ]
+    smoke_strategy_issues = [
+        issue
+        for issue in strategy_issues
+        if str(issue.get("scope", "")).startswith("smoke:")
+    ]
     weaknesses = strategy.get("weaknesses", [])
     if not isinstance(weaknesses, list):
         weaknesses = []
@@ -4335,6 +4340,8 @@ def build_league_health_report(
         blockers.append("candidate_strategy_issues")
     if replay_strategy_issues:
         blockers.append("replay_strategy_issues")
+    if smoke_strategy_issues:
+        blockers.append("smoke_strategy_issues")
     missing_evidence = status.get("missing_evidence", [])
     if not isinstance(missing_evidence, list):
         missing_evidence = []
@@ -4385,6 +4392,7 @@ def build_league_health_report(
                 "candidate_issue_count": len(candidate_issues),
                 "historical_sampling_issue_count": len(historical_sampling_issues),
                 "replay_issue_count": len(replay_strategy_issues),
+                "smoke_issue_count": len(smoke_strategy_issues),
                 "issue_metrics": sorted(
                     {
                         issue.get("metric")
