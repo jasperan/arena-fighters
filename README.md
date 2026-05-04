@@ -250,7 +250,10 @@ all-draw behavior, no-damage episodes/replays, low engagement, high agent 0
 idle rate, or high dominant action rate. Tune thresholds with
 `--strategy-max-draw-rate`,
 `--strategy-max-no-damage-rate`, `--strategy-max-low-engagement-rate`,
-`--strategy-max-idle-rate`, and `--strategy-max-dominant-action-rate`.
+`--strategy-max-idle-rate`, and `--strategy-max-dominant-action-rate`. The
+report also ranks the weakest suite/rank map-opponent matchups by score so the
+next curriculum, reward, or training pass can target the most fragile maps.
+Limit that list with `--strategy-max-weaknesses`.
 
 ### Long-Run Check
 

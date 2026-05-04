@@ -1141,6 +1141,8 @@ def test_build_artifact_index_summarizes_artifacts_and_links(tmp_path):
     )
     assert strategy["summary"] == {
         "issue_count": 2,
+        "weakness_count": 0,
+        "worst_weakness": None,
         "candidate_issue_count": 1,
         "issue_metrics": ["draw_rate", "no_damage_rate"],
         "scanned_artifacts": 4,
@@ -1532,6 +1534,68 @@ def test_build_strategy_report_scans_rank_embedded_suite_behavior(tmp_path):
         and issue["metric"] == "idle_rate_agent_0"
         for issue in report["issues"]
     )
+
+
+def test_build_strategy_report_ranks_low_score_matchup_weaknesses(tmp_path):
+    suite = {
+        "artifact": artifact_metadata("suite"),
+        "matchups": {
+            "flat": {"idle": _eval_summary("weak", win_rate=0.0)},
+            "tower": {"scripted": _eval_summary("strong", win_rate=1.0)},
+        },
+    }
+    (tmp_path / "suite.json").write_text(json.dumps(suite) + "\n")
+
+    report = build_strategy_report(tmp_path, max_weaknesses=1)
+
+    assert report["issue_count"] == 0
+    assert report["weakness_count"] == 2
+    assert report["weaknesses"] == [
+        {
+            "path": str(tmp_path / "suite.json"),
+            "relative_path": "suite.json",
+            "artifact_type": "suite",
+            "scope": "suite:flat/idle",
+            "map_name": "flat",
+            "opponent": "idle",
+            "score": 0.0,
+            "episodes": 4,
+            "win_rate_agent_0": 0.0,
+            "draw_rate": 0.0,
+            "no_damage_rate": 0.0,
+            "low_engagement_rate": 0.0,
+            "avg_length": 10.0,
+        }
+    ]
+
+
+def test_build_strategy_report_extracts_rank_matchup_weaknesses(tmp_path):
+    rank = _rank_summary()
+    rank["rankings"][0]["matchup_scores"] = [
+        {
+            "map_name": "classic",
+            "opponent": "scripted",
+            "score": -0.25,
+            "episodes": 4,
+            "win_rate_agent_0": 0.0,
+            "draw_rate": 0.0,
+            "no_damage_rate": 1.0,
+            "low_engagement_rate": 0.0,
+            "avg_length": 10.0,
+        }
+    ]
+    (tmp_path / "rank.json").write_text(json.dumps(rank) + "\n")
+
+    report = build_strategy_report(tmp_path)
+
+    assert {
+        "artifact_type": "rank",
+        "scope": "rank:candidate:classic/scripted",
+        "label": "candidate",
+        "map_name": "classic",
+        "opponent": "scripted",
+        "score": -0.25,
+    }.items() <= report["weaknesses"][0].items()
 
 
 def test_build_strategy_report_flags_no_damage_replay_analysis(tmp_path):
@@ -2615,6 +2679,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert "--strategy-max-low-engagement-rate 0.45" in manifest["shell_script"]
     assert "--strategy-max-idle-rate 0.7" in manifest["shell_script"]
     assert "--strategy-max-dominant-action-rate 0.9" in manifest["shell_script"]
+    assert "--strategy-max-weaknesses 10" in manifest["shell_script"]
     assert "--long-run-required-maps flat,tower" in manifest["shell_script"]
     assert "--long-run-min-eval-episodes 12" in manifest["shell_script"]
     assert "--long-run-min-map-episodes 6" in manifest["shell_script"]
@@ -2668,6 +2733,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
         "max_low_engagement_rate": 0.45,
         "max_idle_rate": 0.7,
         "max_dominant_action_rate": 0.9,
+        "max_weaknesses": 10,
     }
     source_control = manifest["manifest_config"]["source_control"]
     assert source_control["vcs"] == "git"

@@ -40,6 +40,7 @@ from arena_fighters.evaluation import (
     load_eval_summary,
     make_builtin_policy,
     rank_baseline_suites,
+    score_baseline_suite,
     validate_artifact,
     write_eval_summary,
 )
@@ -1372,8 +1373,11 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
         }
     if artifact_type == "strategy_report":
         issues = data.get("issues", [])
+        weaknesses = data.get("weaknesses", [])
         return {
             "issue_count": data.get("issue_count", len(issues)),
+            "weakness_count": data.get("weakness_count", len(weaknesses)),
+            "worst_weakness": weaknesses[0] if weaknesses else None,
             "candidate_issue_count": len(
                 [
                     issue
@@ -1885,6 +1889,125 @@ def strategy_issues_for_artifact(
     return []
 
 
+def _weakness_from_matchup_score(
+    item: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    scope: str,
+    label: str | None = None,
+) -> dict:
+    weakness = {
+        "path": path,
+        "relative_path": relative_path,
+        "artifact_type": artifact_type,
+        "scope": scope,
+        "map_name": item.get("map_name"),
+        "opponent": item.get("opponent"),
+        "score": float(item.get("score", 0.0)),
+        "episodes": int(item.get("episodes", 0) or 0),
+        "win_rate_agent_0": float(item.get("win_rate_agent_0", 0.0)),
+        "draw_rate": float(item.get("draw_rate", 0.0)),
+        "no_damage_rate": float(item.get("no_damage_rate", 0.0)),
+        "low_engagement_rate": float(item.get("low_engagement_rate", 0.0)),
+        "avg_length": float(item.get("avg_length", 0.0)),
+    }
+    if label is not None:
+        weakness["label"] = label
+    return weakness
+
+
+def _suite_weaknesses(
+    suite: dict,
+    *,
+    path: str,
+    relative_path: str | None,
+    artifact_type: str,
+    scope_prefix: str,
+    label: str | None = None,
+) -> list[dict]:
+    scored = score_baseline_suite(suite)
+    return [
+        _weakness_from_matchup_score(
+            item,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope=f"{scope_prefix}:{item.get('map_name')}/{item.get('opponent')}",
+            label=label,
+        )
+        for item in scored["matchup_scores"]
+    ]
+
+
+def strategy_weaknesses_for_artifact(
+    data: dict,
+    *,
+    artifact_type: str,
+    path: str,
+    relative_path: str | None,
+) -> list[dict]:
+    if artifact_type == "suite":
+        return _suite_weaknesses(
+            data,
+            path=path,
+            relative_path=relative_path,
+            artifact_type=artifact_type,
+            scope_prefix="suite",
+        )
+    if artifact_type == "rank":
+        weaknesses = []
+        for ranking in data.get("rankings", []):
+            label = ranking.get("label")
+            for item in ranking.get("matchup_scores", []):
+                weaknesses.append(
+                    _weakness_from_matchup_score(
+                        item,
+                        path=path,
+                        relative_path=relative_path,
+                        artifact_type=artifact_type,
+                        scope=(
+                            f"rank:{label}:{item.get('map_name')}/"
+                            f"{item.get('opponent')}"
+                        ),
+                        label=label,
+                    )
+                )
+        for entry in data.get("suites", []):
+            label = entry.get("label")
+            suite = entry.get("suite") or {}
+            weaknesses.extend(
+                _suite_weaknesses(
+                    suite,
+                    path=path,
+                    relative_path=relative_path,
+                    artifact_type=artifact_type,
+                    scope_prefix=f"rank_suite:{label}",
+                    label=label,
+                )
+            )
+        return weaknesses
+    if artifact_type in {"rank_gate", "promotion_audit", "audit_summary"}:
+        candidate = data.get("candidate") or {}
+        label = candidate.get("label")
+        return [
+            _weakness_from_matchup_score(
+                item,
+                path=path,
+                relative_path=relative_path,
+                artifact_type=artifact_type,
+                scope=(
+                    f"candidate:{label}:{item.get('map_name')}/"
+                    f"{item.get('opponent')}"
+                ),
+                label=label,
+            )
+            for item in candidate.get("matchup_scores", [])
+        ]
+    return []
+
+
 def build_strategy_report(
     artifact_dir: str | Path,
     recursive: bool = False,
@@ -1893,6 +2016,7 @@ def build_strategy_report(
     max_low_engagement_rate: float = 0.5,
     max_idle_rate: float = 0.75,
     max_dominant_action_rate: float = 0.95,
+    max_weaknesses: int = 10,
 ) -> dict:
     root = Path(artifact_dir)
     thresholds = {
@@ -1905,6 +2029,7 @@ def build_strategy_report(
     pattern = "**/*.json" if recursive else "*.json"
     paths = sorted(path for path in root.glob(pattern) if path.is_file())
     issues = []
+    weaknesses = []
     scanned = 0
     skipped = []
     for path in paths:
@@ -1936,18 +2061,43 @@ def build_strategy_report(
                 thresholds=thresholds,
             )
         )
+        weaknesses.extend(
+            strategy_weaknesses_for_artifact(
+                data,
+                artifact_type=artifact_type,
+                path=str(path),
+                relative_path=relative_path,
+            )
+        )
+
+    weaknesses.sort(
+        key=lambda item: (
+            item["score"],
+            item["win_rate_agent_0"],
+            -item["draw_rate"],
+            -item["no_damage_rate"],
+            -item["low_engagement_rate"],
+            item["scope"],
+        )
+    )
+    weakness_count = len(weaknesses)
+    if max_weaknesses >= 0:
+        weaknesses = weaknesses[:max_weaknesses]
 
     return {
         "artifact": artifact_metadata("strategy_report"),
         "report_config": {
             "artifact_dir": str(root),
             "recursive": recursive,
+            "max_weaknesses": max_weaknesses,
             **thresholds,
         },
         "scanned_artifacts": scanned,
         "skipped_artifacts": skipped,
         "issue_count": len(issues),
         "issues": issues,
+        "weakness_count": weakness_count,
+        "weaknesses": weaknesses,
     }
 
 
@@ -1959,6 +2109,7 @@ def run_strategy_report(
     max_low_engagement_rate: float,
     max_idle_rate: float,
     max_dominant_action_rate: float,
+    max_weaknesses: int = 10,
     output_dir: str | None = None,
     output_label: str | None = None,
 ) -> None:
@@ -1970,6 +2121,7 @@ def run_strategy_report(
         max_low_engagement_rate=max_low_engagement_rate,
         max_idle_rate=max_idle_rate,
         max_dominant_action_rate=max_dominant_action_rate,
+        max_weaknesses=max_weaknesses,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     if output_dir is not None:
@@ -3233,6 +3385,7 @@ def build_long_run_manifest(
     strategy_max_low_engagement_rate: float = 0.5,
     strategy_max_idle_rate: float = 0.75,
     strategy_max_dominant_action_rate: float = 0.95,
+    strategy_max_weaknesses: int = 10,
     require_replay_analysis: bool = True,
     min_maps: int = 2,
     required_maps: tuple[str, ...] | None = None,
@@ -3307,6 +3460,7 @@ def build_long_run_manifest(
         "max_low_engagement_rate": strategy_max_low_engagement_rate,
         "max_idle_rate": strategy_max_idle_rate,
         "max_dominant_action_rate": strategy_max_dominant_action_rate,
+        "max_weaknesses": strategy_max_weaknesses,
     }
 
     checkpoint_dir = Path(checkpoint_root) / run_id
@@ -3620,6 +3774,8 @@ def build_long_run_manifest(
                         f"  --strategy-max-idle-rate {_shell_arg(strategy_max_idle_rate)} \\",
                         "  --strategy-max-dominant-action-rate "
                         f"{_shell_arg(strategy_max_dominant_action_rate)} \\",
+                        "  --strategy-max-weaknesses "
+                        f"{_shell_arg(strategy_max_weaknesses)} \\",
                         '  --eval-output-dir "$EVAL_DIR" \\',
                         "  --eval-label strategy-report",
                     ],
@@ -3768,6 +3924,7 @@ def run_long_run_manifest(
     strategy_max_low_engagement_rate: float = 0.5,
     strategy_max_idle_rate: float = 0.75,
     strategy_max_dominant_action_rate: float = 0.95,
+    strategy_max_weaknesses: int = 10,
     require_replay_analysis: bool,
     min_maps: int,
     required_maps: tuple[str, ...] | None,
@@ -3808,6 +3965,7 @@ def run_long_run_manifest(
         strategy_max_low_engagement_rate=strategy_max_low_engagement_rate,
         strategy_max_idle_rate=strategy_max_idle_rate,
         strategy_max_dominant_action_rate=strategy_max_dominant_action_rate,
+        strategy_max_weaknesses=strategy_max_weaknesses,
         require_replay_analysis=require_replay_analysis,
         min_maps=min_maps,
         required_maps=required_maps,
@@ -4142,6 +4300,15 @@ def main():
         ),
     )
     parser.add_argument(
+        "--strategy-max-weaknesses",
+        type=int,
+        default=10,
+        help=(
+            "Maximum low-score map/opponent weaknesses to include in "
+            "strategy_report output; use -1 for all (default: 10)"
+        ),
+    )
+    parser.add_argument(
         "--rank-min-score",
         type=float,
         default=0.1,
@@ -4441,6 +4608,7 @@ def main():
             max_low_engagement_rate=args.strategy_max_low_engagement_rate,
             max_idle_rate=args.strategy_max_idle_rate,
             max_dominant_action_rate=args.strategy_max_dominant_action_rate,
+            max_weaknesses=args.strategy_max_weaknesses,
             output_dir=args.eval_output_dir,
             output_label=args.eval_label,
         )
@@ -4527,6 +4695,7 @@ def main():
             strategy_max_low_engagement_rate=args.strategy_max_low_engagement_rate,
             strategy_max_idle_rate=args.strategy_max_idle_rate,
             strategy_max_dominant_action_rate=args.strategy_max_dominant_action_rate,
+            strategy_max_weaknesses=args.strategy_max_weaknesses,
             require_replay_analysis=True,
             min_maps=args.long_run_min_maps,
             required_maps=suite_maps,

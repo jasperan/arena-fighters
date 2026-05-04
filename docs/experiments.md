@@ -237,7 +237,8 @@ engagement, high agent 0 idle rate, and high agent 0 dominant-action rate. Tune
 thresholds with
 `--strategy-max-draw-rate`, `--strategy-max-no-damage-rate`,
 `--strategy-max-low-engagement-rate`, `--strategy-max-idle-rate`, and
-`--strategy-max-dominant-action-rate`.
+`--strategy-max-dominant-action-rate`. It also reports the weakest suite/rank
+map-opponent matchups by score, capped by `--strategy-max-weaknesses`.
 
 ## 12. Curriculum Planning
 
