@@ -226,8 +226,9 @@ python scripts/train.py --mode artifact_index \
 The index records artifact type counts, schema metadata, compact per-file
 summaries, and links such as compare before/after paths, rank-gate rank
 summaries, promotion-audit rank/gate paths, strategy-report issue counts, and
-long-run-check failed required checks. It avoids duplicating the full nested JSON
-in rank and suite artifacts.
+long-run-check failed required checks. Rank summaries also include the top
+checkpoint's worst map score and invalid map-score count for quick triage. It
+avoids duplicating the full nested JSON in rank and suite artifacts.
 
 ## 11. Detect Bad Strategies
 

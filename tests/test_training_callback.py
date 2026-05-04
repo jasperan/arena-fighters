@@ -1514,6 +1514,33 @@ def test_build_artifact_index_summarizes_artifacts_and_links(tmp_path):
     }
 
 
+def test_build_artifact_index_summarizes_rank_map_scores(tmp_path):
+    rank = _rank_summary(label="candidate", score=0.5)
+    rank["rankings"][0]["matchup_scores"] = [
+        {"map_name": "classic", "score": 0.5, "episodes": 20},
+        {"map_name": "flat", "score": -0.25, "episodes": 20},
+        {"map_name": "split", "score": "nan", "episodes": 20},
+    ]
+    (tmp_path / "rank.json").write_text(json.dumps(rank) + "\n")
+
+    index = build_artifact_index(tmp_path)
+
+    [rank_entry] = [
+        entry for entry in index["artifacts"] if entry["artifact_type"] == "rank"
+    ]
+    assert rank_entry["summary"] == {
+        "checkpoint_count": 1,
+        "top_label": "candidate",
+        "top_score": 0.5,
+        "top_map_count": 2,
+        "top_worst_map_name": "flat",
+        "top_worst_map_score": -0.25,
+        "top_invalid_map_score_count": 1,
+        "ranking_labels": ["candidate"],
+        "rank_config": {},
+    }
+
+
 def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
     smoke_suite_path = tmp_path / "smoke-suite-summary.json"
     smoke_suite_path.write_text(

@@ -1807,10 +1807,25 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
         }
     if artifact_type == "rank":
         rankings = data.get("rankings", [])
+        top_ranking = rankings[0] if rankings else {}
+        per_map_scores, invalid_map_scores = ranking_per_map_score_details(
+            top_ranking
+        )
+        worst_map = min(
+            per_map_scores,
+            key=lambda item: (item["mean_score"], item["map_name"]),
+            default=None,
+        )
         return {
             "checkpoint_count": len(rankings),
-            "top_label": rankings[0].get("label") if rankings else None,
-            "top_score": rankings[0].get("score") if rankings else None,
+            "top_label": top_ranking.get("label") if top_ranking else None,
+            "top_score": top_ranking.get("score") if top_ranking else None,
+            "top_map_count": len(per_map_scores),
+            "top_worst_map_name": worst_map.get("map_name") if worst_map else None,
+            "top_worst_map_score": (
+                worst_map.get("mean_score") if worst_map else None
+            ),
+            "top_invalid_map_score_count": len(invalid_map_scores),
             "ranking_labels": [row.get("label") for row in rankings],
             "rank_config": data.get("rank_config", {}),
         }

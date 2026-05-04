@@ -247,7 +247,9 @@ Artifact index scans saved JSON artifacts and prints a lightweight manifest with
 artifact type counts, per-file schema metadata, compact summaries, and links
 between artifacts such as compare before/after paths, rank-gate rank summaries,
 promotion-audit rank/gate paths, strategy-report issue counts, and
-long-run-check failed required checks. It also indexes `.exitcode`, `.sh`, and
+long-run-check failed required checks. Rank summaries include the top checkpoint's
+worst map score and invalid map-score count for quick triage. It also indexes
+`.exitcode`, `.sh`, and
 `.out` sidecars from generated long-run launchers with compact summaries. It
 does not copy nested rank or suite JSON into a new shape; it points at the source
 artifacts.
