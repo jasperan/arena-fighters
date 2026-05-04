@@ -3522,6 +3522,9 @@ def build_long_run_check(
         candidate_label=candidate_label,
     )
     replay_strategy_issues = replay_strategy_issues_for_check(strategy_report)
+    strategy_skipped_artifacts = strategy_report.get("skipped_artifacts", [])
+    if not isinstance(strategy_skipped_artifacts, list):
+        strategy_skipped_artifacts = []
     rank_summary = load_rank_for_promotion(promotion_audit)
     eval_episode_counts = rank_evaluation_episode_counts(
         rank_summary,
@@ -3566,6 +3569,14 @@ def build_long_run_check(
             {
                 "issue_count": len(bad_strategy_issues),
                 "issues": bad_strategy_issues,
+            },
+        ),
+        check_result(
+            "strategy_report_analyzed_all_artifacts",
+            not strategy_skipped_artifacts,
+            {
+                "skipped_artifact_count": len(strategy_skipped_artifacts),
+                "skipped_artifacts": strategy_skipped_artifacts,
             },
         ),
         check_result(

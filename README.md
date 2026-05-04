@@ -356,7 +356,9 @@ python scripts/train.py --mode long_run_check \
 
 When replay analysis is required, `long_run_check` also fails if the strategy
 report contains replay-level bad-strategy issues such as no-damage draws,
-no-attack draws, idle-heavy behavior, or dominant-action collapse.
+no-attack draws, idle-heavy behavior, or dominant-action collapse. It also fails
+when the strategy report skipped malformed artifacts, because promotion evidence
+is incomplete if some analysis inputs could not be processed.
 League-health summaries also block on smoke-scoped strategy issues, which helps
 catch preflight/smoke artifact contamination or failed reward-smoke signals in a
 run directory.

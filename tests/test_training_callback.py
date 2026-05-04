@@ -2794,6 +2794,7 @@ def test_build_long_run_check_passes_documented_promotion_criteria():
     assert {check["id"] for check in result["checks"] if check["required"]} == {
         "promotion_audit_passed",
         "no_candidate_bad_strategy_issues",
+        "strategy_report_analyzed_all_artifacts",
         "candidate_map_coverage",
         "artifact_index_has_required_artifacts",
         "replay_analysis_has_combat",
@@ -2843,6 +2844,38 @@ def test_build_long_run_check_fails_replay_strategy_issues_when_required():
     assert check["passed"] is False
     assert check["details"]["issue_count"] == 1
     assert check["details"]["issues"][0]["metric"] == "replay_idle_rate_agent_0"
+
+
+def test_build_long_run_check_fails_when_strategy_report_skipped_artifacts():
+    strategy_report = _long_run_strategy_report()
+    strategy_report["skipped_artifacts"] = [
+        {
+            "path": "evals/malformed-suite.json",
+            "relative_path": "malformed-suite.json",
+            "artifact_type": "suite",
+            "reason": "ValueError: bad suite metric",
+        }
+    ]
+
+    result = build_long_run_check(
+        _long_run_promotion_audit(),
+        strategy_report,
+        _long_run_artifact_index(),
+        min_maps=2,
+        require_replay_analysis=True,
+    )
+
+    check = next(
+        check
+        for check in result["checks"]
+        if check["id"] == "strategy_report_analyzed_all_artifacts"
+    )
+    assert result["passed"] is False
+    assert check["passed"] is False
+    assert check["details"]["skipped_artifact_count"] == 1
+    assert check["details"]["skipped_artifacts"] == strategy_report[
+        "skipped_artifacts"
+    ]
 
 
 def test_build_long_run_check_can_require_replay_combat_map_coverage():

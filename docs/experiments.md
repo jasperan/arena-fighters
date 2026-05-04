@@ -426,6 +426,9 @@ final artifact index before exiting if either early step fails, so failed
 compute attempts still leave a small diagnostic bundle. Missing promotion,
 strategy-report, or artifact-index files are converted into verifier input
 failures rather than shell `ls` failures during artifact resolution.
+`long_run_check` also fails when a strategy report skipped malformed artifacts,
+because promotion evidence is incomplete if some analysis inputs could not be
+processed.
 Generated commands also write stdout/stderr to `.out` files in the run eval
 directory, and artifact indexes summarize those command-log tails.
 After the verifier runs, generated launchers save long-run status and league
