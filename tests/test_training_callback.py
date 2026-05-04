@@ -1294,6 +1294,7 @@ def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
             "reward_shaping": "no_training_eval",
             "long_run_artifact": "no_training_artifact",
         },
+        "summary_paths": {},
         "reward_strategy_issue_count": 15,
         "reward_indexed_artifact_count": 11,
         "reward_idle_rate_delta_agent_0": -0.25,

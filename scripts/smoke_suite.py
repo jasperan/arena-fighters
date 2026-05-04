@@ -52,36 +52,48 @@ def build_smoke_commands(
     train_eval_rounds: int = 1,
 ) -> list[dict]:
     scripts_dir = repo_root / "scripts"
+    reward_output_dir = output_dir / "reward-shaping"
+    long_run_artifact_output_dir = output_dir / "long-run-artifact"
+    reward_summary = reward_output_dir / "reward-summary.json"
+    long_run_artifact_summary = (
+        long_run_artifact_output_dir / "artifact-smoke-summary.json"
+    )
     commands = [
         {
             "id": "reward_shaping",
             "compute_class": "no_training_eval",
-            "output_dir": output_dir / "reward-shaping",
+            "output_dir": reward_output_dir,
             "stdout_path": output_dir / "reward-shaping.out",
+            "summary_output": reward_summary,
             "cmd": [
                 sys.executable,
                 str(scripts_dir / "reward_shaping_smoke.py"),
                 "--output-dir",
-                str(output_dir / "reward-shaping"),
+                str(reward_output_dir),
                 "--rounds",
                 str(reward_rounds),
                 "--map",
                 reward_map,
+                "--summary-output",
+                str(reward_summary),
             ],
         },
         {
             "id": "long_run_artifact",
             "compute_class": "no_training_artifact",
-            "output_dir": output_dir / "long-run-artifact",
+            "output_dir": long_run_artifact_output_dir,
             "stdout_path": output_dir / "long-run-artifact.out",
+            "summary_output": long_run_artifact_summary,
             "run_id": "artifact-smoke",
             "cmd": [
                 sys.executable,
                 str(scripts_dir / "long_run_artifact_smoke.py"),
                 "--output-dir",
-                str(output_dir / "long-run-artifact"),
+                str(long_run_artifact_output_dir),
                 "--run-id",
                 "artifact-smoke",
+                "--summary-output",
+                str(long_run_artifact_summary),
             ],
         },
     ]
@@ -138,6 +150,11 @@ def build_smoke_suite_summary(output_dir: Path, commands: list[dict]) -> dict:
         },
         "stdout_paths": {
             command["id"]: str(command["stdout_path"]) for command in commands
+        },
+        "summary_paths": {
+            command["id"]: str(command["summary_output"])
+            for command in commands
+            if command.get("summary_output")
         },
         "smokes": smokes,
     }

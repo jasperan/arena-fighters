@@ -1777,6 +1777,7 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "smoke_count": data.get("smoke_count"),
             "smoke_order": data.get("smoke_order", []),
             "compute_classes": data.get("compute_classes", {}),
+            "summary_paths": data.get("summary_paths", {}),
             "reward_strategy_issue_count": reward.get("strategy_issue_count"),
             "reward_indexed_artifact_count": reward.get("indexed_artifact_count"),
             "reward_idle_rate_delta_agent_0": reward.get(

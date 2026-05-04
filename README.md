@@ -445,7 +445,9 @@ python scripts/smoke_suite.py --include-train-eval
 
 The smoke suite runs cheap checks in compute-cost order. By default it runs only
 the no-training reward-shaping and long-run artifact smokes; add
-`--include-train-eval` to include the tiny training smoke.
+`--include-train-eval` to include the tiny training smoke. The suite asks
+child smokes to save their own indexable summary artifacts and records those
+paths in the combined summary.
 
 ### Reward Shaping Smoke
 

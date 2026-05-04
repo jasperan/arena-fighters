@@ -11,6 +11,7 @@ from scripts.smoke_suite import (
 
 def test_build_smoke_commands_defaults_to_no_training_smokes(tmp_path):
     commands = build_smoke_commands(Path("/repo"), tmp_path)
+    reward, long_run_artifact = commands
 
     assert [command["id"] for command in commands] == [
         "reward_shaping",
@@ -21,6 +22,24 @@ def test_build_smoke_commands_defaults_to_no_training_smokes(tmp_path):
         "no_training_artifact",
     ]
     assert all(command["id"] != "train_eval" for command in commands)
+    assert reward["summary_output"] == (
+        tmp_path / "reward-shaping" / "reward-summary.json"
+    )
+    assert "--summary-output" in reward["cmd"]
+    assert (
+        reward["cmd"][reward["cmd"].index("--summary-output") + 1]
+        == str(reward["summary_output"])
+    )
+    assert long_run_artifact["summary_output"] == (
+        tmp_path / "long-run-artifact" / "artifact-smoke-summary.json"
+    )
+    assert "--summary-output" in long_run_artifact["cmd"]
+    assert (
+        long_run_artifact["cmd"][
+            long_run_artifact["cmd"].index("--summary-output") + 1
+        ]
+        == str(long_run_artifact["summary_output"])
+    )
 
 
 def test_build_smoke_commands_can_include_tiny_training_smoke(tmp_path):
@@ -110,6 +129,10 @@ def test_build_smoke_suite_summary_reads_no_training_smokes(tmp_path):
     assert summary["compute_classes"] == {
         "reward_shaping": "no_training_eval",
         "long_run_artifact": "no_training_artifact",
+    }
+    assert summary["summary_paths"] == {
+        "reward_shaping": str(reward_dir / "reward-summary.json"),
+        "long_run_artifact": str(artifact_output / "artifact-smoke-summary.json"),
     }
     assert summary["smokes"]["reward_shaping"]["strategy_issue_count"] == 2
     assert (

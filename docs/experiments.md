@@ -374,7 +374,9 @@ python scripts/smoke_suite.py --include-train-eval
 The default smoke suite avoids training; `--include-train-eval` opts into the
 tiny train/eval smoke. Use `--summary-output` when an autonomous run should
 archive the combined smoke result as an indexable `smoke_suite` JSON artifact
-that strategy reports can scan.
+that strategy reports can scan. The suite also tells child no-training smokes to
+write their own indexable summary artifacts and records those paths in
+`summary_paths`.
 
 Manifest generation also writes a `.preflight.sh` launcher so that exact smoke
 can be run safely without entering the expensive training path.
