@@ -21,7 +21,10 @@ checkpoint metadata file exists, eval output records it under
 and SHA-256 digest so verifier runs can catch stale or replaced candidates.
 Only load Stable-Baselines3 checkpoints from local or trusted sources. External
 checkpoint `.zip` files should be treated as executable serialized artifacts and
-verified by provenance and digest before use.
+verified by provenance and digest before use. Checkpoint-loading modes verify
+project metadata before deserialization by default; pass
+`--trusted-checkpoint-manifest` for external allowlisted SHA-256 digests, or
+`--allow-unverified-checkpoints` only for known-local legacy artifacts.
 
 Saved eval, suite, rank, comparison, gate, rank-gate, promotion-audit,
 audit-summary, artifact-index, strategy-report, long-run-check, and

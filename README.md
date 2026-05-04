@@ -136,8 +136,10 @@ JSON include an `artifact` block with `artifact_type` and `schema_version`.
 
 Only load Stable-Baselines3 checkpoints that were produced locally or obtained
 from trusted sources. Checkpoints are serialized model artifacts, not inert data;
-verify external checkpoint provenance and digests before using `--checkpoint`,
-`--checkpoint-dir`, or `--rank-checkpoints`.
+checkpoint loading now verifies project checkpoint metadata before
+deserialization when no explicit trust manifest is supplied. For external
+checkpoints, pass `--trusted-checkpoint-manifest` with expected SHA-256 digests;
+use `--allow-unverified-checkpoints` only for known-local legacy artifacts.
 
 ### Compare
 

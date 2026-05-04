@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import hmac
 import json
 import re
 import shutil
@@ -52,7 +53,8 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 
 _SECRET_NAME_PATTERN = (
-    r"[A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|pwd)"
+    r"[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret|token|"
+    r"password|passwd|pwd|private[_-]?key|database[_-]?url|db[_-]?url)"
     r"[A-Za-z0-9_.-]*"
 )
 _SECRET_VALUE_PATTERN = r'"[^"]*"|\'[^\']*\'|[^\s]+'
@@ -60,6 +62,17 @@ _SECRET_ASSIGNMENT_RE = re.compile(
     rf"(?i)\b({_SECRET_NAME_PATTERN})(\s*[:=]\s*)({_SECRET_VALUE_PATTERN})"
 )
 _BEARER_TOKEN_RE = re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)[^\s]+")
+_BASIC_AUTH_TOKEN_RE = re.compile(
+    r"(?i)\b(authorization\s*[:=]\s*basic\s+)[^\s]+"
+)
+_HEADER_SECRET_RE = re.compile(
+    r"(?i)\b((?:proxy-authorization|cookie|set-cookie|x-api-key)\s*[:=]\s*)[^\s]+"
+)
+_URL_CREDENTIAL_RE = re.compile(r"://([^:/\s]+):([^@\s]+)@")
+_PRIVATE_KEY_LINE_RE = re.compile(r"(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+_PRIVATE_KEY_ASSIGNMENT_RE = re.compile(
+    rf"(?i)\b({_SECRET_NAME_PATTERN})(\s*[:=]\s*).*(PRIVATE KEY).*$"
+)
 _SECRET_ARG_RE = re.compile(
     rf"(?i)(--{_SECRET_NAME_PATTERN}(?:=|\s+))({_SECRET_VALUE_PATTERN})"
 )
@@ -67,6 +80,7 @@ _JSON_SECRET_RE = re.compile(
     rf'(?i)("({_SECRET_NAME_PATTERN})"\s*:\s*")[^"]+(")'
 )
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 REPLAY_STRATEGY_METRICS = {
     "replay_no_damage",
     "replay_low_engagement",
@@ -216,9 +230,9 @@ def write_checkpoint_metadata(
     return metadata_path
 
 
-def read_checkpoint_metadata(path: str | Path | None) -> dict | None:
+def checkpoint_metadata_paths(path: str | Path | None) -> tuple[Path, ...]:
     if path is None:
-        return None
+        return ()
 
     checkpoint_path = Path(path)
     candidates = [Path(f"{checkpoint_path}.meta.json")]
@@ -227,14 +241,28 @@ def read_checkpoint_metadata(path: str | Path | None) -> dict | None:
     else:
         candidates.append(Path(f"{checkpoint_path}.zip.meta.json"))
 
-    seen = set()
+    seen: set[Path] = set()
+    unique_candidates = []
     for metadata_path in candidates:
         if metadata_path in seen:
             continue
         seen.add(metadata_path)
+        unique_candidates.append(metadata_path)
+    return tuple(unique_candidates)
+
+
+def checkpoint_metadata_path(path: str | Path | None) -> Path | None:
+    for metadata_path in checkpoint_metadata_paths(path):
         if metadata_path.exists():
-            return json.loads(metadata_path.read_text())
+            return metadata_path
     return None
+
+
+def read_checkpoint_metadata(path: str | Path | None) -> dict | None:
+    metadata_path = checkpoint_metadata_path(path)
+    if metadata_path is None:
+        return None
+    return json.loads(metadata_path.read_text())
 
 
 def checkpoint_metadata_integrity(
@@ -282,15 +310,158 @@ def checkpoint_metadata_integrity(
     return {**details, "passed": False, "reason": reason}
 
 
-def load_trusted_ppo_checkpoint(path: str | Path):
+def _normalize_sha256(value: object, *, source: str) -> str:
+    if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
+        raise ValueError(f"Invalid SHA-256 digest in {source}")
+    return value.lower()
+
+
+def load_checkpoint_trust_manifest(path: str | Path) -> dict[str, str]:
+    """Load checkpoint SHA-256 allowlist entries from a trusted JSON file.
+
+    Accepted shapes:
+    - {"checkpoints": {"checkpoints/ppo_final.zip": "<sha256>"}}
+    - {"checkpoints": [{"path": "checkpoints/ppo_final.zip", "sha256": "<sha256>"}]}
+    - {"checkpoints/ppo_final.zip": "<sha256>"}
+    """
+    manifest_path = Path(path)
+    data = json.loads(manifest_path.read_text())
+    raw_entries = data.get("checkpoints", data) if isinstance(data, dict) else data
+    trusted: dict[str, str] = {}
+
+    if isinstance(raw_entries, dict):
+        for checkpoint_key, entry in raw_entries.items():
+            sha256 = entry.get("sha256") if isinstance(entry, dict) else entry
+            trusted[str(checkpoint_key)] = _normalize_sha256(
+                sha256,
+                source=f"{manifest_path}:{checkpoint_key}",
+            )
+    elif isinstance(raw_entries, list):
+        for idx, entry in enumerate(raw_entries):
+            if not isinstance(entry, dict) or "path" not in entry:
+                raise ValueError(
+                    f"Invalid checkpoint trust manifest entry at index {idx}"
+                )
+            trusted[str(entry["path"])] = _normalize_sha256(
+                entry.get("sha256"),
+                source=f"{manifest_path}:checkpoints[{idx}]",
+            )
+    else:
+        raise ValueError("Checkpoint trust manifest must be a mapping or list")
+
+    if not trusted:
+        raise ValueError("Checkpoint trust manifest must include at least one entry")
+    return trusted
+
+
+def _checkpoint_trust_manifest_keys(path: str | Path) -> tuple[str, ...]:
+    raw_path = Path(path)
+    checkpoint_path = checkpoint_file_path(raw_path)
+    keys = [
+        str(raw_path),
+        str(checkpoint_path),
+        checkpoint_path.name,
+    ]
+    try:
+        keys.append(str(checkpoint_path.resolve()))
+    except OSError:
+        pass
+    if checkpoint_path.suffix == ".zip":
+        keys.append(checkpoint_path.with_suffix("").name)
+    return tuple(dict.fromkeys(keys))
+
+
+def expected_checkpoint_sha256(
+    path: str | Path,
+    trusted_checkpoint_manifest: dict[str, str] | None,
+) -> str | None:
+    if trusted_checkpoint_manifest is None:
+        return None
+    for key in _checkpoint_trust_manifest_keys(path):
+        expected = trusted_checkpoint_manifest.get(key)
+        if expected is not None:
+            return expected
+    return None
+
+
+def verify_checkpoint_trust(
+    path: str | Path,
+    *,
+    trusted_checkpoint_manifest: dict[str, str] | None = None,
+    allow_unverified: bool = False,
+) -> dict:
+    checkpoint_path = checkpoint_file_path(path)
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+
+    expected = expected_checkpoint_sha256(checkpoint_path, trusted_checkpoint_manifest)
+    if expected is not None:
+        expected = _normalize_sha256(expected, source="trusted_checkpoint_manifest")
+        actual = checkpoint_file_sha256(checkpoint_path)
+        if not hmac.compare_digest(actual, expected):
+            raise ValueError(
+                "Checkpoint SHA-256 mismatch for "
+                f"{checkpoint_path}: expected {expected}, got {actual}"
+            )
+        return {
+            "path": str(checkpoint_path),
+            "verified": True,
+            "verification_source": "trusted_manifest",
+            "sha256": actual,
+        }
+
+    if trusted_checkpoint_manifest is not None:
+        raise ValueError(f"Checkpoint is not listed in trust manifest: {checkpoint_path}")
+
+    metadata = read_checkpoint_metadata(checkpoint_path)
+    integrity = checkpoint_metadata_integrity(checkpoint_path, metadata)
+    if integrity["passed"]:
+        metadata_path = checkpoint_metadata_path(checkpoint_path)
+        return {
+            "path": str(checkpoint_path),
+            "verified": True,
+            "verification_source": "checkpoint_metadata",
+            "sha256": integrity["actual_sha256"],
+            "metadata_path": str(metadata_path) if metadata_path else None,
+        }
+
+    if allow_unverified:
+        return {
+            "path": str(checkpoint_path),
+            "verified": False,
+            "verification_source": "explicit_unverified_override",
+            "reason": integrity.get("reason"),
+        }
+
+    raise ValueError(
+        "Refusing to load checkpoint before trust verification. "
+        "Provide --trusted-checkpoint-manifest with an expected SHA-256, use a "
+        "checkpoint produced with project metadata, or pass "
+        "--allow-unverified-checkpoints only for known-local legacy checkpoints. "
+        f"Verification failure: {integrity.get('reason')}"
+    )
+
+
+def load_trusted_ppo_checkpoint(
+    path: str | Path,
+    *,
+    trusted_checkpoint_manifest: dict[str, str] | None = None,
+    allow_unverified: bool = False,
+):
     """Load a trusted SB3 checkpoint.
 
     Stable-Baselines3 checkpoints may deserialize cloudpickle payloads, so callers
-    must only pass checkpoints produced locally or obtained from trusted sources.
+    must verify provenance before loading checkpoints from outside this project.
     """
     from stable_baselines3 import PPO
 
-    return PPO.load(str(path))
+    checkpoint_path = checkpoint_file_path(path)
+    verify_checkpoint_trust(
+        checkpoint_path,
+        trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+        allow_unverified=allow_unverified,
+    )
+    return PPO.load(str(checkpoint_path))
 
 
 def discover_checkpoints(checkpoint_dir: str | Path) -> tuple[str, ...]:
@@ -568,7 +739,14 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
     print(f"Training complete. Final model saved to {final_path}")
 
 
-def run_watch(cfg: Config, checkpoint: str | None, num_rounds: int = 0) -> None:
+def run_watch(
+    cfg: Config,
+    checkpoint: str | None,
+    num_rounds: int = 0,
+    *,
+    trusted_checkpoint_manifest: dict[str, str] | None = None,
+    allow_unverified_checkpoints: bool = False,
+) -> None:
     """Load a checkpoint and play games in ASCII with score tracking.
 
     Args:
@@ -578,7 +756,11 @@ def run_watch(cfg: Config, checkpoint: str | None, num_rounds: int = 0) -> None:
 
     model = None
     if checkpoint and Path(checkpoint).exists():
-        model = load_trusted_ppo_checkpoint(checkpoint)
+        model = load_trusted_ppo_checkpoint(
+            checkpoint,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified=allow_unverified_checkpoints,
+        )
 
     score = [0, 0]  # [agent_0 wins, agent_1 wins]
     draws = 0
@@ -927,6 +1109,8 @@ def run_eval(
     output_dir: str | None,
     output_label: str | None,
     agent_policy: str = "random",
+    trusted_checkpoint_manifest: dict[str, str] | None = None,
+    allow_unverified_checkpoints: bool = False,
 ) -> None:
     """Evaluate a checkpoint or built-in policy against a built-in baseline."""
     if checkpoint:
@@ -934,7 +1118,11 @@ def run_eval(
         if not path.exists():
             print(f"Checkpoint not found: {checkpoint}")
             sys.exit(1)
-        model = load_trusted_ppo_checkpoint(path)
+        model = load_trusted_ppo_checkpoint(
+            path,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified=allow_unverified_checkpoints,
+        )
         agent0_policy = ModelPolicy(model=model, deterministic=deterministic)
         agent0_label = str(path)
     else:
@@ -1065,6 +1253,8 @@ def run_suite(
     reward_preset: str,
     output_dir: str | None,
     output_label: str | None,
+    trusted_checkpoint_manifest: dict[str, str] | None = None,
+    allow_unverified_checkpoints: bool = False,
 ) -> None:
     agent0_label = agent_policy
     model = None
@@ -1073,7 +1263,11 @@ def run_suite(
         if not path.exists():
             print(f"Checkpoint not found: {checkpoint}")
             sys.exit(1)
-        model = load_trusted_ppo_checkpoint(path)
+        model = load_trusted_ppo_checkpoint(
+            path,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified=allow_unverified_checkpoints,
+        )
         agent0_label = str(path)
 
     def agent0_policy_factory(policy_seed: int | None):
@@ -1118,6 +1312,8 @@ def build_rank_summary(
     include_head_to_head: bool,
     initial_elo: float,
     elo_k_factor: float,
+    trusted_checkpoint_manifest: dict[str, str] | None = None,
+    allow_unverified_checkpoints: bool = False,
 ) -> dict:
     checkpoint_paths = checkpoints or discover_checkpoints(checkpoint_dir)
     if not checkpoint_paths:
@@ -1134,7 +1330,11 @@ def build_rank_summary(
             print(f"Checkpoint not found: {checkpoint}")
             sys.exit(1)
 
-        model = load_trusted_ppo_checkpoint(path)
+        model = load_trusted_ppo_checkpoint(
+            path,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified=allow_unverified_checkpoints,
+        )
         label = path.stem if path.suffix == ".zip" else path.name
         if label in used_labels:
             label = f"{label}_{checkpoint_idx}"
@@ -1239,6 +1439,8 @@ def run_rank(
     elo_k_factor: float,
     output_dir: str | None,
     output_label: str | None,
+    trusted_checkpoint_manifest: dict[str, str] | None = None,
+    allow_unverified_checkpoints: bool = False,
 ) -> dict:
     result = build_rank_summary(
         cfg=cfg,
@@ -1256,6 +1458,8 @@ def run_rank(
         include_head_to_head=include_head_to_head,
         initial_elo=initial_elo,
         elo_k_factor=elo_k_factor,
+        trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+        allow_unverified_checkpoints=allow_unverified_checkpoints,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     if output_dir is not None:
@@ -1293,6 +1497,8 @@ def run_promotion_audit(
     output_dir: str | None,
     output_label: str | None,
     include_nested: bool = False,
+    trusted_checkpoint_manifest: dict[str, str] | None = None,
+    allow_unverified_checkpoints: bool = False,
 ) -> None:
     base_label = output_label or "promotion-audit"
     rank_summary = build_rank_summary(
@@ -1311,6 +1517,8 @@ def run_promotion_audit(
         include_head_to_head=include_head_to_head,
         initial_elo=initial_elo,
         elo_k_factor=elo_k_factor,
+        trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+        allow_unverified_checkpoints=allow_unverified_checkpoints,
     )
     validate_artifact(rank_summary, "rank")
 
@@ -1484,7 +1692,15 @@ def summarize_artifact_file(path: str | Path, root: str | Path | None = None) ->
 
 
 def redact_log_line(line: str) -> str:
+    private_key_redacted = _PRIVATE_KEY_ASSIGNMENT_RE.sub(r"\1\2<redacted>", line)
+    if private_key_redacted != line:
+        return private_key_redacted
+    if _PRIVATE_KEY_LINE_RE.search(line):
+        return "<redacted private key>"
     redacted = _BEARER_TOKEN_RE.sub(r"\1<redacted>", line)
+    redacted = _BASIC_AUTH_TOKEN_RE.sub(r"\1<redacted>", redacted)
+    redacted = _HEADER_SECRET_RE.sub(r"\1<redacted>", redacted)
+    redacted = _URL_CREDENTIAL_RE.sub(r"://\1:<redacted>@", redacted)
     redacted = _SECRET_ASSIGNMENT_RE.sub(r"\1\2<redacted>", redacted)
     redacted = _SECRET_ARG_RE.sub(r"\1<redacted>", redacted)
     return _JSON_SECRET_RE.sub(r"\1<redacted>\3", redacted)
@@ -5447,6 +5663,23 @@ def main():
         ),
     )
     parser.add_argument(
+        "--trusted-checkpoint-manifest",
+        type=str,
+        default=None,
+        help=(
+            "JSON allowlist of trusted checkpoint paths/names and SHA-256 digests "
+            "checked before SB3 deserialization"
+        ),
+    )
+    parser.add_argument(
+        "--allow-unverified-checkpoints",
+        action="store_true",
+        help=(
+            "Allow loading checkpoints without project metadata or a trusted "
+            "manifest; use only for known-local legacy checkpoints"
+        ),
+    )
+    parser.add_argument(
         "--rank-draw-weight",
         type=float,
         default=0.5,
@@ -5762,11 +5995,25 @@ def main():
         and args.long_run_min_opponent_historical_samples < 0
     ):
         parser.error("--long-run-min-opponent-historical-samples must be non-negative")
+    try:
+        trusted_checkpoint_manifest = (
+            load_checkpoint_trust_manifest(args.trusted_checkpoint_manifest)
+            if args.trusted_checkpoint_manifest
+            else None
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(f"Invalid --trusted-checkpoint-manifest: {exc}")
 
     if args.mode == "train":
         run_train(cfg, args.checkpoint_dir, args.replay_dir)
     elif args.mode == "watch":
-        run_watch(cfg, args.checkpoint, num_rounds=args.rounds)
+        run_watch(
+            cfg,
+            args.checkpoint,
+            num_rounds=args.rounds,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified_checkpoints=args.allow_unverified_checkpoints,
+        )
     elif args.mode == "replay":
         if not args.episode:
             parser.error("--episode is required for replay mode")
@@ -5797,6 +6044,8 @@ def main():
             output_dir=args.eval_output_dir,
             output_label=args.eval_label,
             agent_policy=args.agent_policy,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified_checkpoints=args.allow_unverified_checkpoints,
         )
     elif args.mode == "compare":
         if not args.before or not args.after:
@@ -5865,6 +6114,8 @@ def main():
             output_dir=args.eval_output_dir,
             output_label=args.eval_label,
             include_nested=args.audit_include_nested,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified_checkpoints=args.allow_unverified_checkpoints,
         )
     elif args.mode == "audit_summary":
         if not args.audit_summary_path:
@@ -6052,6 +6303,8 @@ def main():
             reward_preset=args.reward_preset or "default",
             output_dir=args.eval_output_dir,
             output_label=args.eval_label,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified_checkpoints=args.allow_unverified_checkpoints,
         )
     elif args.mode == "rank":
         try:
@@ -6079,6 +6332,8 @@ def main():
             elo_k_factor=args.rank_elo_k,
             output_dir=args.eval_output_dir,
             output_label=args.eval_label,
+            trusted_checkpoint_manifest=trusted_checkpoint_manifest,
+            allow_unverified_checkpoints=args.allow_unverified_checkpoints,
         )
 
 

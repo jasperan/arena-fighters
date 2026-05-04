@@ -26,6 +26,8 @@ from scripts.train import (
     curriculum_metadata,
     discover_checkpoints,
     effective_reward_config,
+    load_checkpoint_trust_manifest,
+    load_trusted_ppo_checkpoint,
     main,
     missing_required_maps,
     parse_builtin_opponents,
@@ -50,6 +52,7 @@ from scripts.train import (
     run_suite,
     run_strategy_report,
     summarize_promotion_audit,
+    verify_checkpoint_trust,
     write_checkpoint_metadata,
 )
 
@@ -543,6 +546,84 @@ def test_checkpoint_metadata_integrity_detects_stale_sidecar(tmp_path):
     assert passing["passed"] is True
     assert failing["passed"] is False
     assert failing["reason"] == "sha256_mismatch"
+
+
+def test_verify_checkpoint_trust_accepts_project_metadata(tmp_path):
+    checkpoint = tmp_path / "ppo_final.zip"
+    checkpoint.write_bytes(b"checkpoint-bytes")
+    write_checkpoint_metadata(tmp_path / "ppo_final", Config(), num_timesteps=100)
+
+    trust = verify_checkpoint_trust(checkpoint)
+
+    assert trust["verified"] is True
+    assert trust["verification_source"] == "checkpoint_metadata"
+    assert trust["sha256"] == checkpoint_file_sha256(checkpoint)
+    assert trust["metadata_path"] == str(tmp_path / "ppo_final.meta.json")
+
+
+def test_load_checkpoint_trust_manifest_accepts_mapping_shapes(tmp_path):
+    checkpoint = tmp_path / "ppo_final.zip"
+    checkpoint.write_bytes(b"checkpoint-bytes")
+    digest = checkpoint_file_sha256(checkpoint)
+    manifest_path = tmp_path / "trusted-checkpoints.json"
+    manifest_path.write_text(
+        json.dumps({"checkpoints": {checkpoint.name: {"sha256": digest}}}) + "\n"
+    )
+
+    trusted = load_checkpoint_trust_manifest(manifest_path)
+    trust = verify_checkpoint_trust(
+        checkpoint,
+        trusted_checkpoint_manifest=trusted,
+    )
+
+    assert trusted == {checkpoint.name: digest}
+    assert trust["verified"] is True
+    assert trust["verification_source"] == "trusted_manifest"
+
+
+def test_load_trusted_ppo_checkpoint_rejects_unverified_before_load(
+    tmp_path,
+    monkeypatch,
+):
+    checkpoint = tmp_path / "external.zip"
+    checkpoint.write_bytes(b"external-checkpoint")
+    load_calls = []
+
+    def fake_load(path):
+        load_calls.append(path)
+        return object()
+
+    monkeypatch.setattr("stable_baselines3.PPO.load", fake_load)
+
+    try:
+        load_trusted_ppo_checkpoint(checkpoint)
+    except ValueError as exc:
+        assert "Refusing to load checkpoint before trust verification" in str(exc)
+    else:
+        raise AssertionError("expected unverified checkpoint to be rejected")
+
+    assert load_calls == []
+
+
+def test_load_trusted_ppo_checkpoint_allows_explicit_unverified_override(
+    tmp_path,
+    monkeypatch,
+):
+    checkpoint = tmp_path / "legacy-local.zip"
+    checkpoint.write_bytes(b"legacy-local-checkpoint")
+    sentinel = object()
+    load_calls = []
+
+    def fake_load(path):
+        load_calls.append(path)
+        return sentinel
+
+    monkeypatch.setattr("stable_baselines3.PPO.load", fake_load)
+
+    loaded = load_trusted_ppo_checkpoint(checkpoint, allow_unverified=True)
+
+    assert loaded is sentinel
+    assert load_calls == [str(checkpoint)]
 
 
 def test_discover_checkpoints_uses_metadata_order_and_ignores_sidecars(tmp_path):
@@ -1480,6 +1561,10 @@ def test_build_artifact_index_redacts_command_log_secrets(tmp_path):
                 "MY_TOKEN: custom-token",
                 "client_secret='quoted-secret'",
                 "Authorization: Bearer opaque-token",
+                "Authorization: Basic opaque-basic-token",
+                "Cookie: session=abc123",
+                "DATABASE_URL=postgres://user:db-pass@localhost/db",
+                "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----abc",
                 "password = swordfish",
                 "python script.py --api-key abc123 --safe value",
                 "python script.py --api-key=abc123 --safe value",
@@ -1502,6 +1587,10 @@ def test_build_artifact_index_redacts_command_log_secrets(tmp_path):
         "MY_TOKEN: <redacted>",
         "client_secret=<redacted>",
         "Authorization: Bearer <redacted>",
+        "Authorization: Basic <redacted>",
+        "Cookie: <redacted>",
+        "DATABASE_URL=<redacted>",
+        "PRIVATE_KEY=<redacted>",
         "password = <redacted>",
         "python script.py --api-key <redacted> --safe value",
         "python script.py --api-key=<redacted> --safe value",
