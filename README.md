@@ -27,7 +27,7 @@ Two agents spawn on a multi-platform arena, shoot projectiles, swing melee attac
 - **Strategy report**: scan saved artifacts for no-damage, low-engagement, all-draw, idle, or action-spam behavior
 - **Long-run manifest**: emit a reproducible real-compute command bundle and launcher script without executing training
 - **Long-run check**: validate promotion-audit, strategy-report, and artifact-index outputs against documented promotion criteria
-- **Built-in baselines**: random, idle, scripted/aggressive, and evasive evaluation opponents
+- **Built-in baselines**: random, idle, scripted, aggressive, and evasive evaluation opponents
 - **Reward presets**: default and anti-stall reward profiles for evaluation-driven training experiments
 - **Custom CNN extractor**: processes a 6-channel 20x40 grid observation + 6-dim vector (HP, cooldowns, velocity, ducking)
 - **16 modes**: headless training, live ASCII watch, frame-by-frame replay, replay analysis, JSON evaluation, eval comparison, eval gating, baseline suites, checkpoint ranking, rank gating, promotion audit, audit summary, artifact indexing, strategy reporting, long-run manifesting, long-run checking
@@ -293,6 +293,8 @@ directory for later inspection. If promotion-audit crashes before writing a
 promotion artifact, the launcher passes a missing-artifact placeholder into
 `long_run_check` so the final verifier records an `input_artifacts_loadable`
 failure instead of stopping at shell artifact resolution.
+Run IDs are restricted to letters, numbers, dots, underscores, and hyphens so
+generated checkpoint, replay, and eval paths stay under their configured roots.
 Diagnostic manifests at `10000` timesteps or below automatically pin
 `--replay-save-interval 1` so replay analysis is exercised; larger runs use the
 config default unless an interval is specified. Larger runs also require
@@ -336,7 +338,8 @@ Status mode recursively scans `--artifact-dir`, reports the latest
 `long_run_manifest`, whether its full and preflight launchers and expected run
 directories exist, how many `long_run_check` artifacts are under that run,
 whether any passing check is present, and the next `bash ...` commands when the
-latest preflight or full launcher has not been executed yet. It also emits a
+latest preflight or full launcher has not been executed yet and the manifest
+source snapshot still matches the current clean checkout. It also emits a
 machine-readable `missing_evidence` list such as `train_exitcode`,
 `real_training_replay_files`, or `latest_run_long_run_check`. The latest
 manifest summary includes `source_safe_to_launch` and `source_stale_reasons` so

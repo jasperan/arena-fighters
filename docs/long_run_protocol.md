@@ -61,6 +61,8 @@ missing-artifact placeholder so `long_run_check` can report a structured
 `input_artifacts_loadable` failure and the final artifact index can still be
 written. Each generated command writes stdout/stderr to a named `.out` file in
 `$EVAL_DIR` so failed runs keep command-log tails in the final artifact index.
+Run IDs are restricted to letters, numbers, dots, underscores, and hyphens so
+generated checkpoint, replay, and eval paths stay under their configured roots.
 For diagnostic manifests with `--timesteps` at or below `10000`, the generated
 launcher automatically pins `--replay-save-interval 1` so the replay-analysis
 path is exercised; larger runs use the config default unless you pass
@@ -267,10 +269,11 @@ Status mode recursively scans generated manifests, launcher sidecars, and
 manifest, whether its full/preflight launchers and run directories exist, how
 many verifier artifacts are under that run, whether any latest-run verifier
 passed, and the next preflight/full launcher commands when the latest plan has
-not been executed. It also emits a `missing_evidence` list for automation and
-human triage, including missing exit-code sidecars, checkpoint files, replay
-files, or latest-run verifier artifacts. Treat this as a quick triage artifact,
-not as promotion proof by itself.
+not been executed and the manifest source snapshot still matches the current
+clean checkout. It also emits a `missing_evidence` list for automation and human
+triage, including missing exit-code sidecars, checkpoint files, replay files, or
+latest-run verifier artifacts. Treat this as a quick triage artifact, not as
+promotion proof by itself.
 
 ## 9. Promotion Criteria
 

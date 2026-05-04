@@ -4,9 +4,19 @@ import json
 
 import numpy as np
 
-from arena_fighters.config import DUCK, IDLE, JUMP, MELEE, Config
+from arena_fighters.config import (
+    DUCK,
+    IDLE,
+    JUMP,
+    MELEE,
+    MOVE_RIGHT,
+    SHOOT_DIAG_DOWN,
+    SHOOT_DIAG_UP,
+    Config,
+)
 from arena_fighters.env import ArenaFightersEnv
 from arena_fighters.evaluation import (
+    AggressivePolicy,
     artifact_metadata,
     RandomPolicy,
     ScriptedPolicy,
@@ -198,8 +208,38 @@ def test_scripted_policy_uses_melee_when_adjacent():
 def test_make_builtin_policy_supports_baseline_archetypes():
     assert isinstance(make_builtin_policy("idle"), IdlePolicy)
     assert isinstance(make_builtin_policy("scripted"), ScriptedPolicy)
-    assert isinstance(make_builtin_policy("aggressive"), ScriptedPolicy)
+    assert isinstance(make_builtin_policy("aggressive"), AggressivePolicy)
     assert isinstance(make_builtin_policy("evasive"), EvasivePolicy)
+
+
+def test_aggressive_policy_uses_diagonal_shots_for_vertical_targets():
+    cfg = _short_cfg()
+    env = ArenaFightersEnv(config=cfg)
+    obs, _ = env.reset()
+    env._agent_states["agent_0"].x = 10
+    env._agent_states["agent_0"].y = 18
+    env._agent_states["agent_0"].facing = 1
+    env._agent_states["agent_0"].shoot_cd = 0
+    env._agent_states["agent_1"].x = 14
+    env._agent_states["agent_1"].y = 15
+
+    assert AggressivePolicy().act("agent_0", obs["agent_0"], env) == SHOOT_DIAG_UP
+
+    env._agent_states["agent_1"].y = 19
+    assert AggressivePolicy().act("agent_0", obs["agent_0"], env) == SHOOT_DIAG_DOWN
+
+
+def test_aggressive_policy_closes_distance_to_face_target():
+    cfg = _short_cfg()
+    env = ArenaFightersEnv(config=cfg)
+    obs, _ = env.reset()
+    env._agent_states["agent_0"].x = 10
+    env._agent_states["agent_0"].y = 18
+    env._agent_states["agent_0"].facing = -1
+    env._agent_states["agent_1"].x = 20
+    env._agent_states["agent_1"].y = 18
+
+    assert AggressivePolicy().act("agent_0", obs["agent_0"], env) == MOVE_RIGHT
 
 
 def test_idle_policy_always_idles():

@@ -1,6 +1,8 @@
 from dataclasses import replace
 import json
 from pathlib import Path
+import shlex
+import sys
 
 from arena_fighters.config import Config, reward_config_for_preset
 from arena_fighters.evaluation import artifact_metadata
@@ -16,10 +18,12 @@ from scripts.train import (
     build_strategy_report,
     build_training_wrapper,
     candidate_per_map_scores,
+    checkpoint_metadata_maps,
     checkpoint_metadata,
     curriculum_metadata,
     discover_checkpoints,
     effective_reward_config,
+    main,
     missing_required_maps,
     parse_builtin_opponents,
     parse_csv_tuple,
@@ -69,6 +73,16 @@ class FakeLogger:
 class FakeModelWithLogger:
     def __init__(self):
         self.logger = FakeLogger()
+
+
+def _clean_source_snapshot():
+    return {
+        "vcs": "git",
+        "available": True,
+        "commit": "clean-commit",
+        "dirty": False,
+        "status_short_count": 0,
+    }
 
 
 def _write_replay(
@@ -1247,6 +1261,8 @@ def test_build_artifact_index_redacts_command_log_secrets(tmp_path):
                 "TOKEN: xyz789",
                 "Authorization: Bearer opaque-token",
                 "password = swordfish",
+                "python script.py --api-key abc123 --safe value",
+                '{"token":"json-token","safe":"value"}',
                 "safe line",
             ]
         )
@@ -1262,6 +1278,8 @@ def test_build_artifact_index_redacts_command_log_secrets(tmp_path):
         "TOKEN: <redacted>",
         "Authorization: Bearer <redacted>",
         "password = <redacted>",
+        "python script.py --api-key <redacted> --safe value",
+        '{"token":"<redacted>","safe":"value"}',
         "safe line",
     ]
 
@@ -2483,6 +2501,20 @@ def test_build_long_run_check_validates_candidate_metadata_required_maps(tmp_pat
     assert failing_check["details"]["missing_maps"] == ["tower"]
 
 
+def test_checkpoint_metadata_maps_prefers_curriculum_stage_coverage():
+    metadata = {
+        "map_name": "classic",
+        "randomize_maps": True,
+        "map_choices": ["classic", "flat", "split", "tower"],
+        "curriculum": {
+            "active_map_pool": ["flat"],
+            "stage": {"map_choices": ["flat"]},
+        },
+    }
+
+    assert checkpoint_metadata_maps(metadata) == ["flat"]
+
+
 def test_build_long_run_check_validates_candidate_curriculum_metadata(tmp_path):
     promotion = _long_run_promotion_audit()
     checkpoint = tmp_path / "candidate.zip"
@@ -2775,6 +2807,16 @@ def test_build_long_run_manifest_rejects_shell_injection_values():
             raise AssertionError(f"Expected {kwargs} to be rejected")
 
 
+def test_build_long_run_manifest_rejects_unsafe_run_ids():
+    for run_id in ("", "../escape", "arena/test", "arena test", "arena;echo injected"):
+        try:
+            build_long_run_manifest(run_id=run_id, timesteps=1234)
+        except ValueError as exc:
+            assert "run_id must start" in str(exc)
+        else:
+            raise AssertionError(f"Expected run_id={run_id!r} to be rejected")
+
+
 def test_build_long_run_manifest_indexes_early_failure_artifacts():
     manifest = build_long_run_manifest(run_id="arena-test", timesteps=1234)
     script = manifest["shell_script"]
@@ -2943,7 +2985,68 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     assert saved["manifest_config"]["strategy_report"]["max_draw_rate"] == 0.85
 
 
-def test_build_long_run_status_reports_latest_manifest_execution_state(tmp_path):
+def test_long_run_manifest_cli_honors_required_maps(tmp_path, monkeypatch, capsys):
+    output_dir = tmp_path / "manifests"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train.py",
+            "--mode",
+            "long_run_manifest",
+            "--run-id",
+            "cli-required",
+            "--timesteps",
+            "1234",
+            "--suite-maps",
+            "classic,flat,split,tower",
+            "--long-run-required-maps",
+            "flat,tower",
+            "--eval-output-dir",
+            str(output_dir),
+            "--eval-label",
+            "cli-required",
+        ],
+    )
+
+    main()
+
+    capsys.readouterr()
+    [manifest_path] = output_dir.glob("*_cli-required.json")
+    saved = json.loads(manifest_path.read_text())
+    assert saved["manifest_config"]["suite_maps"] == "classic,flat,split,tower"
+    assert saved["manifest_config"]["required_maps"] == ["flat", "tower"]
+    assert "--long-run-required-maps flat,tower" in saved["shell_script"]
+
+
+def test_long_run_manifest_cli_reports_invalid_run_id(monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train.py",
+            "--mode",
+            "long_run_manifest",
+            "--run-id",
+            "../escape",
+        ],
+    )
+
+    try:
+        main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected parser error for invalid run ID")
+
+    assert "run_id must start" in capsys.readouterr().err
+
+
+def test_build_long_run_status_reports_latest_manifest_execution_state(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()
     manifest = build_long_run_manifest(
@@ -2998,6 +3101,72 @@ def test_build_long_run_status_reports_latest_manifest_execution_state(tmp_path)
     assert latest["source_dirty"] in {True, False, None}
 
 
+def test_build_long_run_status_quotes_copy_paste_launcher_commands(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
+    artifact_dir = tmp_path / "evals with spaces"
+    artifact_dir.mkdir()
+    manifest = build_long_run_manifest(
+        run_id="status-run",
+        checkpoint_root=str(tmp_path / "checkpoints"),
+        eval_root=str(artifact_dir),
+        replay_root=str(tmp_path / "replays"),
+        timesteps=5_000_000,
+    )
+    manifest_path = artifact_dir / "status plan.json"
+    launcher_path = manifest_path.with_suffix(".sh")
+    preflight_launcher_path = manifest_path.with_suffix(".preflight.sh")
+    manifest["manifest_artifact_path"] = str(manifest_path)
+    manifest["shell_script_path"] = str(launcher_path)
+    manifest["preflight_shell_script_path"] = str(preflight_launcher_path)
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    launcher_path.write_text(manifest["shell_script"] + "\n")
+    preflight_launcher_path.write_text(manifest["preflight_shell_script"] + "\n")
+
+    status = build_long_run_status(artifact_dir)
+
+    assert status["next_command"] == f"bash {shlex.quote(str(launcher_path))}"
+    assert status["next_preflight_command"] == (
+        f"bash {shlex.quote(str(preflight_launcher_path))}"
+    )
+
+
+def test_build_long_run_status_ignores_unsafe_manifest_launcher_paths(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    manifest = build_long_run_manifest(
+        run_id="status-run",
+        checkpoint_root=str(tmp_path / "checkpoints"),
+        eval_root=str(artifact_dir),
+        replay_root=str(tmp_path / "replays"),
+        timesteps=5_000_000,
+    )
+    manifest_path = artifact_dir / "status-plan.json"
+    outside_launcher = tmp_path / "outside.sh"
+    outside_preflight = tmp_path / "outside.preflight.sh"
+    outside_launcher.write_text("#!/usr/bin/env bash\n")
+    outside_preflight.write_text("#!/usr/bin/env bash\n")
+    manifest["shell_script_path"] = str(outside_launcher)
+    manifest["preflight_shell_script_path"] = str(outside_preflight)
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+
+    status = build_long_run_status(artifact_dir)
+
+    latest = status["latest_manifest"]
+    assert latest["launcher_path"] is None
+    assert latest["preflight_launcher_path"] is None
+    assert latest["launcher_exists"] is False
+    assert latest["preflight_launcher_exists"] is False
+    assert status["next_command"] is None
+    assert status["next_preflight_command"] is None
+
+
 def test_build_long_run_status_reports_manifest_source_freshness(tmp_path, monkeypatch):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()
@@ -3031,6 +3200,9 @@ def test_build_long_run_status_reports_manifest_source_freshness(tmp_path, monke
     status = build_long_run_status(artifact_dir)
 
     latest = status["latest_manifest"]
+    assert status["blocked_reason"] == "latest_manifest_source_stale"
+    assert status["next_command"] is None
+    assert status["next_preflight_command"] is None
     assert latest["source_current_commit"] == "new-commit"
     assert latest["source_current_dirty"] is False
     assert latest["source_commit_matches_current"] is False
@@ -3044,7 +3216,8 @@ def test_build_long_run_status_reports_manifest_source_freshness(tmp_path, monke
     assert status["status_config"]["source_control"]["commit"] == "new-commit"
 
 
-def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path):
+def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()
     manifest = build_long_run_manifest(

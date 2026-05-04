@@ -54,6 +54,13 @@ _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\b(\s*[:=]\s*)[^\s]+"
 )
 _BEARER_TOKEN_RE = re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)[^\s]+")
+_SECRET_ARG_RE = re.compile(
+    r"(?i)(--(?:api[_-]?key|secret|token|password|passwd|pwd)\s+)[^\s]+"
+)
+_JSON_SECRET_RE = re.compile(
+    r'(?i)("(?:api[_-]?key|secret|token|password|passwd|pwd)"\s*:\s*")[^"]+(")'
+)
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def clone_policy_for_opponent(model):
@@ -223,6 +230,15 @@ def parse_rank_checkpoints(value: str | None) -> tuple[str, ...] | None:
     if value is None:
         return None
     return parse_csv_tuple(value, "--rank-checkpoints")
+
+
+def validate_run_id(run_id: str) -> str:
+    if not _RUN_ID_RE.fullmatch(run_id):
+        raise ValueError(
+            "run_id must start with a letter or number and contain only "
+            "letters, numbers, dots, underscores, or hyphens"
+        )
+    return run_id
 
 
 class SelfPlayCallback(BaseCallback):
@@ -1301,7 +1317,9 @@ def summarize_artifact_file(path: str | Path, root: str | Path | None = None) ->
 
 def redact_log_line(line: str) -> str:
     redacted = _BEARER_TOKEN_RE.sub(r"\1<redacted>", line)
-    return _SECRET_ASSIGNMENT_RE.sub(r"\1\2<redacted>", redacted)
+    redacted = _SECRET_ASSIGNMENT_RE.sub(r"\1\2<redacted>", redacted)
+    redacted = _SECRET_ARG_RE.sub(r"\1<redacted>", redacted)
+    return _JSON_SECRET_RE.sub(r"\1<redacted>\2", redacted)
 
 
 def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
@@ -2170,15 +2188,22 @@ def missing_required_maps(
 def checkpoint_metadata_maps(metadata: dict | None) -> list[str]:
     if not isinstance(metadata, dict):
         return []
+
+    curriculum = metadata.get("curriculum") or {}
+    curriculum_maps = set()
+    if isinstance(curriculum, dict):
+        curriculum_maps.update(curriculum.get("active_map_pool", []))
+        stage = curriculum.get("stage") or {}
+        if isinstance(stage, dict):
+            curriculum_maps.update(stage.get("map_choices", []))
+    if curriculum_maps:
+        return sorted(curriculum_maps)
+
     maps = set()
     if metadata.get("randomize_maps"):
         maps.update(metadata.get("map_choices", []))
     elif metadata.get("map_name"):
         maps.add(metadata["map_name"])
-    curriculum = metadata.get("curriculum") or {}
-    maps.update(curriculum.get("active_map_pool", []))
-    stage = curriculum.get("stage") or {}
-    maps.update(stage.get("map_choices", []))
     return sorted(maps)
 
 
@@ -3030,8 +3055,26 @@ def _path_is_relative_to(path: Path, parent: Path) -> bool:
     return True
 
 
+def _manifest_sidecar_path(manifest_path: Path, path_text: str | None) -> str | None:
+    if not isinstance(path_text, str) or not path_text:
+        return None
+
+    raw_path = Path(path_text)
+    candidates = [raw_path]
+    if not raw_path.is_absolute():
+        candidates.append(manifest_path.parent / raw_path)
+
+    for candidate in candidates:
+        if _path_is_relative_to(candidate, manifest_path.parent):
+            return str(candidate)
+    return None
+
+
 def _existing_launcher_path(manifest_path: Path, manifest: dict) -> str | None:
-    explicit_path = manifest.get("shell_script_path")
+    explicit_path = _manifest_sidecar_path(
+        manifest_path,
+        manifest.get("shell_script_path"),
+    )
     if explicit_path:
         return explicit_path
     sibling_path = manifest_path.with_suffix(".sh")
@@ -3044,7 +3087,10 @@ def _existing_preflight_launcher_path(
     manifest_path: Path,
     manifest: dict,
 ) -> str | None:
-    explicit_path = manifest.get("preflight_shell_script_path")
+    explicit_path = _manifest_sidecar_path(
+        manifest_path,
+        manifest.get("preflight_shell_script_path"),
+    )
     if explicit_path:
         return explicit_path
     sibling_path = manifest_path.with_suffix(".preflight.sh")
@@ -3288,22 +3334,30 @@ def build_long_run_status(
         blocked_reason = "latest_long_run_check_missing"
     elif not latest_passing_checks:
         blocked_reason = "latest_long_run_check_not_passing"
+    if (
+        latest_manifest is not None
+        and not latest_passing_checks
+        and latest_manifest.get("source_safe_to_launch") is False
+    ):
+        blocked_reason = "latest_manifest_source_stale"
 
     if (
         latest_manifest
         and blocked_reason
         in {"latest_launcher_not_executed", "latest_preflight_only"}
+        and latest_manifest.get("source_safe_to_launch") is not False
         and latest_manifest.get("launcher_exists")
     ):
-        next_command = f"bash {latest_manifest['launcher_path']}"
+        next_command = f"bash {_shell_arg(latest_manifest['launcher_path'])}"
     if (
         latest_manifest
         and blocked_reason == "latest_launcher_not_executed"
         and not latest_manifest.get("preflight_dir_exists")
+        and latest_manifest.get("source_safe_to_launch") is not False
         and latest_manifest.get("preflight_launcher_exists")
     ):
         next_preflight_command = (
-            f"bash {latest_manifest['preflight_launcher_path']}"
+            f"bash {_shell_arg(latest_manifest['preflight_launcher_path'])}"
         )
 
     latest_manifest_summary = dict(latest_manifest) if latest_manifest else None
@@ -3464,6 +3518,7 @@ def build_long_run_manifest(
         and min_head_to_head_map_episodes < 0
     ):
         raise ValueError("min_head_to_head_map_episodes must be non-negative")
+    validate_run_id(run_id)
 
     suite_opponent_names = parse_builtin_opponents(suite_opponents)
     suite_map_names = parse_suite_maps(suite_maps, Config())
@@ -4721,64 +4776,72 @@ def main():
                 if args.suite_maps
                 else ("classic", "flat", "split", "tower")
             )
+            required_maps = (
+                parse_suite_maps(args.long_run_required_maps, cfg)
+                if args.long_run_required_maps
+                else suite_maps
+            )
         except ValueError as exc:
             parser.error(str(exc))
 
-        run_long_run_manifest(
-            run_id=args.run_id,
-            checkpoint_root=args.checkpoint_dir,
-            eval_root=args.artifact_dir,
-            replay_root=args.replay_dir,
-            timesteps=args.timesteps or 5_000_000,
-            suite_opponents=",".join(suite_opponents),
-            suite_maps=",".join(suite_maps),
-            rounds=args.rounds or 20,
-            replay_samples_per_bucket=args.replay_samples_per_bucket,
-            replay_save_interval=args.replay_save_interval,
-            rank_min_score=args.rank_min_score,
-            rank_min_win_rate=args.rank_min_win_rate,
-            rank_max_draw_rate=args.rank_max_draw_rate,
-            rank_max_no_damage_rate=args.rank_max_no_damage_rate,
-            rank_max_low_engagement_rate=args.rank_max_low_engagement_rate,
-            strategy_max_draw_rate=args.strategy_max_draw_rate,
-            strategy_max_no_damage_rate=args.strategy_max_no_damage_rate,
-            strategy_max_low_engagement_rate=args.strategy_max_low_engagement_rate,
-            strategy_max_idle_rate=args.strategy_max_idle_rate,
-            strategy_max_dominant_action_rate=args.strategy_max_dominant_action_rate,
-            strategy_max_weaknesses=args.strategy_max_weaknesses,
-            require_replay_analysis=True,
-            min_maps=args.long_run_min_maps,
-            required_maps=suite_maps,
-            min_eval_episodes=args.long_run_min_eval_episodes or None,
-            min_map_episodes=args.long_run_min_map_episodes,
-            min_map_score=(
-                args.long_run_min_map_score
-                if args.long_run_min_map_score is not None
-                else 0.0
-            ),
-            min_replay_combat_maps=(
-                args.long_run_min_replay_combat_maps or None
-            ),
-            min_head_to_head_episodes=(
-                args.long_run_min_head_to_head_episodes or None
-            ),
-            min_head_to_head_map_episodes=(
-                args.long_run_min_head_to_head_map_episodes
-            ),
-            require_candidate_checkpoint=True,
-            require_candidate_metadata=True,
-            required_curriculum_stage=(
-                args.long_run_required_curriculum_stage or "full_map_pool"
-            ),
-            required_reward_preset=(
-                args.long_run_required_reward_preset or "anti_stall"
-            ),
-            require_head_to_head=(
-                True if args.long_run_require_head_to_head else None
-            ),
-            output_dir=args.eval_output_dir,
-            output_label=args.eval_label,
-        )
+        try:
+            run_long_run_manifest(
+                run_id=args.run_id,
+                checkpoint_root=args.checkpoint_dir,
+                eval_root=args.artifact_dir,
+                replay_root=args.replay_dir,
+                timesteps=args.timesteps or 5_000_000,
+                suite_opponents=",".join(suite_opponents),
+                suite_maps=",".join(suite_maps),
+                rounds=args.rounds or 20,
+                replay_samples_per_bucket=args.replay_samples_per_bucket,
+                replay_save_interval=args.replay_save_interval,
+                rank_min_score=args.rank_min_score,
+                rank_min_win_rate=args.rank_min_win_rate,
+                rank_max_draw_rate=args.rank_max_draw_rate,
+                rank_max_no_damage_rate=args.rank_max_no_damage_rate,
+                rank_max_low_engagement_rate=args.rank_max_low_engagement_rate,
+                strategy_max_draw_rate=args.strategy_max_draw_rate,
+                strategy_max_no_damage_rate=args.strategy_max_no_damage_rate,
+                strategy_max_low_engagement_rate=args.strategy_max_low_engagement_rate,
+                strategy_max_idle_rate=args.strategy_max_idle_rate,
+                strategy_max_dominant_action_rate=args.strategy_max_dominant_action_rate,
+                strategy_max_weaknesses=args.strategy_max_weaknesses,
+                require_replay_analysis=True,
+                min_maps=args.long_run_min_maps,
+                required_maps=required_maps,
+                min_eval_episodes=args.long_run_min_eval_episodes or None,
+                min_map_episodes=args.long_run_min_map_episodes,
+                min_map_score=(
+                    args.long_run_min_map_score
+                    if args.long_run_min_map_score is not None
+                    else 0.0
+                ),
+                min_replay_combat_maps=(
+                    args.long_run_min_replay_combat_maps or None
+                ),
+                min_head_to_head_episodes=(
+                    args.long_run_min_head_to_head_episodes or None
+                ),
+                min_head_to_head_map_episodes=(
+                    args.long_run_min_head_to_head_map_episodes
+                ),
+                require_candidate_checkpoint=True,
+                require_candidate_metadata=True,
+                required_curriculum_stage=(
+                    args.long_run_required_curriculum_stage or "full_map_pool"
+                ),
+                required_reward_preset=(
+                    args.long_run_required_reward_preset or "anti_stall"
+                ),
+                require_head_to_head=(
+                    True if args.long_run_require_head_to_head else None
+                ),
+                output_dir=args.eval_output_dir,
+                output_label=args.eval_label,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
     elif args.mode == "suite":
         try:
             suite_opponents = parse_builtin_opponents(args.suite_opponents)

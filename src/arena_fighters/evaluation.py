@@ -20,6 +20,8 @@ from arena_fighters.config import (
     MOVE_RIGHT,
     NUM_ACTIONS,
     SHOOT_FORWARD,
+    SHOOT_DIAG_DOWN,
+    SHOOT_DIAG_UP,
     Config,
 )
 from arena_fighters.env import ArenaFightersEnv
@@ -142,6 +144,42 @@ class ScriptedPolicy:
 
 
 @dataclass
+class AggressivePolicy:
+    """Pressure baseline that attacks while closing distance across elevations."""
+
+    def act(
+        self,
+        agent_name: str,
+        obs: dict[str, np.ndarray],
+        env: ArenaFightersEnv,
+    ) -> int:
+        st = env._agent_states[agent_name]
+        other = env._agent_states[env._other(agent_name)]
+        dx = other.x - st.x
+        dy = other.y - st.y
+        target_facing = 1 if dx > 0 else -1 if dx < 0 else st.facing
+        facing_target = dx == 0 or st.facing == target_facing
+
+        if abs(dx) == 1 and dy == 0 and facing_target and st.melee_cd <= 0:
+            return MELEE
+
+        if dx != 0 and facing_target and st.shoot_cd <= 0:
+            if dy < 0:
+                return SHOOT_DIAG_UP
+            if dy > 0:
+                return SHOOT_DIAG_DOWN
+            return SHOOT_FORWARD
+
+        if dx < 0:
+            return MOVE_LEFT
+        if dx > 0:
+            return MOVE_RIGHT
+        if other.y < st.y and env._on_ground(st):
+            return JUMP
+        return IDLE
+
+
+@dataclass
 class EvasivePolicy:
     """Baseline that prioritizes avoiding direct horizontal pressure."""
 
@@ -193,7 +231,7 @@ def make_builtin_policy(name: str, seed: int | None = None) -> EvalPolicy:
     if name == "scripted":
         return ScriptedPolicy()
     if name == "aggressive":
-        return ScriptedPolicy()
+        return AggressivePolicy()
     if name == "evasive":
         return EvasivePolicy()
     raise ValueError(f"Unknown built-in policy: {name}")
