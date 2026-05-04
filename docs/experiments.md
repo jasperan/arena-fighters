@@ -253,7 +253,9 @@ historical frozen snapshots. The training logger also records
 `self_play/latest_opponent_snapshot_id`, `self_play/last_opponent_snapshot_id`,
 and `self_play/last_sample_was_historical`. Reset info also includes active
 snapshot ids and per-snapshot sample counts under `opponent_pool`, which helps
-detect silent collapse to only the latest policy.
+detect silent collapse to only the latest policy. Checkpoint metadata records the
+latest opponent-pool stats, and generated real-run manifests require historical
+opponent sampling evidence before promotion.
 
 Current stages:
 

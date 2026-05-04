@@ -190,6 +190,7 @@ python scripts/train.py --mode long_run_check \
   --long-run-min-map-score 0.0 \
   --long-run-require-replay-analysis \
   --long-run-min-replay-combat-maps 4 \
+  --long-run-min-opponent-historical-samples 1 \
   --long-run-require-candidate-checkpoint \
   --long-run-require-candidate-metadata \
   --long-run-require-candidate-integrity \
@@ -236,6 +237,9 @@ reject runs whose sampled combat replay evidence covers too few distinct
 required maps. Generated long-run manifests default this threshold to the full
 required-map count, so the standard four-map run expects combat replay evidence
 on all four maps.
+Generated real-run manifests also require at least one historical-opponent sample
+recorded in the selected checkpoint metadata, so a run cannot pass promotion if
+it never exercised frozen opponent snapshots.
 Use `--long-run-require-candidate-checkpoint` to reject stale promotion audits
 whose selected checkpoint path is missing.
 Use `--long-run-require-candidate-metadata` to require the checkpoint metadata
@@ -289,6 +293,7 @@ Promote a checkpoint only when:
 - head-to-head standing is not worse than the older checkpoints being replaced
 - sampled replay combat covers enough distinct required maps
 - replay analysis from sampled episodes shows actual combat interactions
+- selected candidate checkpoint metadata shows historical opponent sampling
 - selected candidate checkpoint still exists
 - selected candidate checkpoint metadata sidecar still exists
 - selected candidate checkpoint metadata digest still matches the checkpoint file

@@ -13,7 +13,7 @@ Two agents spawn on a multi-platform arena, shoot projectiles, swing melee attac
 - **Curriculum training**: named map-progression stages update the active training map pool and reward preset over time
 - **Opponent pool**: samples frozen historical snapshots (80% latest, 20% random older) and logs latest-vs-historical plus per-snapshot telemetry to prevent silent strategy cycling
 - **Evaluation harness**: checkpoint-vs-baseline matchups with win rate, draw rate, episode length, action counts, damage metrics, and behavior diagnostics
-- **Checkpoint metadata**: saved checkpoints get companion `.meta.json` files with map, reward, curriculum state, size, and SHA-256 digest
+- **Checkpoint metadata**: saved checkpoints get companion `.meta.json` files with map, reward, curriculum state, opponent-pool stats, size, and SHA-256 digest
 - **Combat event counters**: env infos expose shots fired, melee attempts/hits, projectile hits, and damage totals
 - **Eval comparison**: compare saved evaluation JSON files to report metric deltas across experiments
 - **Eval gate**: fail saved-eval comparisons when key metrics regress beyond default thresholds
@@ -62,9 +62,9 @@ python scripts/train.py --mode train --curriculum map_progression
 
 Training logs go to `./tb_logs/` (viewable with `tensorboard --logdir tb_logs`).
 Saved checkpoints also get companion `.meta.json` files recording map settings,
-reward config, active curriculum stage, file size, and SHA-256 digest. Eval mode
-can find this metadata even when you pass the Stable Baselines `.zip` checkpoint
-path.
+reward config, active curriculum stage, opponent-pool stats, file size, and
+SHA-256 digest. Eval mode can find this metadata even when you pass the Stable
+Baselines `.zip` checkpoint path.
 Training also writes sampled episode replays to `--replay-dir` every
 `Config.training.replay_save_interval` episodes so long-run artifact analysis can
 inspect real training behavior without saving every rollout.
@@ -316,6 +316,7 @@ python scripts/train.py --mode long_run_check \
   --long-run-min-map-score 0.0 \
   --long-run-require-replay-analysis \
   --long-run-min-replay-combat-maps 4 \
+  --long-run-min-opponent-historical-samples 1 \
   --long-run-require-candidate-checkpoint \
   --long-run-require-candidate-metadata \
   --long-run-require-candidate-integrity \
@@ -366,6 +367,9 @@ When replay analysis is required, `--long-run-min-replay-combat-maps` rejects
 runs whose sampled replay combat evidence only appears on too few required maps.
 Generated long-run manifests default this threshold to the full required-map
 count, so the four-map protocol expects combat replay evidence on all four maps.
+Real-run manifests also require candidate checkpoint metadata to show at least
+one historical-opponent sample, which catches self-play runs that never exercised
+the frozen opponent pool.
 Use `--long-run-require-candidate-checkpoint` to reject stale promotion audits
 whose selected checkpoint path is no longer present. Use
 `--long-run-require-head-to-head` to reject bundles where rank mode skipped

@@ -155,8 +155,16 @@ def checkpoint_file_metadata(path: str | Path) -> dict | None:
     }
 
 
-def checkpoint_metadata(cfg: Config, num_timesteps: int) -> dict:
-    return {
+def json_non_negative_int(value: object) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def checkpoint_metadata(
+    cfg: Config,
+    num_timesteps: int,
+    opponent_pool_stats: dict | None = None,
+) -> dict:
+    metadata = {
         "num_timesteps": num_timesteps,
         "map_name": cfg.arena.map_name,
         "randomize_maps": cfg.arena.randomize_maps,
@@ -164,11 +172,19 @@ def checkpoint_metadata(cfg: Config, num_timesteps: int) -> dict:
         "reward": effective_reward_config(cfg, num_timesteps).__dict__,
         "curriculum": curriculum_metadata(cfg, num_timesteps),
     }
+    if opponent_pool_stats is not None:
+        metadata["opponent_pool"] = opponent_pool_stats
+    return metadata
 
 
-def write_checkpoint_metadata(path: str | Path, cfg: Config, num_timesteps: int) -> Path:
+def write_checkpoint_metadata(
+    path: str | Path,
+    cfg: Config,
+    num_timesteps: int,
+    opponent_pool_stats: dict | None = None,
+) -> Path:
     metadata_path = Path(f"{path}.meta.json")
-    metadata = checkpoint_metadata(cfg, num_timesteps)
+    metadata = checkpoint_metadata(cfg, num_timesteps, opponent_pool_stats)
     file_metadata = checkpoint_file_metadata(path)
     if file_metadata is not None:
         metadata["checkpoint_file"] = file_metadata
@@ -359,7 +375,12 @@ class SelfPlayCallback(BaseCallback):
                 label = f"{m // 1_000_000}M" if m >= 1_000_000 else f"{m // 1_000}K"
                 path = self.checkpoint_dir / f"ppo_{label}"
                 self.model.save(str(path))
-                write_checkpoint_metadata(path, self.cfg, steps)
+                write_checkpoint_metadata(
+                    path,
+                    self.cfg,
+                    steps,
+                    opponent_pool_stats=self.opponent_pool.stats(),
+                )
                 if self.verbose:
                     print(f"[Milestone] {label} steps reached, saved to {path}")
         return True
@@ -374,7 +395,12 @@ class SelfPlayCallback(BaseCallback):
             # Save checkpoint
             ckpt_path = self.checkpoint_dir / f"ppo_snap_{self._rollout_count}"
             self.model.save(str(ckpt_path))
-            write_checkpoint_metadata(ckpt_path, self.cfg, self.num_timesteps)
+            write_checkpoint_metadata(
+                ckpt_path,
+                self.cfg,
+                self.num_timesteps,
+                opponent_pool_stats=self.opponent_pool.stats(),
+            )
 
             if self.wrapper.opponent_policy is None:
                 self.wrapper.opponent_policy = clone_policy_for_opponent(self.model)
@@ -511,7 +537,12 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
 
     final_path = os.path.join(checkpoint_dir, "ppo_final")
     model.save(final_path)
-    write_checkpoint_metadata(final_path, cfg, model.num_timesteps)
+    write_checkpoint_metadata(
+        final_path,
+        cfg,
+        model.num_timesteps,
+        opponent_pool_stats=pool.stats(),
+    )
     print(f"Training complete. Final model saved to {final_path}")
 
 
@@ -1540,6 +1571,9 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "min_eval_episodes": cfg.get("min_eval_episodes"),
             "min_map_episodes": cfg.get("min_map_episodes"),
             "min_replay_combat_maps": cfg.get("min_replay_combat_maps"),
+            "min_opponent_historical_samples": cfg.get(
+                "min_opponent_historical_samples"
+            ),
             "min_head_to_head_episodes": cfg.get("min_head_to_head_episodes"),
             "min_head_to_head_map_episodes": cfg.get(
                 "min_head_to_head_map_episodes"
@@ -2569,6 +2603,7 @@ def build_long_run_check(
     min_map_score: float | None = None,
     require_replay_analysis: bool = False,
     min_replay_combat_maps: int = 0,
+    min_opponent_historical_samples: int = 0,
     require_candidate_checkpoint: bool = False,
     require_candidate_metadata: bool = False,
     require_candidate_integrity: bool = False,
@@ -2610,6 +2645,16 @@ def build_long_run_check(
         candidate_metadata,
     )
     candidate_integrity["metadata_error"] = candidate_metadata_error
+    opponent_pool_metadata = (
+        candidate_metadata.get("opponent_pool")
+        if isinstance(candidate_metadata, dict)
+        else None
+    )
+    opponent_historical_samples = (
+        json_non_negative_int(opponent_pool_metadata.get("historical_samples"))
+        if isinstance(opponent_pool_metadata, dict)
+        else None
+    )
 
     checks = [
         check_result(
@@ -2734,6 +2779,31 @@ def build_long_run_check(
                     "ignored_combat_maps": ignored_combat_maps,
                     "required_maps": list(required_maps),
                     "min_replay_combat_maps": min_replay_combat_maps,
+                },
+            )
+        )
+
+    if min_opponent_historical_samples > 0:
+        checks.append(
+            check_result(
+                "candidate_historical_opponent_samples",
+                isinstance(opponent_historical_samples, int)
+                and opponent_historical_samples >= min_opponent_historical_samples,
+                {
+                    "min_opponent_historical_samples": (
+                        min_opponent_historical_samples
+                    ),
+                    "opponent_pool": {
+                        "historical_samples": opponent_historical_samples,
+                    }
+                    if isinstance(opponent_pool_metadata, dict)
+                    else None,
+                    "historical_samples": opponent_historical_samples,
+                    "metadata_present": isinstance(candidate_metadata, dict),
+                    "opponent_pool_metadata_present": isinstance(
+                        opponent_pool_metadata,
+                        dict,
+                    ),
                 },
             )
         )
@@ -2977,6 +3047,7 @@ def build_long_run_check(
             "min_map_score": min_map_score,
             "require_replay_analysis": require_replay_analysis,
             "min_replay_combat_maps": min_replay_combat_maps,
+            "min_opponent_historical_samples": min_opponent_historical_samples,
             "min_head_to_head_episodes": min_head_to_head_episodes,
             "min_head_to_head_map_episodes": min_head_to_head_map_episodes,
             "require_candidate_checkpoint": require_candidate_checkpoint,
@@ -3000,6 +3071,7 @@ def build_long_run_input_error_check(
     min_map_score: float | None = None,
     require_replay_analysis: bool,
     min_replay_combat_maps: int = 0,
+    min_opponent_historical_samples: int = 0,
     require_candidate_checkpoint: bool = False,
     require_candidate_metadata: bool = False,
     require_candidate_integrity: bool = False,
@@ -3026,6 +3098,7 @@ def build_long_run_input_error_check(
             "min_map_score": min_map_score,
             "require_replay_analysis": require_replay_analysis,
             "min_replay_combat_maps": min_replay_combat_maps,
+            "min_opponent_historical_samples": min_opponent_historical_samples,
             "min_head_to_head_episodes": min_head_to_head_episodes,
             "min_head_to_head_map_episodes": min_head_to_head_map_episodes,
             "require_candidate_checkpoint": require_candidate_checkpoint,
@@ -3081,6 +3154,7 @@ def run_long_run_check(
     require_replay_analysis: bool,
     min_map_episodes: int | None = None,
     min_replay_combat_maps: int = 0,
+    min_opponent_historical_samples: int = 0,
     require_candidate_checkpoint: bool = False,
     require_candidate_metadata: bool = False,
     require_candidate_integrity: bool = False,
@@ -3116,6 +3190,7 @@ def run_long_run_check(
             min_map_score=min_map_score,
             require_replay_analysis=require_replay_analysis,
             min_replay_combat_maps=min_replay_combat_maps,
+            min_opponent_historical_samples=min_opponent_historical_samples,
             require_candidate_checkpoint=require_candidate_checkpoint,
             require_candidate_metadata=require_candidate_metadata,
             require_candidate_integrity=require_candidate_integrity,
@@ -3139,6 +3214,7 @@ def run_long_run_check(
             min_map_score=min_map_score,
             require_replay_analysis=require_replay_analysis,
             min_replay_combat_maps=min_replay_combat_maps,
+            min_opponent_historical_samples=min_opponent_historical_samples,
             require_candidate_checkpoint=require_candidate_checkpoint,
             require_candidate_metadata=require_candidate_metadata,
             require_candidate_integrity=require_candidate_integrity,
@@ -3321,6 +3397,9 @@ def _manifest_status_entry(
         "min_eval_episodes": cfg.get("min_eval_episodes"),
         "min_map_episodes": cfg.get("min_map_episodes"),
         "min_replay_combat_maps": cfg.get("min_replay_combat_maps"),
+        "min_opponent_historical_samples": cfg.get(
+            "min_opponent_historical_samples"
+        ),
         "require_head_to_head": cfg.get("require_head_to_head"),
         "min_head_to_head_episodes": cfg.get("min_head_to_head_episodes"),
         "min_head_to_head_map_episodes": cfg.get("min_head_to_head_map_episodes"),
@@ -3621,6 +3700,7 @@ def build_long_run_manifest(
     min_map_episodes: int | None = None,
     min_map_score: float | None = 0.0,
     min_replay_combat_maps: int | None = None,
+    min_opponent_historical_samples: int | None = None,
     min_head_to_head_episodes: int | None = None,
     min_head_to_head_map_episodes: int | None = None,
     require_candidate_checkpoint: bool = True,
@@ -3636,6 +3716,11 @@ def build_long_run_manifest(
         raise ValueError("min_map_episodes must be non-negative")
     if min_replay_combat_maps is not None and min_replay_combat_maps < 0:
         raise ValueError("min_replay_combat_maps must be non-negative")
+    if (
+        min_opponent_historical_samples is not None
+        and min_opponent_historical_samples < 0
+    ):
+        raise ValueError("min_opponent_historical_samples must be non-negative")
     if min_head_to_head_episodes is not None and min_head_to_head_episodes < 0:
         raise ValueError("min_head_to_head_episodes must be non-negative")
     if (
@@ -3717,6 +3802,11 @@ def build_long_run_manifest(
         if min_replay_combat_maps is not None
         else (default_min_replay_combat_maps if require_replay_analysis else 0)
     )
+    effective_min_opponent_historical_samples = (
+        min_opponent_historical_samples
+        if min_opponent_historical_samples is not None
+        else (1 if timesteps > 10_000 else 0)
+    )
     effective_require_head_to_head = (
         timesteps > 10_000 if require_head_to_head is None else require_head_to_head
     )
@@ -3752,6 +3842,11 @@ def build_long_run_manifest(
         long_run_check_parts.append(
             "  --long-run-min-replay-combat-maps "
             f"{_shell_arg(effective_min_replay_combat_maps)} \\"
+        )
+    if effective_min_opponent_historical_samples > 0:
+        long_run_check_parts.append(
+            "  --long-run-min-opponent-historical-samples "
+            f"{_shell_arg(effective_min_opponent_historical_samples)} \\"
         )
     if require_candidate_checkpoint:
         long_run_check_parts.append("  --long-run-require-candidate-checkpoint \\")
@@ -4113,6 +4208,9 @@ def build_long_run_manifest(
             "min_map_episodes": effective_min_map_episodes,
             "min_map_score": min_map_score,
             "min_replay_combat_maps": effective_min_replay_combat_maps,
+            "min_opponent_historical_samples": (
+                effective_min_opponent_historical_samples
+            ),
             "min_head_to_head_episodes": effective_min_head_to_head_episodes,
             "min_head_to_head_map_episodes": (
                 effective_min_head_to_head_map_episodes
@@ -4165,6 +4263,7 @@ def run_long_run_manifest(
     min_map_episodes: int | None = None,
     min_map_score: float | None = None,
     min_replay_combat_maps: int | None = None,
+    min_opponent_historical_samples: int | None = None,
     min_head_to_head_episodes: int | None = None,
     min_head_to_head_map_episodes: int | None = None,
     require_candidate_checkpoint: bool = True,
@@ -4207,6 +4306,7 @@ def run_long_run_manifest(
         min_map_episodes=min_map_episodes,
         min_map_score=min_map_score,
         min_replay_combat_maps=min_replay_combat_maps,
+        min_opponent_historical_samples=min_opponent_historical_samples,
         min_head_to_head_episodes=min_head_to_head_episodes,
         min_head_to_head_map_episodes=min_head_to_head_map_episodes,
         require_candidate_checkpoint=require_candidate_checkpoint,
@@ -4632,6 +4732,15 @@ def main():
         help="Minimum distinct maps with combat replay-analysis evidence",
     )
     parser.add_argument(
+        "--long-run-min-opponent-historical-samples",
+        type=int,
+        default=None,
+        help=(
+            "Minimum historical-opponent samples recorded in candidate checkpoint "
+            "metadata"
+        ),
+    )
+    parser.add_argument(
         "--long-run-min-head-to-head-episodes",
         type=int,
         default=0,
@@ -4720,6 +4829,11 @@ def main():
                 replay_save_interval=args.replay_save_interval,
             ),
         )
+    if (
+        args.long_run_min_opponent_historical_samples is not None
+        and args.long_run_min_opponent_historical_samples < 0
+    ):
+        parser.error("--long-run-min-opponent-historical-samples must be non-negative")
 
     if args.mode == "train":
         run_train(cfg, args.checkpoint_dir, args.replay_dir)
@@ -4881,6 +4995,9 @@ def main():
             min_map_score=args.long_run_min_map_score,
             require_replay_analysis=args.long_run_require_replay_analysis,
             min_replay_combat_maps=args.long_run_min_replay_combat_maps,
+            min_opponent_historical_samples=(
+                args.long_run_min_opponent_historical_samples or 0
+            ),
             min_head_to_head_episodes=args.long_run_min_head_to_head_episodes,
             min_head_to_head_map_episodes=(
                 args.long_run_min_head_to_head_map_episodes
@@ -4955,6 +5072,9 @@ def main():
                 ),
                 min_replay_combat_maps=(
                     args.long_run_min_replay_combat_maps or None
+                ),
+                min_opponent_historical_samples=(
+                    args.long_run_min_opponent_historical_samples
                 ),
                 min_head_to_head_episodes=(
                     args.long_run_min_head_to_head_episodes or None

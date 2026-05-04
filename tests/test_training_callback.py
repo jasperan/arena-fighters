@@ -446,6 +446,24 @@ def test_checkpoint_metadata_includes_curriculum_state():
     assert metadata["reward"] == reward_config_for_preset("anti_stall").__dict__
 
 
+def test_checkpoint_metadata_can_include_opponent_pool_stats():
+    metadata = checkpoint_metadata(
+        Config(),
+        num_timesteps=100,
+        opponent_pool_stats={
+            "size": 3,
+            "historical_samples": 7,
+            "historical_sample_rate": 0.35,
+        },
+    )
+
+    assert metadata["opponent_pool"] == {
+        "size": 3,
+        "historical_samples": 7,
+        "historical_sample_rate": 0.35,
+    }
+
+
 def test_effective_reward_config_uses_curriculum_stage_reward():
     cfg = Config()
     cfg = replace(
@@ -2533,6 +2551,99 @@ def test_build_long_run_check_can_require_candidate_integrity(tmp_path):
     assert failing_check["details"]["reason"] == "sha256_mismatch"
 
 
+def test_build_long_run_check_can_require_historical_opponent_samples(tmp_path):
+    promotion = _long_run_promotion_audit()
+    checkpoint = tmp_path / "candidate.zip"
+    checkpoint.touch()
+    write_checkpoint_metadata(
+        tmp_path / "candidate",
+        Config(),
+        num_timesteps=100,
+        opponent_pool_stats={
+            "size": 3,
+            "latest_samples": 8,
+            "historical_samples": 2,
+            "historical_sample_rate": 0.2,
+        },
+    )
+    promotion["candidate"]["checkpoint"] = str(checkpoint)
+
+    passing = build_long_run_check(
+        promotion,
+        _long_run_strategy_report(),
+        _long_run_artifact_index(),
+        min_maps=2,
+        min_opponent_historical_samples=1,
+        require_candidate_metadata=True,
+        require_replay_analysis=True,
+    )
+    failing = build_long_run_check(
+        promotion,
+        _long_run_strategy_report(),
+        _long_run_artifact_index(),
+        min_maps=2,
+        min_opponent_historical_samples=3,
+        require_candidate_metadata=True,
+        require_replay_analysis=True,
+    )
+
+    passing_check = next(
+        check
+        for check in passing["checks"]
+        if check["id"] == "candidate_historical_opponent_samples"
+    )
+    failing_check = next(
+        check
+        for check in failing["checks"]
+        if check["id"] == "candidate_historical_opponent_samples"
+    )
+
+    assert passing["passed"] is True
+    assert passing_check["passed"] is True
+    assert passing_check["details"]["historical_samples"] == 2
+    assert failing["passed"] is False
+    assert failing_check["passed"] is False
+    assert failing_check["details"]["min_opponent_historical_samples"] == 3
+
+
+def test_build_long_run_check_rejects_invalid_historical_opponent_samples(tmp_path):
+    for index, historical_samples in enumerate((True, -1)):
+        promotion = _long_run_promotion_audit()
+        checkpoint = tmp_path / f"candidate-{index}.zip"
+        checkpoint.touch()
+        write_checkpoint_metadata(
+            tmp_path / f"candidate-{index}",
+            Config(),
+            num_timesteps=100,
+            opponent_pool_stats={
+                "size": 3,
+                "latest_samples": 8,
+                "historical_samples": historical_samples,
+            },
+        )
+        promotion["candidate"]["checkpoint"] = str(checkpoint)
+
+        result = build_long_run_check(
+            promotion,
+            _long_run_strategy_report(),
+            _long_run_artifact_index(),
+            min_maps=2,
+            min_opponent_historical_samples=1,
+            require_candidate_metadata=True,
+            require_replay_analysis=True,
+        )
+
+        check = next(
+            check
+            for check in result["checks"]
+            if check["id"] == "candidate_historical_opponent_samples"
+        )
+
+        assert result["passed"] is False
+        assert check["passed"] is False
+        assert check["details"]["historical_samples"] is None
+
+
 def test_build_long_run_check_validates_candidate_metadata_required_maps(tmp_path):
     promotion = _long_run_promotion_audit()
     checkpoint = tmp_path / "candidate.zip"
@@ -2801,6 +2912,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert "--long-run-min-map-episodes 6" in manifest["shell_script"]
     assert "--long-run-min-map-score 0.0" in manifest["shell_script"]
     assert "--long-run-min-replay-combat-maps 2" in manifest["shell_script"]
+    assert "--long-run-min-opponent-historical-samples" not in manifest["shell_script"]
     assert "--long-run-min-head-to-head-episodes" not in manifest["shell_script"]
     assert "--long-run-min-head-to-head-map-episodes" not in manifest["shell_script"]
     assert "--long-run-require-candidate-checkpoint" in manifest["shell_script"]
@@ -2820,6 +2932,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert manifest["manifest_config"]["min_map_episodes"] == 6
     assert manifest["manifest_config"]["min_map_score"] == 0.0
     assert manifest["manifest_config"]["min_replay_combat_maps"] == 2
+    assert manifest["manifest_config"]["min_opponent_historical_samples"] == 0
     assert manifest["manifest_config"]["min_head_to_head_episodes"] == 0
     assert manifest["manifest_config"]["min_head_to_head_map_episodes"] is None
     assert manifest["manifest_config"]["require_candidate_checkpoint"] is True
@@ -3029,6 +3142,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     assert manifest_entry["summary"]["min_eval_episodes"] == 12
     assert manifest_entry["summary"]["min_map_episodes"] == 6
     assert manifest_entry["summary"]["min_replay_combat_maps"] == 2
+    assert manifest_entry["summary"]["min_opponent_historical_samples"] == 0
     assert manifest_entry["summary"]["min_head_to_head_episodes"] == 12
     assert manifest_entry["summary"]["min_head_to_head_map_episodes"] == 6
     assert manifest_entry["summary"]["require_candidate_checkpoint"] is True
@@ -3055,6 +3169,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     assert saved["manifest_config"]["replay_save_interval"] == 5
     assert saved["manifest_config"]["min_map_episodes"] == 6
     assert saved["manifest_config"]["min_replay_combat_maps"] == 2
+    assert saved["manifest_config"]["min_opponent_historical_samples"] == 0
     assert saved["manifest_config"]["min_head_to_head_episodes"] == 12
     assert saved["manifest_config"]["min_head_to_head_map_episodes"] == 6
     assert saved["manifest_config"]["require_candidate_checkpoint"] is True
@@ -3128,6 +3243,35 @@ def test_long_run_manifest_cli_reports_invalid_run_id(monkeypatch, capsys):
         raise AssertionError("Expected parser error for invalid run ID")
 
     assert "run_id must start" in capsys.readouterr().err
+
+
+def test_long_run_check_cli_rejects_negative_historical_opponent_threshold(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train.py",
+            "--mode",
+            "long_run_check",
+            "--long-run-min-opponent-historical-samples",
+            "-1",
+        ],
+    )
+
+    try:
+        main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected parser error for negative historical threshold")
+
+    assert (
+        "--long-run-min-opponent-historical-samples must be non-negative"
+        in capsys.readouterr().err
+    )
 
 
 def test_build_long_run_status_reports_latest_manifest_execution_state(
@@ -3433,11 +3577,13 @@ def test_build_long_run_manifest_auto_pins_replay_interval_for_tiny_runs():
     assert "--long-run-min-head-to-head-episodes" not in tiny["shell_script"]
     assert "--long-run-min-head-to-head-map-episodes" not in tiny["shell_script"]
     assert "--long-run-min-replay-combat-maps 4" in tiny["shell_script"]
+    assert "--long-run-min-opponent-historical-samples" not in tiny["shell_script"]
     assert "--long-run-require-candidate-integrity" in tiny["shell_script"]
     assert tiny["manifest_config"]["replay_save_interval"] == 1
     assert tiny["manifest_config"]["replay_save_interval_source"] == "auto_small_run"
     assert tiny["manifest_config"]["require_head_to_head"] is False
     assert tiny["manifest_config"]["min_replay_combat_maps"] == 4
+    assert tiny["manifest_config"]["min_opponent_historical_samples"] == 0
     assert tiny["manifest_config"]["min_head_to_head_episodes"] == 0
     assert tiny["manifest_config"]["min_head_to_head_map_episodes"] is None
     assert tiny["manifest_config"]["require_candidate_integrity"] is True
@@ -3446,11 +3592,13 @@ def test_build_long_run_manifest_auto_pins_replay_interval_for_tiny_runs():
     assert "--long-run-min-head-to-head-episodes 160" in long["shell_script"]
     assert "--long-run-min-head-to-head-map-episodes 40" in long["shell_script"]
     assert "--long-run-min-replay-combat-maps 4" in long["shell_script"]
+    assert "--long-run-min-opponent-historical-samples 1" in long["shell_script"]
     assert "--long-run-require-candidate-integrity" in long["shell_script"]
     assert long["manifest_config"]["replay_save_interval"] is None
     assert long["manifest_config"]["replay_save_interval_source"] == "config"
     assert long["manifest_config"]["require_head_to_head"] is True
     assert long["manifest_config"]["min_replay_combat_maps"] == 4
+    assert long["manifest_config"]["min_opponent_historical_samples"] == 1
     assert long["manifest_config"]["min_head_to_head_episodes"] == 160
     assert long["manifest_config"]["min_head_to_head_map_episodes"] == 40
     assert long["manifest_config"]["require_candidate_integrity"] is True

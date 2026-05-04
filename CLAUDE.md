@@ -66,7 +66,7 @@ python scripts/train.py --mode analyze --replay-dir replays --replay-samples-per
 python scripts/train.py --mode artifact_index --artifact-dir evals --recursive-artifacts --eval-output-dir evals --eval-label artifact-index
 python scripts/train.py --mode strategy_report --artifact-dir evals --recursive-artifacts --eval-output-dir evals --eval-label bad-strategy-report
 python scripts/train.py --mode long_run_manifest --run-id arena-manual-001 --timesteps 5000000 --eval-output-dir evals --eval-label arena-manual-001-plan
-python scripts/train.py --mode long_run_check --promotion-audit-summary evals/promotion.json --strategy-report-summary evals/strategy-report.json --artifact-index-summary evals/artifact-index.json --long-run-required-maps classic,flat,split,tower --long-run-min-eval-episodes 320 --long-run-min-map-episodes 80 --long-run-min-map-score 0.0 --long-run-require-candidate-checkpoint --long-run-require-candidate-metadata --long-run-require-candidate-integrity --eval-output-dir evals --eval-label long-run-check
+python scripts/train.py --mode long_run_check --promotion-audit-summary evals/promotion.json --strategy-report-summary evals/strategy-report.json --artifact-index-summary evals/artifact-index.json --long-run-required-maps classic,flat,split,tower --long-run-min-eval-episodes 320 --long-run-min-map-episodes 80 --long-run-min-map-score 0.0 --long-run-min-opponent-historical-samples 1 --long-run-require-candidate-checkpoint --long-run-require-candidate-metadata --long-run-require-candidate-integrity --eval-output-dir evals --eval-label long-run-check
 python scripts/train.py --mode long_run_status --artifact-dir evals --eval-output-dir evals --eval-label long-run-status
 python scripts/reward_shaping_smoke.py
 python scripts/train_eval_smoke.py
@@ -119,6 +119,7 @@ All source lives in `src/arena_fighters/`:
 - Curriculum: `map_progression` stages from flat/default rewards to full map pool/anti-stall rewards through training callback updates
 - Opponent pool (max 20 snapshots): sample frozen historical snapshots, 80% latest and 20% random older; reset info and training logger expose latest-vs-historical sampling telemetry
 - Opponent pool telemetry includes active snapshot ids, per-snapshot sample counts, last sampled snapshot id, and historical sample rate so league collapse is easier to spot
+- Checkpoint metadata records latest opponent-pool stats; generated real-run long-run checks require historical opponent samples
 - Checkpoints get companion `.meta.json` files with map settings, reward config, active curriculum stage, file size, and SHA-256 digest
 - Eval JSON includes average cumulative rewards and behavior diagnostics for idle rate, action spam, no-damage episodes, low-engagement episodes, and damage events
 - Evaluation winner inference treats timeouts as draws and knockouts by terminal HP; shaped rewards do not create timeout wins
