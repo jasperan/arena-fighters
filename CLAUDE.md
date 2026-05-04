@@ -66,7 +66,7 @@ python scripts/train.py --mode analyze --replay-dir replays --replay-samples-per
 python scripts/train.py --mode artifact_index --artifact-dir evals --recursive-artifacts --eval-output-dir evals --eval-label artifact-index
 python scripts/train.py --mode strategy_report --artifact-dir evals --recursive-artifacts --eval-output-dir evals --eval-label bad-strategy-report
 python scripts/train.py --mode long_run_manifest --run-id arena-manual-001 --timesteps 5000000 --eval-output-dir evals --eval-label arena-manual-001-plan
-python scripts/train.py --mode long_run_check --promotion-audit-summary evals/promotion.json --strategy-report-summary evals/strategy-report.json --artifact-index-summary evals/artifact-index.json --long-run-required-maps classic,flat,split,tower --long-run-min-eval-episodes 320 --long-run-min-map-score 0.0 --eval-output-dir evals --eval-label long-run-check
+python scripts/train.py --mode long_run_check --promotion-audit-summary evals/promotion.json --strategy-report-summary evals/strategy-report.json --artifact-index-summary evals/artifact-index.json --long-run-required-maps classic,flat,split,tower --long-run-min-eval-episodes 320 --long-run-min-map-episodes 80 --long-run-min-map-score 0.0 --eval-output-dir evals --eval-label long-run-check
 python scripts/train.py --mode long_run_status --artifact-dir evals --eval-output-dir evals --eval-label long-run-status
 python scripts/reward_shaping_smoke.py
 python scripts/train_eval_smoke.py
