@@ -19,15 +19,30 @@ from pathlib import Path
 from arena_fighters.evaluation import artifact_metadata
 
 
-def run_command(cmd: list[str], cwd: Path, stdout_path: Path) -> None:
-    with stdout_path.open("w") as stdout:
-        subprocess.run(
-            cmd,
-            cwd=cwd,
-            stdout=stdout,
-            stderr=subprocess.STDOUT,
-            check=True,
-        )
+def run_command(
+    cmd: list[str],
+    cwd: Path,
+    stdout_path: Path,
+    *,
+    timeout_seconds: float | None = None,
+) -> None:
+    try:
+        with stdout_path.open("w") as stdout:
+            subprocess.run(
+                cmd,
+                cwd=cwd,
+                stdout=stdout,
+                stderr=subprocess.STDOUT,
+                check=True,
+                timeout=timeout_seconds,
+            )
+    except subprocess.TimeoutExpired as exc:
+        with stdout_path.open("a") as stdout:
+            stdout.write(f"\nCommand timed out after {timeout_seconds} seconds\n")
+        raise RuntimeError(
+            f"Reward-shaping smoke command timed out after {timeout_seconds} "
+            f"seconds: {cmd}"
+        ) from exc
 
 
 def latest_artifact(output_dir: Path, label: str) -> Path:
@@ -163,6 +178,12 @@ def main() -> None:
         default="flat",
         help="Map used for the smoke (default: flat)",
     )
+    parser.add_argument(
+        "--command-timeout-seconds",
+        type=float,
+        default=300.0,
+        help="Per-command timeout in seconds (default: 300)",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -196,6 +217,7 @@ def main() -> None:
         base_cmd + common_eval + ["--eval-label", "idle-default"],
         repo_root,
         output_dir / "idle-default.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
     run_command(
         base_cmd
@@ -208,6 +230,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "idle-anti-stall.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
 
     default_eval = latest_artifact(output_dir, "idle-default")
@@ -228,6 +251,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "idle-reward-compare.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
 
     run_command(
@@ -254,6 +278,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "idle-suite.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
 
     run_command(
@@ -270,6 +295,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "strategy-report.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
     run_command(
         base_cmd
@@ -285,6 +311,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "artifact-index.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
 
     summary = build_smoke_summary(output_dir)

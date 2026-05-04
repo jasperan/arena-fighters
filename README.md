@@ -450,7 +450,8 @@ The smoke suite runs cheap checks in compute-cost order. By default it runs only
 the no-training reward-shaping and long-run artifact smokes; add
 `--include-train-eval` to include the tiny training smoke. The suite asks
 child smokes to save their own indexable summary artifacts and records those
-paths in the combined summary.
+paths in the combined summary. Use `--command-timeout-seconds` to bound each
+child smoke command in unattended runs.
 
 ### Reward Shaping Smoke
 
@@ -472,6 +473,7 @@ summaries and flag reward-shaping smoke regressions when anti-stall idle rewards
 do not decrease or draw rate increases. The nested strategy issue count is kept
 as diagnostic context, but expected idle/no-training strategy issues do not fail
 the smoke by themselves.
+Use `--command-timeout-seconds` to bound each child command.
 
 ### Long-Run Artifact Smoke
 
@@ -487,7 +489,8 @@ health artifacts, recursively index the bundle, and verify the health artifact
 is scoped to the generated run eval directory. Use `--summary-output` to save an
 indexable `long_run_artifact_smoke` summary artifact. Its summary records
 explicit validation checks so expected no-training long-run blockers do not
-become strategy blockers by themselves.
+become strategy blockers by themselves. Use `--command-timeout-seconds` to
+bound each child command.
 
 ### Train/Eval Smoke
 
@@ -507,6 +510,7 @@ opponents across `classic,flat,split,tower` maps. The relaxed audit allows
 smoke-sized draw, no-damage, and low-engagement outcomes so the command checks
 artifact plumbing rather than policy quality. It is only a wiring check; it
 does not prove learning quality.
+Use `--command-timeout-seconds` to bound each child command.
 
 ## Architecture
 

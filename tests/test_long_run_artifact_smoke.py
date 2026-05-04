@@ -1,8 +1,10 @@
 import json
+import sys
 
 from arena_fighters.evaluation import artifact_metadata
 from scripts.long_run_artifact_smoke import (
     build_artifact_smoke_summary,
+    run_command,
     validate_artifact_smoke_summary,
     write_artifact_smoke_summary,
 )
@@ -131,6 +133,24 @@ def test_write_artifact_smoke_summary_creates_parent_dirs(tmp_path):
 
     assert written == path
     assert json.loads(path.read_text()) == summary
+
+
+def test_run_command_times_out_and_marks_stdout(tmp_path):
+    stdout_path = tmp_path / "timeout.out"
+
+    try:
+        run_command(
+            [sys.executable, "-c", "import time; time.sleep(2)"],
+            tmp_path,
+            stdout_path,
+            timeout_seconds=0.05,
+        )
+    except RuntimeError as exc:
+        assert "timed out" in str(exc)
+    else:
+        raise AssertionError("expected artifact smoke command timeout")
+
+    assert "Command timed out after 0.05 seconds" in stdout_path.read_text()
 
 
 def test_validate_artifact_smoke_summary_rejects_missing_artifact_counts(tmp_path):

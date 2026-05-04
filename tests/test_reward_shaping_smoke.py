@@ -1,6 +1,11 @@
 import json
+import sys
 
-from scripts.reward_shaping_smoke import build_smoke_summary, write_smoke_summary
+from scripts.reward_shaping_smoke import (
+    build_smoke_summary,
+    run_command,
+    write_smoke_summary,
+)
 
 
 def test_build_smoke_summary_reads_expected_artifacts(tmp_path):
@@ -91,3 +96,21 @@ def test_write_smoke_summary_creates_parent_dirs(tmp_path):
 
     assert written == path
     assert json.loads(path.read_text()) == summary
+
+
+def test_run_command_times_out_and_marks_stdout(tmp_path):
+    stdout_path = tmp_path / "timeout.out"
+
+    try:
+        run_command(
+            [sys.executable, "-c", "import time; time.sleep(2)"],
+            tmp_path,
+            stdout_path,
+            timeout_seconds=0.05,
+        )
+    except RuntimeError as exc:
+        assert "timed out" in str(exc)
+    else:
+        raise AssertionError("expected reward smoke command timeout")
+
+    assert "Command timed out after 0.05 seconds" in stdout_path.read_text()

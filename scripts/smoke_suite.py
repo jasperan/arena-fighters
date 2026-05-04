@@ -29,16 +29,30 @@ from scripts.reward_shaping_smoke import build_smoke_summary as build_reward_sum
 from scripts.train_eval_smoke import build_train_eval_summary
 
 
-def run_command(cmd: list[str], cwd: Path, stdout_path: Path) -> None:
+def run_command(
+    cmd: list[str],
+    cwd: Path,
+    stdout_path: Path,
+    *,
+    timeout_seconds: float | None = None,
+) -> None:
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    with stdout_path.open("w") as stdout:
-        subprocess.run(
-            cmd,
-            cwd=cwd,
-            stdout=stdout,
-            stderr=subprocess.STDOUT,
-            check=True,
-        )
+    try:
+        with stdout_path.open("w") as stdout:
+            subprocess.run(
+                cmd,
+                cwd=cwd,
+                stdout=stdout,
+                stderr=subprocess.STDOUT,
+                check=True,
+                timeout=timeout_seconds,
+            )
+    except subprocess.TimeoutExpired as exc:
+        with stdout_path.open("a") as stdout:
+            stdout.write(f"\nCommand timed out after {timeout_seconds} seconds\n")
+        raise RuntimeError(
+            f"Smoke command timed out after {timeout_seconds} seconds: {cmd}"
+        ) from exc
 
 
 def build_smoke_commands(
@@ -210,6 +224,12 @@ def main() -> None:
         default=1,
         help="Tiny train/eval smoke rounds when enabled (default: 1)",
     )
+    parser.add_argument(
+        "--command-timeout-seconds",
+        type=float,
+        default=900.0,
+        help="Per-child smoke command timeout in seconds (default: 900)",
+    )
     args = parser.parse_args()
 
     repo_root = REPO_ROOT
@@ -230,7 +250,12 @@ def main() -> None:
     )
 
     for command in commands:
-        run_command(command["cmd"], repo_root, command["stdout_path"])
+        run_command(
+            command["cmd"],
+            repo_root,
+            command["stdout_path"],
+            timeout_seconds=args.command_timeout_seconds,
+        )
 
     summary = build_smoke_suite_summary(output_dir, commands)
     if args.summary_output:

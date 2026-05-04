@@ -32,15 +32,25 @@ def run_command(
     stdout_path: Path,
     *,
     check: bool = True,
+    timeout_seconds: float | None = None,
 ) -> int:
-    with stdout_path.open("w") as stdout:
-        result = subprocess.run(
-            cmd,
-            cwd=cwd,
-            stdout=stdout,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
+    try:
+        with stdout_path.open("w") as stdout:
+            result = subprocess.run(
+                cmd,
+                cwd=cwd,
+                stdout=stdout,
+                stderr=subprocess.STDOUT,
+                check=False,
+                timeout=timeout_seconds,
+            )
+    except subprocess.TimeoutExpired as exc:
+        with stdout_path.open("a") as stdout:
+            stdout.write(f"\nCommand timed out after {timeout_seconds} seconds\n")
+        raise RuntimeError(
+            f"Train/eval smoke command timed out after {timeout_seconds} "
+            f"seconds: {cmd}"
+        ) from exc
     if check and result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, cmd)
     return result.returncode
@@ -274,6 +284,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Save one training replay every N completed episodes (default: 1)",
     )
+    parser.add_argument(
+        "--command-timeout-seconds",
+        type=float,
+        default=1200.0,
+        help="Per-command timeout in seconds (default: 1200)",
+    )
     return parser
 
 
@@ -314,6 +330,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "train.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
 
     checkpoint = checkpoint_dir / "ppo_final.zip"
@@ -337,6 +354,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "suite.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
     if not args.skip_promotion_audit:
         run_command(
@@ -350,6 +368,7 @@ def main() -> None:
             ),
             repo_root,
             output_dir / "promotion-audit.out",
+            timeout_seconds=args.command_timeout_seconds,
         )
     run_command(
         base_cmd
@@ -367,6 +386,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "replay-analysis.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
     run_command(
         base_cmd
@@ -382,6 +402,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "strategy.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
     run_command(
         base_cmd
@@ -397,6 +418,7 @@ def main() -> None:
         ],
         repo_root,
         output_dir / "artifact-index.out",
+        timeout_seconds=args.command_timeout_seconds,
     )
 
     if not args.skip_promotion_audit and not args.skip_long_run_check:
@@ -414,6 +436,7 @@ def main() -> None:
             repo_root,
             output_dir / "long-run-check.out",
             check=False,
+            timeout_seconds=args.command_timeout_seconds,
         )
         (output_dir / "long-run-check.exitcode").write_text(
             f"{long_run_exit_code}\n"
@@ -436,6 +459,7 @@ def main() -> None:
             ],
             repo_root,
             output_dir / "artifact-index-final.out",
+            timeout_seconds=args.command_timeout_seconds,
         )
 
     print(json.dumps(build_train_eval_summary(output_dir), indent=2, sort_keys=True))

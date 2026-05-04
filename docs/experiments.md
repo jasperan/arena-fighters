@@ -321,6 +321,7 @@ autonomous run should archive the reward-shaping smoke as an indexable
 rewards do not decrease or draw rate increases. The nested strategy issue count
 is retained as diagnostic context, but expected idle/no-training strategy issues
 do not fail the smoke by themselves.
+Use `--command-timeout-seconds` to bound each child command.
 
 For a short training-to-evaluation wiring check, use:
 
@@ -340,6 +341,7 @@ coverage set as the long-run manifest: `idle,scripted,aggressive,evasive` oppone
 draw, no-damage, and low-engagement outcomes so the command validates artifact
 plumbing instead of policy quality. Treat it as a smoke check only; real policy
 quality still needs longer training.
+Use `--command-timeout-seconds` to bound each child command.
 
 For actual compute runs, use `docs/long_run_protocol.md`. To create the full
 command bundle without executing expensive training, run:
@@ -367,6 +369,7 @@ Use `--summary-output` when an autonomous run should archive the no-training
 manifest/status/health/index smoke as an indexable `long_run_artifact_smoke`
 JSON artifact. The summary records explicit validation checks so expected
 no-training long-run blockers do not become strategy blockers by themselves.
+Use `--command-timeout-seconds` to bound each child command.
 
 To run the cheap smoke bundle in compute-cost order, use:
 
@@ -381,7 +384,8 @@ tiny train/eval smoke. Use `--summary-output` when an autonomous run should
 archive the combined smoke result as an indexable `smoke_suite` JSON artifact
 that strategy reports can scan. The suite also tells child no-training smokes to
 write their own indexable summary artifacts and records those paths in
-`summary_paths`.
+`summary_paths`. Use `--command-timeout-seconds` to bound each child smoke
+command in unattended runs.
 
 Manifest generation also writes a `.preflight.sh` launcher so that exact smoke
 can be run safely without entering the expensive training path.

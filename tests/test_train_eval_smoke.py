@@ -1,4 +1,5 @@
 import json
+import sys
 
 from scripts.train import build_long_run_manifest
 from scripts.train_eval_smoke import (
@@ -9,6 +10,7 @@ from scripts.train_eval_smoke import (
     build_parser,
     build_promotion_audit_command,
     build_train_eval_summary,
+    run_command,
     validate_smoke_long_run_check,
 )
 
@@ -18,8 +20,27 @@ def test_default_smoke_suite_matches_long_run_coverage():
 
     assert args.suite_opponents == DEFAULT_SMOKE_SUITE_OPPONENTS
     assert args.suite_maps == DEFAULT_SMOKE_SUITE_MAPS
+    assert args.command_timeout_seconds == 1200.0
     assert args.suite_opponents == "idle,scripted,aggressive,evasive"
     assert args.suite_maps == "classic,flat,split,tower"
+
+
+def test_run_command_times_out_and_marks_stdout(tmp_path):
+    stdout_path = tmp_path / "timeout.out"
+
+    try:
+        run_command(
+            [sys.executable, "-c", "import time; time.sleep(2)"],
+            tmp_path,
+            stdout_path,
+            timeout_seconds=0.05,
+        )
+    except RuntimeError as exc:
+        assert "timed out" in str(exc)
+    else:
+        raise AssertionError("expected train/eval smoke command timeout")
+
+    assert "Command timed out after 0.05 seconds" in stdout_path.read_text()
 
 
 def test_default_smoke_suite_matches_long_run_manifest_defaults():
