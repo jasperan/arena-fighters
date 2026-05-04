@@ -621,6 +621,67 @@ def test_gate_rank_summary_can_limit_draw_rate():
     ]
 
 
+def test_gate_rank_summary_fails_closed_on_invalid_per_map_score():
+    summary = {
+        "rankings": [
+            {
+                "label": "candidate",
+                "score": 0.5,
+                "mean_win_rate_agent_0": 0.5,
+                "mean_no_damage_rate": 0.0,
+                "mean_low_engagement_rate": 0.0,
+                "matchup_scores": [
+                    {"map_name": "classic", "score": 0.25, "episodes": 4},
+                    {"map_name": "flat", "score": float("nan"), "episodes": 4},
+                    {"map_name": "tower", "score": "not-a-float", "episodes": 4},
+                    {"map_name": "split", "episodes": 4},
+                ],
+            }
+        ]
+    }
+
+    gate = gate_rank_summary(summary, min_map_score=0.0)
+
+    assert gate["passed"] is False
+    assert gate["failures"] == [
+        {
+            "metric": "per_map_score",
+            "value": None,
+            "min": 0.0,
+            "reason": "invalid_score",
+            "invalid_map_scores": [
+                {
+                    "map_name": "flat",
+                    "matchup_index": 1,
+                    "score": "nan",
+                    "reason": "invalid_score",
+                },
+                {
+                    "map_name": "tower",
+                    "matchup_index": 2,
+                    "score": "not-a-float",
+                    "reason": "invalid_score",
+                },
+                {
+                    "map_name": "split",
+                    "matchup_index": 3,
+                    "score": None,
+                    "reason": "missing_score",
+                },
+            ],
+            "low_score_maps": [],
+            "per_map_scores": [
+                {
+                    "map_name": "classic",
+                    "mean_score": 0.25,
+                    "matchup_count": 1,
+                    "episode_count": 4,
+                }
+            ],
+        }
+    ]
+
+
 def test_gate_rank_summary_can_require_head_to_head_rating():
     summary = {
         "rankings": [

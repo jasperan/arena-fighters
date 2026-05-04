@@ -201,7 +201,9 @@ Rank gate checks the top-ranked checkpoint against promotion thresholds:
 minimum score, minimum mean win rate, maximum draw rate, maximum no-damage rate,
 and maximum low-engagement rate. Tune the defaults with `--rank-min-score`,
 `--rank-min-win-rate`, `--rank-max-draw-rate`, `--rank-max-no-damage-rate`, and
-`--rank-max-low-engagement-rate`. For artifacts created with
+`--rank-max-low-engagement-rate`. Add `--rank-min-map-score` to require the
+top checkpoint to clear a score floor on every evaluated map instead of passing
+only on aggregate performance. For artifacts created with
 `--rank-head-to-head`, optionally require pairwise strength with
 `--rank-min-head-to-head-elo` or `--rank-min-head-to-head-score`. When
 `--eval-output-dir` is set, the rank-gate artifact is written before a failing

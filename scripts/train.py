@@ -1272,8 +1272,9 @@ def run_rank_gate(
     max_draw_rate: float,
     max_no_damage_rate: float,
     max_low_engagement_rate: float,
-    min_head_to_head_elo: float | None,
-    min_head_to_head_score: float | None,
+    min_head_to_head_elo: float | None = None,
+    min_head_to_head_score: float | None = None,
+    min_map_score: float | None = None,
     output_dir: str | None = None,
     output_label: str | None = None,
 ) -> None:
@@ -1286,6 +1287,7 @@ def run_rank_gate(
         max_draw_rate=max_draw_rate,
         max_no_damage_rate=max_no_damage_rate,
         max_low_engagement_rate=max_low_engagement_rate,
+        min_map_score=min_map_score,
         min_head_to_head_elo=min_head_to_head_elo,
         min_head_to_head_score=min_head_to_head_score,
     )
@@ -1559,6 +1561,7 @@ def run_promotion_audit(
     include_nested: bool = False,
     trusted_checkpoint_manifest: dict[str, str] | None = None,
     allow_unverified_checkpoints: bool = False,
+    min_map_score: float | None = None,
 ) -> None:
     base_label = output_label or "promotion-audit"
     rank_summary = build_rank_summary(
@@ -1594,6 +1597,7 @@ def run_promotion_audit(
         max_draw_rate=max_draw_rate,
         max_no_damage_rate=max_no_damage_rate,
         max_low_engagement_rate=max_low_engagement_rate,
+        min_map_score=min_map_score,
         min_head_to_head_elo=min_head_to_head_elo,
         min_head_to_head_score=min_head_to_head_score,
     )
@@ -5148,6 +5152,7 @@ def build_long_run_manifest(
     rank_max_draw_rate: float = 0.9,
     rank_max_no_damage_rate: float = 0.75,
     rank_max_low_engagement_rate: float = 0.5,
+    rank_min_map_score: float | None = 0.0,
     strategy_max_draw_rate: float = 0.9,
     strategy_max_no_damage_rate: float = 0.75,
     strategy_max_low_engagement_rate: float = 0.5,
@@ -5231,6 +5236,7 @@ def build_long_run_manifest(
         "max_draw_rate": rank_max_draw_rate,
         "max_no_damage_rate": rank_max_no_damage_rate,
         "max_low_engagement_rate": rank_max_low_engagement_rate,
+        "min_map_score": rank_min_map_score,
     }
     strategy_report_config = {
         "max_draw_rate": strategy_max_draw_rate,
@@ -5589,6 +5595,14 @@ def build_long_run_manifest(
                             f"  --rank-max-no-damage-rate {_shell_arg(rank_max_no_damage_rate)} \\",
                             "  --rank-max-low-engagement-rate "
                             f"{_shell_arg(rank_max_low_engagement_rate)} \\",
+                            *(
+                                [
+                                    "  --rank-min-map-score "
+                                    f"{_shell_arg(rank_min_map_score)} \\"
+                                ]
+                                if rank_min_map_score is not None
+                                else []
+                            ),
                             '  --trusted-checkpoint-manifest "$TRUSTED_CHECKPOINT_MANIFEST" \\',
                             '  --eval-output-dir "$EVAL_DIR" \\',
                             "  --eval-label promotion",
@@ -5836,6 +5850,7 @@ def run_long_run_manifest(
     rank_max_draw_rate: float = 0.9,
     rank_max_no_damage_rate: float = 0.75,
     rank_max_low_engagement_rate: float = 0.5,
+    rank_min_map_score: float | None = 0.0,
     strategy_max_draw_rate: float = 0.9,
     strategy_max_no_damage_rate: float = 0.75,
     strategy_max_low_engagement_rate: float = 0.5,
@@ -5880,6 +5895,7 @@ def run_long_run_manifest(
         rank_max_draw_rate=rank_max_draw_rate,
         rank_max_no_damage_rate=rank_max_no_damage_rate,
         rank_max_low_engagement_rate=rank_max_low_engagement_rate,
+        rank_min_map_score=rank_min_map_score,
         strategy_max_draw_rate=strategy_max_draw_rate,
         strategy_max_no_damage_rate=strategy_max_no_damage_rate,
         strategy_max_low_engagement_rate=strategy_max_low_engagement_rate,
@@ -6295,6 +6311,15 @@ def main():
         help="Maximum top-checkpoint low-engagement rate for rank_gate mode (default: 0.5)",
     )
     parser.add_argument(
+        "--rank-min-map-score",
+        type=float,
+        default=None,
+        help=(
+            "Optional minimum top-checkpoint mean score on every evaluated map "
+            "for rank_gate and promotion_audit modes"
+        ),
+    )
+    parser.add_argument(
         "--rank-min-head-to-head-elo",
         type=float,
         default=None,
@@ -6545,6 +6570,7 @@ def main():
             max_draw_rate=args.rank_max_draw_rate,
             max_no_damage_rate=args.rank_max_no_damage_rate,
             max_low_engagement_rate=args.rank_max_low_engagement_rate,
+            min_map_score=args.rank_min_map_score,
             min_head_to_head_elo=args.rank_min_head_to_head_elo,
             min_head_to_head_score=args.rank_min_head_to_head_score,
             output_dir=args.eval_output_dir,
@@ -6586,6 +6612,7 @@ def main():
             include_nested=args.audit_include_nested,
             trusted_checkpoint_manifest=trusted_checkpoint_manifest,
             allow_unverified_checkpoints=args.allow_unverified_checkpoints,
+            min_map_score=args.rank_min_map_score,
         )
     elif args.mode == "audit_summary":
         if not args.audit_summary_path:
@@ -6730,6 +6757,11 @@ def main():
                 rank_max_draw_rate=args.rank_max_draw_rate,
                 rank_max_no_damage_rate=args.rank_max_no_damage_rate,
                 rank_max_low_engagement_rate=args.rank_max_low_engagement_rate,
+                rank_min_map_score=(
+                    args.rank_min_map_score
+                    if args.rank_min_map_score is not None
+                    else 0.0
+                ),
                 strategy_max_draw_rate=args.strategy_max_draw_rate,
                 strategy_max_no_damage_rate=args.strategy_max_no_damage_rate,
                 strategy_max_low_engagement_rate=args.strategy_max_low_engagement_rate,

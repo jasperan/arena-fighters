@@ -1036,6 +1036,7 @@ def test_run_rank_gate_can_save_passing_artifact(tmp_path, capsys):
         max_draw_rate=0.9,
         max_no_damage_rate=0.75,
         max_low_engagement_rate=0.5,
+        min_map_score=None,
         min_head_to_head_elo=None,
         min_head_to_head_score=None,
         output_dir=str(output_dir),
@@ -1074,6 +1075,7 @@ def test_run_rank_gate_saves_failing_artifact_before_exit(tmp_path):
             max_draw_rate=0.9,
             max_no_damage_rate=0.75,
             max_low_engagement_rate=0.5,
+            min_map_score=None,
             min_head_to_head_elo=None,
             min_head_to_head_score=None,
             output_dir=str(output_dir),
@@ -1089,6 +1091,71 @@ def test_run_rank_gate_saves_failing_artifact_before_exit(tmp_path):
     assert saved["passed"] is False
     assert saved["candidate"]["label"] == "stalled"
     assert saved["failures"]
+
+
+def test_run_rank_gate_can_require_minimum_per_map_score(tmp_path):
+    rank_summary = tmp_path / "rank.json"
+    rank = _rank_summary(label="aggregate-good", score=0.5, win_rate=0.5)
+    rank["rankings"][0]["matchup_scores"] = [
+        {"map_name": "classic", "opponent": "idle", "score": 0.5, "episodes": 10},
+        {"map_name": "flat", "opponent": "idle", "score": -0.25, "episodes": 10},
+    ]
+    rank_summary.write_text(json.dumps(rank) + "\n")
+    output_dir = tmp_path / "outputs"
+
+    try:
+        run_rank_gate(
+            str(rank_summary),
+            min_score=0.1,
+            min_win_rate=0.0,
+            max_draw_rate=0.9,
+            max_no_damage_rate=0.75,
+            max_low_engagement_rate=0.5,
+            min_map_score=0.0,
+            min_head_to_head_elo=None,
+            min_head_to_head_score=None,
+            output_dir=str(output_dir),
+            output_label="map-gate",
+        )
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("expected weak map rank gate to exit non-zero")
+
+    [saved_path] = output_dir.glob("*_map-gate.json")
+    saved = json.loads(saved_path.read_text())
+    assert saved["passed"] is False
+    assert saved["rules"]["min_map_score"] == 0.0
+    assert saved["failures"] == [
+        {
+            "metric": "per_map_score",
+            "value": -0.25,
+            "min": 0.0,
+            "reason": "below_minimum",
+            "low_score_maps": [
+                {
+                    "map_name": "flat",
+                    "mean_score": -0.25,
+                    "matchup_count": 1,
+                    "episode_count": 10,
+                },
+            ],
+            "per_map_scores": [
+                {
+                    "map_name": "classic",
+                    "mean_score": 0.5,
+                    "matchup_count": 1,
+                    "episode_count": 10,
+                },
+                {
+                    "map_name": "flat",
+                    "mean_score": -0.25,
+                    "matchup_count": 1,
+                    "episode_count": 10,
+                },
+            ],
+        }
+    ]
 
 
 def test_run_promotion_audit_saves_rank_gate_and_audit_artifacts(
@@ -1238,6 +1305,7 @@ def test_run_promotion_audit_saves_failing_artifacts_before_exit(
             max_draw_rate=0.9,
             max_no_damage_rate=0.75,
             max_low_engagement_rate=0.5,
+            min_map_score=None,
             min_head_to_head_elo=None,
             min_head_to_head_score=None,
             output_dir=str(output_dir),
@@ -3819,6 +3887,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
     assert "--rank-max-draw-rate 0.8" in manifest["shell_script"]
     assert "--rank-max-no-damage-rate 0.6" in manifest["shell_script"]
     assert "--rank-max-low-engagement-rate 0.4" in manifest["shell_script"]
+    assert "--rank-min-map-score 0.0" in manifest["shell_script"]
     assert "PROMOTION_AUDIT_EXIT=$?" in manifest["shell_script"]
     assert "promotion-audit.exitcode" in manifest["shell_script"]
     assert "promotion-audit.out" in manifest["shell_script"]
@@ -3890,6 +3959,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
         "max_draw_rate": 0.8,
         "max_no_damage_rate": 0.6,
         "max_low_engagement_rate": 0.4,
+        "min_map_score": 0.0,
     }
     assert manifest["manifest_config"]["strategy_report"] == {
         "max_draw_rate": 0.85,
@@ -4113,6 +4183,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
         preflight_script_path
     )
     assert manifest_entry["summary"]["rank_gate"]["max_draw_rate"] == 0.8
+    assert manifest_entry["summary"]["rank_gate"]["min_map_score"] == 0.0
     assert manifest_entry["summary"]["strategy_report"]["max_draw_rate"] == 0.85
     assert manifest_entry["summary"]["expensive_command_ids"] == ["train"]
     script_entry = next(
@@ -4142,6 +4213,7 @@ def test_run_long_run_manifest_saves_json_and_launcher(tmp_path, capsys):
     assert saved["manifest_config"]["self_play_sampling_preflight_min_maps"] == 2
     assert saved["manifest_config"]["replay_save_interval_source"] == "user"
     assert saved["manifest_config"]["rank_gate"]["max_draw_rate"] == 0.8
+    assert saved["manifest_config"]["rank_gate"]["min_map_score"] == 0.0
     assert saved["manifest_config"]["strategy_report"]["max_draw_rate"] == 0.85
 
 

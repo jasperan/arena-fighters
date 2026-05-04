@@ -147,7 +147,9 @@ python scripts/train.py --mode promotion_audit \
 ```
 
 The promotion audit saves rank, rank-gate, and compact promotion-audit artifacts.
-Use stricter rank-gate thresholds only after the baseline suite is stable enough
+The generated long-run launcher pins `--rank-min-map-score 0.0` by default so a
+candidate cannot hide a weak evaluated map behind a strong aggregate score. Use
+stricter rank-gate thresholds only after the baseline suite is stable enough
 that failures are informative.
 
 ## 5. Inspect Behavior
@@ -333,7 +335,7 @@ Promote a checkpoint only when:
 
 - rank gate passes with the selected thresholds
 - strategy report has no candidate-level draw-rate, no-damage, low-engagement, idle, or dominant-action issues
-- per-map metrics are not concentrated on a single easy map
+- per-map rank scores clear the selected floor instead of concentrating success on a single easy map
 - head-to-head standing is not worse than the older checkpoints being replaced
 - sampled replay combat covers enough distinct required maps
 - replay analysis from sampled episodes shows actual combat interactions

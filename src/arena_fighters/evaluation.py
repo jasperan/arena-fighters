@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -890,6 +891,94 @@ def rank_baseline_suites(
     }
 
 
+def _finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def _json_safe_value(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | bool):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else repr(value)
+    return repr(value)
+
+
+def _episode_count(value: Any) -> int:
+    try:
+        count = int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, count)
+
+
+def ranking_per_map_score_details(
+    candidate: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    per_map: dict[str, dict[str, Any]] = {}
+    invalid_scores = []
+    for matchup_index, item in enumerate(candidate.get("matchup_scores", [])):
+        if not isinstance(item, dict):
+            continue
+        map_name = item.get("map_name")
+        if not map_name:
+            continue
+        if "score" not in item:
+            invalid_scores.append(
+                {
+                    "map_name": str(map_name),
+                    "matchup_index": matchup_index,
+                    "score": None,
+                    "reason": "missing_score",
+                }
+            )
+            continue
+        score = _finite_float(item["score"])
+        if score is None:
+            invalid_scores.append(
+                {
+                    "map_name": str(map_name),
+                    "matchup_index": matchup_index,
+                    "score": _json_safe_value(item.get("score")),
+                    "reason": "invalid_score",
+                }
+            )
+            continue
+        entry = per_map.setdefault(
+            str(map_name),
+            {
+                "map_name": str(map_name),
+                "score_sum": 0.0,
+                "matchup_count": 0,
+                "episode_count": 0,
+            },
+        )
+        entry["score_sum"] += score
+        entry["matchup_count"] += 1
+        entry["episode_count"] += _episode_count(item.get("episodes", 0))
+    per_map_scores = [
+        {
+            "map_name": item["map_name"],
+            "mean_score": item["score_sum"] / item["matchup_count"],
+            "matchup_count": item["matchup_count"],
+            "episode_count": item["episode_count"],
+        }
+        for item in sorted(per_map.values(), key=lambda row: row["map_name"])
+        if item["matchup_count"] > 0
+    ]
+    return per_map_scores, invalid_scores
+
+
+def ranking_per_map_scores(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    per_map_scores, _ = ranking_per_map_score_details(candidate)
+    return per_map_scores
+
+
 def gate_rank_summary(
     summary: dict[str, Any],
     min_score: float = 0.1,
@@ -897,6 +986,7 @@ def gate_rank_summary(
     max_draw_rate: float = 0.9,
     max_no_damage_rate: float = 0.75,
     max_low_engagement_rate: float = 0.5,
+    min_map_score: float | None = None,
     min_head_to_head_elo: float | None = None,
     min_head_to_head_score: float | None = None,
 ) -> dict[str, Any]:
@@ -907,6 +997,7 @@ def gate_rank_summary(
         "max_draw_rate": max_draw_rate,
         "max_no_damage_rate": max_no_damage_rate,
         "max_low_engagement_rate": max_low_engagement_rate,
+        "min_map_score": min_map_score,
         "min_head_to_head_elo": min_head_to_head_elo,
         "min_head_to_head_score": min_head_to_head_score,
     }
@@ -964,6 +1055,41 @@ def gate_rank_summary(
                     "value": value,
                     "max": threshold,
                     "reason": "above_maximum",
+                }
+            )
+
+    if min_map_score is not None:
+        per_map_scores, invalid_map_scores = ranking_per_map_score_details(candidate)
+        low_score_maps = [
+            item for item in per_map_scores if item["mean_score"] < min_map_score
+        ]
+        if invalid_map_scores:
+            failures.append(
+                {
+                    "metric": "per_map_score",
+                    "value": None,
+                    "min": min_map_score,
+                    "reason": "invalid_score",
+                    "invalid_map_scores": invalid_map_scores,
+                    "low_score_maps": low_score_maps,
+                    "per_map_scores": per_map_scores,
+                }
+            )
+        elif not per_map_scores or low_score_maps:
+            failures.append(
+                {
+                    "metric": "per_map_score",
+                    "value": (
+                        min(item["mean_score"] for item in low_score_maps)
+                        if low_score_maps
+                        else None
+                    ),
+                    "min": min_map_score,
+                    "reason": (
+                        "below_minimum" if low_score_maps else "missing_map_scores"
+                    ),
+                    "low_score_maps": low_score_maps,
+                    "per_map_scores": per_map_scores,
                 }
             )
 
