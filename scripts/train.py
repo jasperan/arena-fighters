@@ -4009,6 +4009,45 @@ def _directory_file_count(path: Path | None) -> int:
     return sum(1 for child in path.iterdir() if child.is_file())
 
 
+def _checkpoint_artifact_paths(path: Path | None) -> tuple[Path, ...]:
+    if path is None or not path.exists():
+        return ()
+    return tuple(
+        sorted(
+            child
+            for child in path.iterdir()
+            if child.is_file()
+            and not child.name.endswith(".meta.json")
+            and (
+                child.suffix == ".zip"
+                or (child.suffix == "" and child.name.startswith("ppo_"))
+            )
+        )
+    )
+
+
+def _is_valid_training_replay_file(path: Path) -> bool:
+    if path.suffix != ".json" or not path.name.startswith("episode_"):
+        return False
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("frames"), list)
+
+
+def _training_replay_paths(path: Path | None) -> tuple[Path, ...]:
+    if path is None or not path.exists():
+        return ()
+    return tuple(
+        sorted(
+            child
+            for child in path.iterdir()
+            if child.is_file() and _is_valid_training_replay_file(child)
+        )
+    )
+
+
 def checkpoint_opponent_pool_status(
     checkpoint_path: Path | None,
     min_historical_samples: int = 0,
@@ -4163,6 +4202,8 @@ def _manifest_status_entry(
         checkpoint_path,
         min_historical_samples=min_opponent_historical_samples or 0,
     )
+    checkpoint_files = _checkpoint_artifact_paths(checkpoint_path)
+    replay_files = _training_replay_paths(replay_path)
     return {
         "path": str(manifest_path),
         "run_id": cfg.get("run_id"),
@@ -4184,10 +4225,12 @@ def _manifest_status_entry(
         ),
         "checkpoint_dir": checkpoint_dir,
         "checkpoint_dir_exists": checkpoint_path.exists() if checkpoint_path else False,
-        "checkpoint_file_count": _directory_file_count(checkpoint_path),
+        "checkpoint_file_count": len(checkpoint_files),
+        "checkpoint_total_file_count": _directory_file_count(checkpoint_path),
         "replay_dir": replay_dir,
         "replay_dir_exists": replay_path.exists() if replay_path else False,
-        "replay_file_count": _directory_file_count(replay_path),
+        "replay_file_count": len(replay_files),
+        "replay_total_file_count": _directory_file_count(replay_path),
         "preflight_dir": preflight_dir,
         "preflight_dir_exists": (
             Path(preflight_dir).exists() if preflight_dir else False

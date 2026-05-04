@@ -4147,6 +4147,57 @@ def test_build_long_run_status_distinguishes_preflight_only_run(tmp_path, monkey
     assert latest["replay_file_count"] == 0
 
 
+def test_build_long_run_status_requires_usable_checkpoint_and_replay_files(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    manifest = build_long_run_manifest(
+        run_id="status-run",
+        checkpoint_root=str(tmp_path / "checkpoints"),
+        eval_root=str(artifact_dir),
+        replay_root=str(tmp_path / "replays"),
+        timesteps=5_000_000,
+    )
+    manifest_path = artifact_dir / "status-plan.json"
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    checkpoint_dir = Path(manifest["manifest_config"]["checkpoint_dir"])
+    replay_dir = Path(manifest["manifest_config"]["replay_dir"])
+    checkpoint_dir.mkdir(parents=True)
+    replay_dir.mkdir(parents=True)
+    (checkpoint_dir / "ppo_final.meta.json").write_text("{}\n")
+    (checkpoint_dir / "notes.txt").write_text("not a checkpoint\n")
+    (replay_dir / "notes.txt").write_text("not a replay\n")
+    (replay_dir / "episode_0001.json").write_text('{"episode_id": 1}\n')
+
+    status = build_long_run_status(artifact_dir)
+
+    latest = status["latest_manifest"]
+    assert latest["checkpoint_file_count"] == 0
+    assert latest["checkpoint_total_file_count"] == 2
+    assert latest["replay_file_count"] == 0
+    assert latest["replay_total_file_count"] == 2
+    assert "candidate_checkpoint_files" in status["missing_evidence"]
+    assert "real_training_replay_files" in status["missing_evidence"]
+
+    (checkpoint_dir / "ppo_final.zip").write_bytes(b"checkpoint")
+    (replay_dir / "episode_0002.json").write_text(
+        json.dumps({"episode_id": 2, "frames": []}) + "\n"
+    )
+
+    passing_status = build_long_run_status(artifact_dir)
+
+    passing_latest = passing_status["latest_manifest"]
+    assert passing_latest["checkpoint_file_count"] == 1
+    assert passing_latest["checkpoint_total_file_count"] == 3
+    assert passing_latest["replay_file_count"] == 1
+    assert passing_latest["replay_total_file_count"] == 3
+    assert "candidate_checkpoint_files" not in passing_status["missing_evidence"]
+    assert "real_training_replay_files" not in passing_status["missing_evidence"]
+
+
 def test_build_long_run_status_reports_checkpoint_historical_opponent_samples(
     tmp_path,
     monkeypatch,

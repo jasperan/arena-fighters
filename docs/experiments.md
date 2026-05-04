@@ -412,10 +412,11 @@ The status output reports the latest manifest, whether the run directory exists,
 passing long-run-check counts, and the next launcher command when the plan has
 not been executed and the manifest source snapshot still matches the current
 clean checkout. It also reports `missing_evidence` entries for absent exit-code
-sidecars, checkpoint files, replay files, or latest-run verifier artifacts, and
-includes `source_safe_to_launch` plus `source_stale_reasons` before a long run is
-started. The latest manifest status also summarizes checkpoint opponent-pool
-metadata and flags missing historical-opponent sample evidence.
+sidecars, usable checkpoint files, valid training replay files, or latest-run
+verifier artifacts, and includes `source_safe_to_launch` plus
+`source_stale_reasons` before a long run is started. The latest manifest status
+also summarizes checkpoint opponent-pool metadata and flags missing
+historical-opponent sample evidence.
 League health mode rolls the latest strategy report, long-run status,
 rank/head-to-head standings, promotion audit, and long-run check into one
 promotion-health artifact with `health.blockers`, `health.warnings`, opponent-pool
