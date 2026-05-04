@@ -1783,6 +1783,39 @@ def _is_indexable_artifact_path(path: Path, root: Path) -> bool:
     return True
 
 
+def _strategy_issue_list(issues: object) -> list[dict]:
+    if not isinstance(issues, list):
+        return []
+    return [issue for issue in issues if isinstance(issue, dict)]
+
+
+def _strategy_invalid_matchup_metric_summary(issues: object) -> dict:
+    issue_list = _strategy_issue_list(issues)
+    invalid_issues = [
+        issue
+        for issue in issue_list
+        if issue.get("metric") == "invalid_matchup_metric"
+    ]
+    invalid_metrics = sorted(
+        {
+            str(issue.get("invalid_metric"))
+            for issue in invalid_issues
+            if issue.get("invalid_metric")
+        }
+    )
+    return {
+        "invalid_matchup_metric_count": len(invalid_issues),
+        "candidate_invalid_matchup_metric_count": len(
+            [
+                issue
+                for issue in invalid_issues
+                if str(issue.get("scope", "")).startswith("candidate:")
+            ]
+        ),
+        "invalid_matchup_metrics": invalid_metrics,
+    }
+
+
 def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
     if artifact_type == "eval":
         cfg = data.get("eval_config", {})
@@ -1866,14 +1899,22 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "ranking_labels": data.get("ranking_labels", []),
         }
     if artifact_type == "strategy_report":
-        issues = data.get("issues", [])
+        issues = _strategy_issue_list(data.get("issues", []))
         weaknesses = data.get("weaknesses", [])
         skipped_artifacts = data.get("skipped_artifacts", [])
+        invalid_matchups = _strategy_invalid_matchup_metric_summary(issues)
         return {
             "issue_count": data.get("issue_count", len(issues)),
             "weakness_count": data.get("weakness_count", len(weaknesses)),
             "worst_weakness": weaknesses[0] if weaknesses else None,
             "skipped_artifact_count": len(skipped_artifacts),
+            "invalid_matchup_metric_count": invalid_matchups[
+                "invalid_matchup_metric_count"
+            ],
+            "candidate_invalid_matchup_metric_count": invalid_matchups[
+                "candidate_invalid_matchup_metric_count"
+            ],
+            "invalid_matchup_metrics": invalid_matchups["invalid_matchup_metrics"],
             "candidate_issue_count": len(
                 [
                     issue
@@ -2020,6 +2061,15 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
             "strategy_issue_count": signals.get("strategy", {}).get("issue_count"),
             "candidate_strategy_issue_count": signals.get("strategy", {}).get(
                 "candidate_issue_count"
+            ),
+            "strategy_invalid_matchup_metric_count": signals.get(
+                "strategy", {}
+            ).get("invalid_matchup_metric_count"),
+            "candidate_strategy_invalid_matchup_metric_count": signals.get(
+                "strategy", {}
+            ).get("candidate_invalid_matchup_metric_count"),
+            "strategy_invalid_matchup_metrics": signals.get("strategy", {}).get(
+                "invalid_matchup_metrics"
             ),
             "strategy_skipped_artifact_count": signals.get("strategy", {}).get(
                 "skipped_artifact_count"
@@ -5016,8 +5066,7 @@ def build_league_health_report(
     long_run_check = latest["long_run_check"] or {}
 
     strategy_issues = strategy.get("issues", [])
-    if not isinstance(strategy_issues, list):
-        strategy_issues = []
+    strategy_issues = _strategy_issue_list(strategy_issues)
     candidate_issues = [
         issue
         for issue in strategy_issues
@@ -5048,6 +5097,7 @@ def build_league_health_report(
     weakness_maps = sorted(
         {weakness.get("map_name") for weakness in weaknesses if weakness.get("map_name")}
     )
+    invalid_matchups = _strategy_invalid_matchup_metric_summary(strategy_issues)
 
     checkpoint_pool = latest_manifest.get("checkpoint_opponent_pool") or {}
     if not isinstance(checkpoint_pool, dict):
@@ -5159,6 +5209,15 @@ def build_league_health_report(
                 "historical_sampling_issue_count": len(historical_sampling_issues),
                 "replay_issue_count": len(replay_strategy_issues),
                 "smoke_issue_count": len(smoke_strategy_issues),
+                "invalid_matchup_metric_count": invalid_matchups[
+                    "invalid_matchup_metric_count"
+                ],
+                "candidate_invalid_matchup_metric_count": invalid_matchups[
+                    "candidate_invalid_matchup_metric_count"
+                ],
+                "invalid_matchup_metrics": invalid_matchups[
+                    "invalid_matchup_metrics"
+                ],
                 "skipped_artifact_count": len(strategy_skipped_artifacts),
                 "skipped_artifacts": strategy_skipped_artifacts,
                 "issue_metrics": sorted(

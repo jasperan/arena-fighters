@@ -228,7 +228,8 @@ summaries, and links such as compare before/after paths, rank-gate rank
 summaries, promotion-audit rank/gate paths, strategy-report issue counts, and
 long-run-check failed required checks. Rank summaries also include the top
 checkpoint's worst map score and invalid map-score count for quick triage. It
-also records strategy-report skipped artifact counts for malformed inputs. It
+also records strategy-report skipped artifact counts and invalid matchup metric
+counts for malformed inputs. It
 avoids duplicating the full nested JSON in rank and suite artifacts.
 
 ## 11. Detect Bad Strategies
@@ -255,9 +256,10 @@ Tune thresholds with
 `--strategy-max-low-engagement-rate`, `--strategy-max-idle-rate`, and
 `--strategy-max-dominant-action-rate`. It also reports the weakest suite/rank
 map-opponent matchups by score, capped by `--strategy-max-weaknesses`.
-Malformed matchup metrics are reported as `invalid_matchup_metric` issues.
-Artifacts that still cannot be analyzed are skipped with a recorded reason so
-one bad file does not hide the rest of the report.
+Malformed matchup metrics are reported as `invalid_matchup_metric` issues, and
+compact strategy or league-health summaries expose the affected metric names and
+candidate-scoped counts. Artifacts that still cannot be analyzed are skipped
+with a recorded reason so one bad file does not hide the rest of the report.
 
 ## 12. Curriculum Planning
 
@@ -437,7 +439,9 @@ health artifacts before the final artifact index, so each run ends with a compac
 triage bundle even when promotion fails.
 League health blocks on candidate, replay, historical-opponent, and smoke-scoped
 strategy issues, so failed smoke summaries or smoke artifacts mixed into a run
-directory cannot look healthy.
+directory cannot look healthy. It also surfaces invalid matchup metric counts
+from the latest strategy report so malformed evaluation fields are visible in
+the compact triage bundle.
 When a diagnostic manifest uses `--timesteps 10000` or less, the launcher pins
 `--replay-save-interval 1` so replay analysis is covered even in tiny runs.
 To see whether the latest generated plan has actually produced run evidence,

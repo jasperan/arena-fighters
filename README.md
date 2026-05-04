@@ -249,7 +249,8 @@ between artifacts such as compare before/after paths, rank-gate rank summaries,
 promotion-audit rank/gate paths, strategy-report issue counts, and
 long-run-check failed required checks. Rank summaries include the top checkpoint's
 worst map score and invalid map-score count for quick triage. It also indexes
-strategy-report skipped artifact counts so malformed analysis inputs are visible.
+strategy-report skipped artifact counts and invalid matchup metric counts so
+malformed analysis inputs are visible.
 It also indexes `.exitcode`, `.sh`, and
 `.out` sidecars from generated long-run launchers with compact summaries. It
 does not copy nested rank or suite JSON into a new shape; it points at the source
@@ -274,8 +275,10 @@ regressions, or failed smoke health/strategy signals. Tune thresholds with
 report also ranks the weakest suite/rank map-opponent matchups by score so the
 next curriculum, reward, or training pass can target the most fragile maps.
 Limit that list with `--strategy-max-weaknesses`. Malformed matchup metrics are
-reported as `invalid_matchup_metric` issues; artifacts that still cannot be
-analyzed are skipped with a recorded reason instead of aborting the whole report.
+reported as `invalid_matchup_metric` issues, and compact strategy or
+league-health summaries expose the affected metric names and candidate-scoped
+counts. Artifacts that still cannot be analyzed are skipped with a recorded
+reason instead of aborting the whole report.
 
 ### Long-Run Check
 

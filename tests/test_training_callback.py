@@ -1494,6 +1494,9 @@ def test_build_artifact_index_summarizes_artifacts_and_links(tmp_path):
         "weakness_count": 0,
         "worst_weakness": None,
         "skipped_artifact_count": 0,
+        "invalid_matchup_metric_count": 0,
+        "candidate_invalid_matchup_metric_count": 0,
+        "invalid_matchup_metrics": [],
         "candidate_issue_count": 1,
         "smoke_issue_count": 0,
         "issue_metrics": ["draw_rate", "no_damage_rate"],
@@ -2320,6 +2323,45 @@ def test_build_artifact_index_summarizes_strategy_report_skips(tmp_path):
         if entry["artifact_type"] == "strategy_report"
     ]
     assert strategy_entry["summary"]["skipped_artifact_count"] == 1
+
+
+def test_build_artifact_index_summarizes_invalid_matchup_metrics(tmp_path):
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 3,
+        "issues": [
+            {
+                "scope": "candidate:candidate:rank_suite:flat/idle",
+                "metric": "invalid_matchup_metric",
+                "invalid_metric": "episodes",
+            },
+            {
+                "scope": "suite:classic/random",
+                "metric": "invalid_matchup_metric",
+                "invalid_metric": "win_rate_agent_0",
+            },
+            {"scope": "candidate:candidate", "metric": "draw_rate"},
+        ],
+        "scanned_artifacts": 2,
+        "weakness_count": 0,
+        "weaknesses": [],
+    }
+    (tmp_path / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+
+    index = build_artifact_index(tmp_path)
+
+    [strategy_entry] = [
+        entry
+        for entry in index["artifacts"]
+        if entry["artifact_type"] == "strategy_report"
+    ]
+    summary = strategy_entry["summary"]
+    assert summary["invalid_matchup_metric_count"] == 2
+    assert summary["candidate_invalid_matchup_metric_count"] == 1
+    assert summary["invalid_matchup_metrics"] == [
+        "episodes",
+        "win_rate_agent_0",
+    ]
 
 
 def test_build_strategy_report_extracts_rank_matchup_weaknesses(tmp_path):
@@ -5299,6 +5341,12 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
     }
     assert report["signals"]["strategy"]["candidate_issue_count"] == 1
     assert report["signals"]["strategy"]["historical_sampling_issue_count"] == 1
+    assert report["signals"]["strategy"]["invalid_matchup_metric_count"] == 0
+    assert (
+        report["signals"]["strategy"]["candidate_invalid_matchup_metric_count"]
+        == 0
+    )
+    assert report["signals"]["strategy"]["invalid_matchup_metrics"] == []
     assert report["signals"]["strategy"]["skipped_artifact_count"] == 0
     assert report["signals"]["map_weaknesses"]["maps"] == ["flat"]
     assert report["signals"]["map_weaknesses"]["worst"]["scope"] == "suite:flat/idle"
@@ -5344,6 +5392,82 @@ def test_build_league_health_report_summarizes_latest_league_signals(tmp_path):
     )
     assert report["signals"]["long_run"]["failed_required_checks"] == [
         "no_candidate_bad_strategy_issues"
+    ]
+
+
+def test_build_league_health_surfaces_invalid_matchup_metrics(tmp_path):
+    artifact_dir = tmp_path / "evals"
+    artifact_dir.mkdir()
+    strategy_report = {
+        "artifact": artifact_metadata("strategy_report"),
+        "issue_count": 2,
+        "issues": [
+            {
+                "scope": "candidate:candidate:rank_suite:flat/idle",
+                "metric": "invalid_matchup_metric",
+                "invalid_metric": "episodes",
+                "value": "bad-count",
+            },
+            {
+                "scope": "suite:classic/random",
+                "metric": "invalid_matchup_metric",
+                "invalid_metric": "win_rate_agent_0",
+                "value": "bad-rate",
+            },
+        ],
+        "weakness_count": 0,
+        "weaknesses": [],
+    }
+    long_run_status = {
+        "artifact": artifact_metadata("long_run_status"),
+        "candidate_evidence_ready": True,
+        "missing_evidence": [],
+        "latest_manifest": {"run_id": "status-run"},
+    }
+    rank = _rank_summary(label="candidate", score=0.5)
+    promotion = _promotion_audit_summary()
+    long_run_check = {
+        "artifact": artifact_metadata("long_run_check"),
+        "passed": True,
+        "candidate": {"label": "candidate", "score": 0.5},
+        "checks": [],
+    }
+    (artifact_dir / "strategy.json").write_text(json.dumps(strategy_report) + "\n")
+    (artifact_dir / "status.json").write_text(json.dumps(long_run_status) + "\n")
+    (artifact_dir / "rank.json").write_text(json.dumps(rank) + "\n")
+    (artifact_dir / "promotion.json").write_text(json.dumps(promotion) + "\n")
+    (artifact_dir / "check.json").write_text(json.dumps(long_run_check) + "\n")
+
+    report = build_league_health_report(artifact_dir)
+
+    assert report["health"]["ready"] is False
+    assert report["health"]["blockers"] == ["candidate_strategy_issues"]
+    assert report["signals"]["strategy"]["invalid_matchup_metric_count"] == 2
+    assert (
+        report["signals"]["strategy"]["candidate_invalid_matchup_metric_count"]
+        == 1
+    )
+    assert report["signals"]["strategy"]["invalid_matchup_metrics"] == [
+        "episodes",
+        "win_rate_agent_0",
+    ]
+
+    health_path = artifact_dir / "health.json"
+    health_path.write_text(json.dumps(report) + "\n")
+    index = build_artifact_index(artifact_dir)
+    health_entry = next(
+        entry
+        for entry in index["artifacts"]
+        if entry["artifact_type"] == "league_health"
+    )
+    assert health_entry["summary"]["strategy_invalid_matchup_metric_count"] == 2
+    assert (
+        health_entry["summary"]["candidate_strategy_invalid_matchup_metric_count"]
+        == 1
+    )
+    assert health_entry["summary"]["strategy_invalid_matchup_metrics"] == [
+        "episodes",
+        "win_rate_agent_0",
     ]
 
 
