@@ -1,8 +1,11 @@
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import shlex
+import subprocess
 import sys
+import textwrap
 
 from arena_fighters.config import Config, IDLE, reward_config_for_preset
 from arena_fighters.evaluation import artifact_metadata
@@ -4525,6 +4528,185 @@ def test_build_long_run_status_reports_failed_self_play_preflight_summary(
         "unique_maps_seen": 4,
         "failed_checks": ["historical_samples_meet_minimum"],
     }
+
+
+def _write_fake_preflight_python(bin_dir: Path) -> Path:
+    fake_python = bin_dir / "python"
+    fake_python.write_text(
+        f"#!{sys.executable}\n"
+        + textwrap.dedent(
+            r"""
+            import json
+            import os
+            import sys
+            from pathlib import Path
+
+
+            def option(name):
+                if name not in sys.argv:
+                    return None
+                index = sys.argv.index(name)
+                return sys.argv[index + 1]
+
+
+            script = sys.argv[1] if len(sys.argv) > 1 else ""
+            if script.endswith("self_play_sampling_smoke.py"):
+                passed = (
+                    os.environ.get("ARENA_FAKE_SELF_PLAY_PREFLIGHT_PASSED", "1")
+                    == "1"
+                )
+                summary_output = Path(option("--summary-output"))
+                summary_output.parent.mkdir(parents=True, exist_ok=True)
+                output_dir = option("--output-dir")
+                if output_dir:
+                    Path(output_dir).mkdir(parents=True, exist_ok=True)
+                historical_samples = 18 if passed else 0
+                summary = {
+                    "artifact": {
+                        "artifact_type": "self_play_sampling_smoke",
+                        "schema_version": 1,
+                    },
+                    "passed": passed,
+                    "historical_samples": historical_samples,
+                    "historical_sample_rate": 0.28125 if passed else 0.0,
+                    "latest_samples": 46 if passed else 64,
+                    "unique_maps_seen": 4,
+                    "checks": [
+                        {"id": "historical_samples_meet_minimum", "passed": passed},
+                    ],
+                }
+                summary_output.write_text(json.dumps(summary) + "\n")
+                sys.exit(0 if passed else 1)
+
+            if script.endswith("train_eval_smoke.py"):
+                output_dir = option("--output-dir")
+                if output_dir:
+                    Path(output_dir).mkdir(parents=True, exist_ok=True)
+                sys.exit(0)
+
+            if script.endswith("train.py"):
+                sys.exit(0)
+
+            sys.exit(0)
+            """
+        ).lstrip()
+    )
+    fake_python.chmod(0o755)
+    return fake_python
+
+
+def test_generated_preflight_launcher_summary_flows_to_status_and_health(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
+    artifact_root = tmp_path / "evals"
+    bin_dir = tmp_path / "bin"
+    artifact_root.mkdir()
+    bin_dir.mkdir()
+    _write_fake_preflight_python(bin_dir)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+    run_id = "preflight-e2e"
+    manifest = build_long_run_manifest(
+        run_id=run_id,
+        checkpoint_root=str(tmp_path / "checkpoints"),
+        eval_root=str(artifact_root),
+        replay_root=str(tmp_path / "replays"),
+        timesteps=5_000_000,
+    )
+    manifest_path = artifact_root / f"{run_id}-plan.json"
+    launcher_path = manifest_path.with_suffix(".sh")
+    preflight_launcher_path = manifest_path.with_suffix(".preflight.sh")
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    launcher_path.write_text(manifest["shell_script"] + "\n")
+    preflight_launcher_path.write_text(manifest["preflight_shell_script"] + "\n")
+    preflight_launcher_path.chmod(0o755)
+
+    subprocess.run(
+        ["bash", str(preflight_launcher_path)],
+        cwd=Path.cwd(),
+        check=True,
+    )
+    status = build_long_run_status(artifact_root)
+    eval_dir = Path(manifest["manifest_config"]["eval_dir"])
+    (eval_dir / "status.json").write_text(json.dumps(status) + "\n")
+    health = build_league_health_report(artifact_root)
+
+    preflight = status["latest_manifest"]["self_play_sampling_preflight"]
+    assert preflight == {
+        "available": True,
+        "path": str(
+            Path(manifest["manifest_config"]["preflight_dir"])
+            / "self-play-sampling-summary.json"
+        ),
+        "passed": True,
+        "historical_samples": 18,
+        "historical_sample_rate": 0.28125,
+        "latest_samples": 46,
+        "unique_maps_seen": 4,
+        "failed_checks": [],
+    }
+    assert "self_play_sampling_preflight_summary" not in status["missing_evidence"]
+    assert health["signals"]["self_play_sampling_preflight"] == {
+        "available": True,
+        "passed": True,
+        "historical_samples": 18,
+        "historical_sample_rate": 0.28125,
+        "latest_samples": 46,
+        "unique_maps_seen": 4,
+        "failed_checks": [],
+    }
+    assert "self_play_sampling_preflight_failed" not in health["health"]["blockers"]
+
+
+def test_generated_preflight_launcher_failure_blocks_league_health(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.train.source_control_snapshot", _clean_source_snapshot)
+    monkeypatch.setenv("ARENA_FAKE_SELF_PLAY_PREFLIGHT_PASSED", "0")
+    artifact_root = tmp_path / "evals"
+    bin_dir = tmp_path / "bin"
+    artifact_root.mkdir()
+    bin_dir.mkdir()
+    _write_fake_preflight_python(bin_dir)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+    run_id = "preflight-failed-e2e"
+    manifest = build_long_run_manifest(
+        run_id=run_id,
+        checkpoint_root=str(tmp_path / "checkpoints"),
+        eval_root=str(artifact_root),
+        replay_root=str(tmp_path / "replays"),
+        timesteps=5_000_000,
+    )
+    manifest_path = artifact_root / f"{run_id}-plan.json"
+    launcher_path = manifest_path.with_suffix(".sh")
+    preflight_launcher_path = manifest_path.with_suffix(".preflight.sh")
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    launcher_path.write_text(manifest["shell_script"] + "\n")
+    preflight_launcher_path.write_text(manifest["preflight_shell_script"] + "\n")
+    preflight_launcher_path.chmod(0o755)
+
+    completed = subprocess.run(
+        ["bash", str(preflight_launcher_path)],
+        cwd=Path.cwd(),
+        check=False,
+    )
+    status = build_long_run_status(artifact_root)
+    eval_dir = Path(manifest["manifest_config"]["eval_dir"])
+    (eval_dir / "status.json").write_text(json.dumps(status) + "\n")
+    health = build_league_health_report(artifact_root)
+
+    assert completed.returncode == 1
+    assert status["latest_manifest"]["self_play_sampling_preflight"]["passed"] is False
+    assert status["latest_manifest"]["self_play_sampling_preflight"]["failed_checks"] == [
+        "historical_samples_meet_minimum"
+    ]
+    assert "self_play_sampling_preflight_summary" not in status["missing_evidence"]
+    assert "self_play_sampling_preflight_failed" in health["health"]["blockers"]
+    assert health["signals"]["self_play_sampling_preflight"]["failed_checks"] == [
+        "historical_samples_meet_minimum"
+    ]
 
 
 def test_build_long_run_status_requires_usable_checkpoint_and_replay_files(
