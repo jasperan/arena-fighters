@@ -433,6 +433,18 @@ compares reward deltas, runs an anti-stall suite, runs a strategy report, and
 builds an artifact index. It writes all generated JSON and command output to a
 timestamped `/tmp` directory by default.
 
+### Long-Run Artifact Smoke
+
+```bash
+python scripts/long_run_artifact_smoke.py
+python scripts/long_run_artifact_smoke.py --output-dir /tmp/arena-long-run-artifact-smoke --run-id artifact-smoke
+```
+
+The long-run artifact smoke does not train or execute a generated launcher. It
+uses the CLI to generate a long-run manifest, save long-run status and league
+health artifacts, recursively index the bundle, and verify the health artifact
+is scoped to the generated run eval directory.
+
 ### Train/Eval Smoke
 
 ```bash

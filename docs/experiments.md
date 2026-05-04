@@ -342,6 +342,13 @@ python scripts/train.py --mode long_run_manifest \
 The generated launcher embeds the tiny train/eval/verifier smoke preflight
 before the expensive training command. The standalone smoke above is still a
 useful quick check before generating or inspecting a long-run launcher.
+For a no-training check of only the manifest, status, league-health, and
+artifact-index plumbing, run:
+
+```bash
+python scripts/long_run_artifact_smoke.py
+```
+
 Manifest generation also writes a `.preflight.sh` launcher so that exact smoke
 can be run safely without entering the expensive training path.
 The manifest records a compact git source snapshot so long-run artifacts can be

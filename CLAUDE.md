@@ -70,6 +70,7 @@ python scripts/train.py --mode long_run_check --promotion-audit-summary evals/pr
 python scripts/train.py --mode long_run_status --artifact-dir evals --eval-output-dir evals --eval-label long-run-status
 python scripts/train.py --mode league_health --artifact-dir evals --eval-output-dir evals --eval-label league-health
 python scripts/reward_shaping_smoke.py
+python scripts/long_run_artifact_smoke.py
 python scripts/train_eval_smoke.py
 
 # TensorBoard
