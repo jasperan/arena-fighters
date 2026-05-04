@@ -349,6 +349,16 @@ artifact-index plumbing, run:
 python scripts/long_run_artifact_smoke.py
 ```
 
+To run the cheap smoke bundle in compute-cost order, use:
+
+```bash
+python scripts/smoke_suite.py
+python scripts/smoke_suite.py --include-train-eval
+```
+
+The default smoke suite avoids training; `--include-train-eval` opts into the
+tiny train/eval smoke.
+
 Manifest generation also writes a `.preflight.sh` launcher so that exact smoke
 can be run safely without entering the expensive training path.
 The manifest records a compact git source snapshot so long-run artifacts can be

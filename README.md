@@ -421,6 +421,17 @@ representative agent 0 wins, agent 1 wins, draws, combat episodes, per-map
 combat episodes, no-damage episodes, and no-attack episodes, then writes individual
 `replay_analysis` artifacts plus a `replay_analysis_batch` manifest.
 
+### Smoke Suite
+
+```bash
+python scripts/smoke_suite.py
+python scripts/smoke_suite.py --include-train-eval
+```
+
+The smoke suite runs cheap checks in compute-cost order. By default it runs only
+the no-training reward-shaping and long-run artifact smokes; add
+`--include-train-eval` to include the tiny training smoke.
+
 ### Reward Shaping Smoke
 
 ```bash
