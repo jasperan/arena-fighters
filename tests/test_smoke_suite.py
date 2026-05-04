@@ -104,6 +104,7 @@ def test_build_smoke_suite_summary_reads_no_training_smokes(tmp_path):
 
     summary = build_smoke_suite_summary(tmp_path, commands)
 
+    assert summary["artifact"] == {"artifact_type": "smoke_suite", "schema_version": 1}
     assert summary["smoke_count"] == 2
     assert summary["smoke_order"] == ["reward_shaping", "long_run_artifact"]
     assert summary["compute_classes"] == {

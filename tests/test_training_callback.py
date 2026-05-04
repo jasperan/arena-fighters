@@ -1236,6 +1236,55 @@ def test_build_artifact_index_summarizes_artifacts_and_links(tmp_path):
     }
 
 
+def test_build_artifact_index_summarizes_smoke_suite_artifacts(tmp_path):
+    smoke_suite_path = tmp_path / "smoke-suite-summary.json"
+    smoke_suite_path.write_text(
+        json.dumps(
+            {
+                "artifact": artifact_metadata("smoke_suite"),
+                "smoke_count": 2,
+                "smoke_order": ["reward_shaping", "long_run_artifact"],
+                "compute_classes": {
+                    "reward_shaping": "no_training_eval",
+                    "long_run_artifact": "no_training_artifact",
+                },
+                "smokes": {
+                    "reward_shaping": {
+                        "strategy_issue_count": 15,
+                        "indexed_artifact_count": 11,
+                    },
+                    "long_run_artifact": {
+                        "health_ready": False,
+                        "health_blockers": ["long_run_status_blocked"],
+                        "health_warnings": ["missing_rank"],
+                    },
+                },
+            }
+        )
+        + "\n"
+    )
+
+    index = build_artifact_index(tmp_path)
+
+    assert index["artifact_counts"] == {"smoke_suite": 1}
+    [entry] = index["artifacts"]
+    assert entry["artifact_type"] == "smoke_suite"
+    assert entry["summary"] == {
+        "smoke_count": 2,
+        "smoke_order": ["reward_shaping", "long_run_artifact"],
+        "compute_classes": {
+            "reward_shaping": "no_training_eval",
+            "long_run_artifact": "no_training_artifact",
+        },
+        "reward_strategy_issue_count": 15,
+        "reward_indexed_artifact_count": 11,
+        "long_run_artifact_health_ready": False,
+        "long_run_artifact_health_blockers": ["long_run_status_blocked"],
+        "long_run_artifact_health_warnings": ["missing_rank"],
+        "train_eval_long_run_check_passed": None,
+    }
+
+
 def test_run_artifact_index_can_save_manifest(tmp_path, capsys):
     artifact_dir = tmp_path / "evals"
     artifact_dir.mkdir()

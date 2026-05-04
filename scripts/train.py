@@ -1689,6 +1689,30 @@ def compact_artifact_summary(data: dict, artifact_type: str) -> dict:
                 "latest_check_passed"
             ),
         }
+    if artifact_type == "smoke_suite":
+        smokes = data.get("smokes", {})
+        reward = smokes.get("reward_shaping", {})
+        long_run_artifact = smokes.get("long_run_artifact", {})
+        train_eval = smokes.get("train_eval", {})
+        return {
+            "smoke_count": data.get("smoke_count"),
+            "smoke_order": data.get("smoke_order", []),
+            "compute_classes": data.get("compute_classes", {}),
+            "reward_strategy_issue_count": reward.get("strategy_issue_count"),
+            "reward_indexed_artifact_count": reward.get("indexed_artifact_count"),
+            "long_run_artifact_health_ready": long_run_artifact.get("health_ready"),
+            "long_run_artifact_health_blockers": long_run_artifact.get(
+                "health_blockers",
+                [],
+            ),
+            "long_run_artifact_health_warnings": long_run_artifact.get(
+                "health_warnings",
+                [],
+            ),
+            "train_eval_long_run_check_passed": train_eval.get(
+                "long_run_check_passed"
+            ),
+        }
     return {}
 
 

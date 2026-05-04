@@ -146,7 +146,7 @@ All source lives in `src/arena_fighters/`:
 - Eval JSON includes average cumulative rewards and behavior diagnostics for idle rate, action spam, no-damage episodes, low-engagement episodes, and damage events
 - Evaluation winner inference treats timeouts as draws and knockouts by terminal HP; shaped rewards do not create timeout wins
 - Eval and suite configs include active curriculum metadata plus checkpoint metadata when a companion file exists
-- Eval, suite, rank, comparison, gate, rank-gate, promotion-audit, audit-summary, artifact-index, strategy-report, long-run-check, and replay-analysis JSON include an `artifact` type/schema marker
+- Eval, suite, rank, comparison, gate, rank-gate, promotion-audit, audit-summary, artifact-index, strategy-report, long-run-check, long-run-status, league-health, smoke-suite, and replay-analysis JSON include an `artifact` type/schema marker
 - Env infos include per-step and cumulative combat event counters under `events` and `episode_events`
 - Built-in eval opponents: random, idle, scripted, aggressive, evasive
 - Eval summaries can be persisted with `--eval-output-dir`; `evals/` is ignored

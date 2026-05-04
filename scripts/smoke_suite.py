@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from arena_fighters.evaluation import artifact_metadata
 from scripts.long_run_artifact_smoke import build_artifact_smoke_summary
 from scripts.reward_shaping_smoke import build_smoke_summary as build_reward_summary
 from scripts.train_eval_smoke import build_train_eval_summary
@@ -127,6 +128,7 @@ def build_smoke_suite_summary(output_dir: Path, commands: list[dict]) -> dict:
         )
 
     return {
+        "artifact": artifact_metadata("smoke_suite"),
         "output_dir": str(output_dir),
         "smoke_count": len(commands),
         "smoke_order": [command["id"] for command in commands],

@@ -130,8 +130,9 @@ python scripts/train.py --mode eval --opponent scripted --rounds 20 --eval-outpu
 Evaluation prints JSON with win rates, draw rate, average episode length, average cumulative rewards, action counts, normalized action distributions, event totals, damage dealt, behavior diagnostics, and per-map metrics. Per-map summaries include the same action, damage, event, and behavior breakdowns so map-specific failures are easier to isolate. Timeout episodes are counted as draws even when shaped rewards differ; knockouts use terminal HP. The eval config records map settings, reward preset, active curriculum metadata, and checkpoint metadata when a companion `.meta.json` file exists. Built-in opponents are `random`, `idle`, `scripted`, `aggressive`, and `evasive`; use `--agent-policy` to choose a built-in agent 0 policy when no checkpoint is supplied. Behavior diagnostics include idle rate, dominant-action rate, no-damage episodes, low-engagement episodes, and damage-event counts. Use `--eval-output-dir` to save timestamped JSON summaries under an ignored artifact directory such as `evals/`.
 Saved eval, suite, rank, comparison, gate, rank-gate, promotion-audit,
 audit-summary, artifact-index, strategy-report, long-run-manifest,
-long-run-check, and replay-analysis/replay-analysis-batch JSON include an
-`artifact` block with `artifact_type` and `schema_version`.
+long-run-check, long-run-status, league-health, smoke-suite, and
+replay-analysis/replay-analysis-batch JSON include an `artifact` block with
+`artifact_type` and `schema_version`.
 
 Only load Stable-Baselines3 checkpoints that were produced locally or obtained
 from trusted sources. Checkpoints are serialized model artifacts, not inert data;
@@ -530,6 +531,8 @@ Use the default smoke suite for quick pre-commit artifact plumbing checks. It
 runs reward-shaping and long-run artifact smokes without training. Use full
 pytest as the broader gate before pushing code changes, and opt into
 `--include-train-eval` when you need to verify the tiny train-to-eval path.
+When saved with `--summary-output`, the smoke-suite summary is an indexable
+`smoke_suite` artifact.
 The test suite covers the environment, network, self-play wrapper, evaluation
 harness, renderer, replay system, and training metadata.
 
