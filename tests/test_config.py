@@ -1,4 +1,10 @@
 from arena_fighters.config import (
+    CH_OPP_BULLETS,
+    CH_OPP_POS,
+    CH_OWN_BULLETS,
+    CH_OWN_FACING,
+    CH_OWN_POS,
+    CH_PLATFORMS,
     Config,
     CURRICULUMS,
     PLATFORM_LAYOUT,
@@ -7,6 +13,12 @@ from arena_fighters.config import (
     NUM_ACTIONS,
     NUM_CHANNELS,
     NUM_VECTOR_OBS,
+    VEC_DUCKING,
+    VEC_MELEE_COOLDOWN,
+    VEC_OPP_HP,
+    VEC_OWN_HP,
+    VEC_SHOOT_COOLDOWN,
+    VEC_VERTICAL_VELOCITY,
     curriculum_for_name,
     curriculum_stage_for_step,
     reward_config_for_preset,
@@ -97,5 +109,21 @@ def test_action_count():
 
 
 def test_observation_constants():
+    assert (
+        CH_PLATFORMS,
+        CH_OWN_POS,
+        CH_OPP_POS,
+        CH_OWN_BULLETS,
+        CH_OPP_BULLETS,
+        CH_OWN_FACING,
+    ) == tuple(range(NUM_CHANNELS))
     assert NUM_CHANNELS == 6
+    assert (
+        VEC_OWN_HP,
+        VEC_OPP_HP,
+        VEC_SHOOT_COOLDOWN,
+        VEC_MELEE_COOLDOWN,
+        VEC_VERTICAL_VELOCITY,
+        VEC_DUCKING,
+    ) == tuple(range(NUM_VECTOR_OBS))
     assert NUM_VECTOR_OBS == 6

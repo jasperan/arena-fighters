@@ -5,14 +5,24 @@ import json
 import numpy as np
 
 from arena_fighters.config import (
+    CH_OPP_BULLETS,
+    CH_OPP_POS,
+    CH_OWN_BULLETS,
+    CH_OWN_FACING,
+    CH_OWN_POS,
+    CH_PLATFORMS,
     DUCK,
     IDLE,
     JUMP,
     MELEE,
     MOVE_RIGHT,
+    NUM_CHANNELS,
+    NUM_VECTOR_OBS,
     SHOOT_DIAG_DOWN,
     SHOOT_DIAG_UP,
     Config,
+    VEC_OPP_HP,
+    VEC_OWN_HP,
 )
 from arena_fighters.env import ArenaFightersEnv
 from arena_fighters.evaluation import (
@@ -28,6 +38,7 @@ from arena_fighters.evaluation import (
     evaluate_pairwise_suite,
     infer_winner,
     make_builtin_policy,
+    mirror_obs,
     gate_eval_comparison,
     gate_rank_summary,
     rank_baseline_suites,
@@ -68,6 +79,61 @@ def test_validate_artifact_rejects_missing_or_wrong_type():
             assert expected_message in str(exc)
         else:
             raise AssertionError("expected artifact validation to fail")
+
+
+def test_mirror_obs_flips_agent_perspective_without_mutating_input():
+    grid = np.zeros((NUM_CHANNELS, 2, 4), dtype=np.float32)
+    grid[CH_PLATFORMS] = np.array(
+        [[0, 1, 0, 1], [1, 0, 1, 0]],
+        dtype=np.float32,
+    )
+    grid[CH_OWN_POS] = np.array([[1, 2, 3, 4], [5, 6, 7, 8]], dtype=np.float32)
+    grid[CH_OPP_POS] = np.array(
+        [[9, 10, 11, 12], [13, 14, 15, 16]],
+        dtype=np.float32,
+    )
+    grid[CH_OWN_BULLETS] = 3
+    grid[CH_OPP_BULLETS] = 4
+    grid[CH_OWN_FACING] = np.array(
+        [[21, 22, 23, 24], [25, 26, 27, 28]],
+        dtype=np.float32,
+    )
+    vector = np.arange(NUM_VECTOR_OBS, dtype=np.float32)
+    vector[VEC_OWN_HP] = 20
+    vector[VEC_OPP_HP] = 15
+    obs = {"grid": grid.copy(), "vector": vector.copy()}
+    expected_vector = vector.copy()
+    expected_vector[VEC_OWN_HP], expected_vector[VEC_OPP_HP] = 15, 20
+
+    mirrored = mirror_obs(obs)
+
+    assert np.array_equal(obs["grid"], grid)
+    assert np.array_equal(obs["vector"], vector)
+    assert np.array_equal(
+        mirrored["grid"][CH_PLATFORMS],
+        np.flip(grid[CH_PLATFORMS], axis=1),
+    )
+    assert np.array_equal(
+        mirrored["grid"][CH_OWN_POS],
+        np.flip(grid[CH_OPP_POS], axis=1),
+    )
+    assert np.array_equal(
+        mirrored["grid"][CH_OPP_POS],
+        np.flip(grid[CH_OWN_POS], axis=1),
+    )
+    assert np.array_equal(
+        mirrored["grid"][CH_OWN_BULLETS],
+        np.flip(grid[CH_OPP_BULLETS], axis=1),
+    )
+    assert np.array_equal(
+        mirrored["grid"][CH_OPP_BULLETS],
+        np.flip(grid[CH_OWN_BULLETS], axis=1),
+    )
+    assert np.array_equal(
+        mirrored["grid"][CH_OWN_FACING],
+        np.flip(grid[CH_OWN_FACING], axis=1),
+    )
+    assert np.array_equal(mirrored["vector"], expected_vector)
 
 
 def test_run_episode_returns_metrics():

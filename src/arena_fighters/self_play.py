@@ -19,6 +19,7 @@ from arena_fighters.config import (
     RewardConfig,
 )
 from arena_fighters.env import ArenaFightersEnv
+from arena_fighters.observations import mirror_obs
 from arena_fighters.replay import ReplayLogger
 
 
@@ -174,7 +175,7 @@ class SelfPlayWrapper(gym.Env):
 
         agent0_obs = obs_dict["agent_0"]
         agent1_obs = obs_dict["agent_1"]
-        self._opponent_obs = self._mirror_obs(agent1_obs)
+        self._opponent_obs = mirror_obs(agent1_obs)
 
         info = dict(info_dict.get("agent_0", {}))
         info["opponent_snapshot_loaded"] = self._opponent_snapshot_loaded
@@ -215,7 +216,7 @@ class SelfPlayWrapper(gym.Env):
         # Store mirrored opponent obs for next step
         if not (terminated or truncated):
             agent1_obs = obs_dict["agent_1"]
-            self._opponent_obs = self._mirror_obs(agent1_obs)
+            self._opponent_obs = mirror_obs(agent1_obs)
         else:
             self._opponent_obs = None
 
@@ -278,31 +279,6 @@ class SelfPlayWrapper(gym.Env):
         elif hasattr(target, "eval"):
             target.eval()
         self._opponent_snapshot_loaded = True
-
-    def _mirror_obs(self, obs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """Mirror observation so the opponent sees itself as 'own' agent.
-
-        - Flips grid horizontally
-        - Swaps channels 1<->2 (own/opp position)
-        - Swaps channels 3<->4 (own/opp bullets)
-        - Swaps vector indices 0<->1 (own/opp HP)
-        """
-        grid = obs["grid"].copy()
-        vector = obs["vector"].copy()
-
-        # Flip grid horizontally (along width axis, which is axis 2)
-        grid = np.flip(grid, axis=2).copy()
-
-        # Swap own/opp position channels
-        grid[[1, 2]] = grid[[2, 1]]
-
-        # Swap own/opp bullet channels
-        grid[[3, 4]] = grid[[4, 3]]
-
-        # Swap own/opp HP in vector
-        vector[0], vector[1] = vector[1], vector[0]
-
-        return {"grid": grid, "vector": vector}
 
     def get_state(self) -> dict[str, Any]:
         """Delegate to inner env."""

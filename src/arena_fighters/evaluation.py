@@ -26,6 +26,7 @@ from arena_fighters.config import (
     Config,
 )
 from arena_fighters.env import ArenaFightersEnv
+from arena_fighters.observations import mirror_obs
 
 
 DEFAULT_GATE_RULES = {
@@ -66,18 +67,6 @@ def validate_artifact(
             f"{schema_version} (expected {expected_schema_version})"
         )
     return True
-
-
-def mirror_obs(obs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    grid = obs["grid"].copy()
-    vector = obs["vector"].copy()
-
-    grid = np.flip(grid, axis=2).copy()
-    grid[[1, 2]] = grid[[2, 1]]
-    grid[[3, 4]] = grid[[4, 3]]
-    vector[0], vector[1] = vector[1], vector[0]
-
-    return {"grid": grid, "vector": vector}
 
 
 class EvalPolicy(Protocol):

@@ -31,6 +31,12 @@ from arena_fighters.config import (
     SHOOT_DIAG_DOWN,
     SHOOT_DIAG_UP,
     SHOOT_FORWARD,
+    VEC_DUCKING,
+    VEC_MELEE_COOLDOWN,
+    VEC_OPP_HP,
+    VEC_OWN_HP,
+    VEC_SHOOT_COOLDOWN,
+    VEC_VERTICAL_VELOCITY,
     Config,
     RewardConfig,
 )
@@ -354,17 +360,13 @@ class ArenaFightersEnv(ParallelEnv):
             grid[CH_OWN_FACING, st.y, face_x] = 1.0
 
         # Vector obs
-        vector = np.array(
-            [
-                st.hp / self.cfg.agent.start_hp,
-                ost.hp / self.cfg.agent.start_hp,
-                st.shoot_cd / self.cfg.agent.shoot_cooldown,
-                st.melee_cd / self.cfg.agent.melee_cooldown,
-                st.vy / max(self.cfg.agent.jump_height, 1),
-                1.0 if st.duck_ticks > 0 else 0.0,
-            ],
-            dtype=np.float32,
-        )
+        vector = np.zeros(NUM_VECTOR_OBS, dtype=np.float32)
+        vector[VEC_OWN_HP] = st.hp / self.cfg.agent.start_hp
+        vector[VEC_OPP_HP] = ost.hp / self.cfg.agent.start_hp
+        vector[VEC_SHOOT_COOLDOWN] = st.shoot_cd / self.cfg.agent.shoot_cooldown
+        vector[VEC_MELEE_COOLDOWN] = st.melee_cd / self.cfg.agent.melee_cooldown
+        vector[VEC_VERTICAL_VELOCITY] = st.vy / max(self.cfg.agent.jump_height, 1)
+        vector[VEC_DUCKING] = 1.0 if st.duck_ticks > 0 else 0.0
 
         return {"grid": grid, "vector": vector}
 

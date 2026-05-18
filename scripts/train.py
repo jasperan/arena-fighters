@@ -49,6 +49,7 @@ from arena_fighters.evaluation import (
     write_eval_summary,
 )
 from arena_fighters.network import ArenaFeaturesExtractor
+from arena_fighters.observations import mirror_obs
 from arena_fighters.replay import ReplayLogger, analyze_replay, load_replay
 from arena_fighters.self_play import OpponentPool, SelfPlayWrapper
 from stable_baselines3.common.callbacks import BaseCallback
@@ -104,29 +105,6 @@ def clone_policy_for_opponent(model):
     elif hasattr(policy, "eval"):
         policy.eval()
     return policy
-
-
-def mirror_obs(obs: dict) -> dict:
-    """Mirror observation for the opponent agent.
-
-    Reuses the same logic as SelfPlayWrapper._mirror_obs but as a
-    standalone function so watch mode doesn't need a full wrapper.
-    """
-    import numpy as np
-
-    grid = obs["grid"].copy()
-    vector = obs["vector"].copy()
-
-    # Flip grid horizontally
-    grid = np.flip(grid, axis=2).copy()
-    # Swap own/opp position channels
-    grid[[1, 2]] = grid[[2, 1]]
-    # Swap own/opp bullet channels
-    grid[[3, 4]] = grid[[4, 3]]
-    # Swap own/opp HP in vector
-    vector[0], vector[1] = vector[1], vector[0]
-
-    return {"grid": grid, "vector": vector}
 
 
 def curriculum_metadata(cfg: Config, step: int = 0) -> dict | None:
