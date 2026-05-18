@@ -55,6 +55,39 @@ def test_load_replay_returns_frames():
         assert len(replay["frames"]) == 5
 
 
+def test_load_replay_rejects_oversized_json(tmp_path):
+    path = tmp_path / "episode_0001.json"
+    path.write_text(json.dumps({"frames": []}))
+
+    try:
+        load_replay(path, max_bytes=1)
+    except ValueError as exc:
+        assert "too large" in str(exc)
+    else:
+        raise AssertionError("expected oversized replay to fail")
+
+
+def test_load_replay_requires_object_with_list_frames(tmp_path):
+    not_object = tmp_path / "not-object.json"
+    not_object.write_text(json.dumps([]))
+    bad_frames = tmp_path / "bad-frames.json"
+    bad_frames.write_text(json.dumps({"frames": {}}))
+    null_frames = tmp_path / "null-frames.json"
+    null_frames.write_text(json.dumps({"frames": None}))
+
+    for path, expected_message in (
+        (not_object, "JSON object"),
+        (bad_frames, "frames to be a list"),
+        (null_frames, "frames to be a list"),
+    ):
+        try:
+            load_replay(path)
+        except ValueError as exc:
+            assert expected_message in str(exc)
+        else:
+            raise AssertionError(f"expected {path.name} to fail")
+
+
 def test_logger_saves_replay_event_metadata():
     with tempfile.TemporaryDirectory() as tmpdir:
         logger = ReplayLogger(replay_dir=tmpdir, save_every_n=1)

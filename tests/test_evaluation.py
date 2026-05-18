@@ -41,6 +41,7 @@ from arena_fighters.evaluation import (
     mirror_obs,
     gate_eval_comparison,
     gate_rank_summary,
+    load_eval_summary,
     rank_baseline_suites,
     run_episode,
     score_baseline_suite,
@@ -79,6 +80,30 @@ def test_validate_artifact_rejects_missing_or_wrong_type():
             assert expected_message in str(exc)
         else:
             raise AssertionError("expected artifact validation to fail")
+
+
+def test_load_eval_summary_rejects_oversized_json(tmp_path):
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps({"artifact": artifact_metadata("eval")}))
+
+    try:
+        load_eval_summary(path, max_bytes=1)
+    except ValueError as exc:
+        assert "too large" in str(exc)
+    else:
+        raise AssertionError("expected oversized eval summary to fail")
+
+
+def test_load_eval_summary_requires_json_object(tmp_path):
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps([{"artifact": artifact_metadata("eval")}]))
+
+    try:
+        load_eval_summary(path)
+    except ValueError as exc:
+        assert "JSON object" in str(exc)
+    else:
+        raise AssertionError("expected non-object eval summary to fail")
 
 
 def test_mirror_obs_flips_agent_perspective_without_mutating_input():

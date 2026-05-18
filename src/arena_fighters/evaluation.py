@@ -38,6 +38,7 @@ DEFAULT_GATE_RULES = {
 }
 
 ARTIFACT_SCHEMA_VERSION = 1
+MAX_EVAL_SUMMARY_BYTES = 32 * 1024 * 1024
 
 
 def artifact_metadata(artifact_type: str) -> dict[str, Any]:
@@ -1215,8 +1216,21 @@ def write_eval_summary(
     return path
 
 
-def load_eval_summary(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text())
+def load_eval_summary(
+    path: str | Path,
+    max_bytes: int = MAX_EVAL_SUMMARY_BYTES,
+) -> dict[str, Any]:
+    summary_path = Path(path)
+    size = summary_path.stat().st_size
+    if size > max_bytes:
+        raise ValueError(
+            f"Eval summary JSON is too large: {size} bytes exceeds "
+            f"{max_bytes} byte limit"
+        )
+    summary = json.loads(summary_path.read_text())
+    if not isinstance(summary, dict):
+        raise ValueError("Expected eval summary JSON object")
+    return summary
 
 
 def compare_eval_summaries(

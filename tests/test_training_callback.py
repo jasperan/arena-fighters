@@ -1891,6 +1891,24 @@ def test_build_artifact_index_skips_symlinked_artifacts(tmp_path):
     assert index["artifacts"] == []
 
 
+def test_build_strategy_report_skips_symlinked_json_artifacts(tmp_path):
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    outside_json = tmp_path / "outside.json"
+    outside_json.write_text(json.dumps(_eval_summary("outside", draw_rate=1.0)) + "\n")
+    symlink_path = artifact_dir / "eval.json"
+    try:
+        symlink_path.symlink_to(outside_json)
+    except OSError:
+        return
+
+    report = build_strategy_report(artifact_dir, recursive=True)
+
+    assert report["scanned_artifacts"] == 0
+    assert report["skipped_artifacts"] == []
+    assert report["issue_count"] == 0
+
+
 def test_run_analyze_replay_can_save_indexable_artifact(tmp_path, capsys):
     replay_path = tmp_path / "episode_0007.json"
     replay_path.write_text(

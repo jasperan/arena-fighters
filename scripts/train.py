@@ -3226,7 +3226,9 @@ def build_strategy_report(
         "max_dominant_action_rate": max_dominant_action_rate,
     }
     pattern = "**/*.json" if recursive else "*.json"
-    paths = sorted(path for path in root.glob(pattern) if path.is_file())
+    paths = sorted(
+        path for path in root.glob(pattern) if _is_indexable_artifact_path(path, root)
+    )
     issues = []
     weaknesses = []
     scanned = 0

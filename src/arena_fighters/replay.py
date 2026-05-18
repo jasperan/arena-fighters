@@ -7,6 +7,7 @@ from arena_fighters.config import IDLE, NUM_ACTIONS
 
 
 AGENT_NAMES = ("agent_0", "agent_1")
+MAX_REPLAY_BYTES = 64 * 1024 * 1024
 
 
 class ReplayLogger:
@@ -230,6 +231,17 @@ def _sum_agent_event_totals(event_totals: dict) -> dict[str, int]:
     return totals
 
 
-def load_replay(path: Path) -> dict:
+def load_replay(path: Path, max_bytes: int = MAX_REPLAY_BYTES) -> dict:
     """Load a replay file and return the parsed data."""
-    return json.loads(path.read_text())
+    replay_path = Path(path)
+    size = replay_path.stat().st_size
+    if size > max_bytes:
+        raise ValueError(
+            f"Replay JSON is too large: {size} bytes exceeds {max_bytes} byte limit"
+        )
+    replay = json.loads(replay_path.read_text())
+    if not isinstance(replay, dict):
+        raise ValueError("Expected replay JSON object")
+    if "frames" in replay and not isinstance(replay["frames"], list):
+        raise ValueError("Expected replay frames to be a list")
+    return replay
