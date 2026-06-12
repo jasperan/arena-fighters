@@ -216,9 +216,9 @@ def write_checkpoint_metadata(
     return metadata_path
 
 
-def checkpoint_metadata_paths(path: str | Path | None) -> tuple[Path, ...]:
+def checkpoint_metadata_path(path: str | Path | None) -> Path | None:
     if path is None:
-        return ()
+        return None
 
     checkpoint_path = Path(path)
     candidates = [Path(f"{checkpoint_path}.meta.json")]
@@ -228,17 +228,10 @@ def checkpoint_metadata_paths(path: str | Path | None) -> tuple[Path, ...]:
         candidates.append(Path(f"{checkpoint_path}.zip.meta.json"))
 
     seen: set[Path] = set()
-    unique_candidates = []
     for metadata_path in candidates:
         if metadata_path in seen:
             continue
         seen.add(metadata_path)
-        unique_candidates.append(metadata_path)
-    return tuple(unique_candidates)
-
-
-def checkpoint_metadata_path(path: str | Path | None) -> Path | None:
-    for metadata_path in checkpoint_metadata_paths(path):
         if metadata_path.exists():
             return metadata_path
     return None
@@ -578,8 +571,7 @@ class SelfPlayCallback(BaseCallback):
         self.curriculum_name = curriculum_name
         self._curriculum_stage_name: str | None = None
         self._rollout_count = 0
-        self._milestones = {100_000, 500_000, 1_000_000, 5_000_000, 10_000_000,
-                            50_000_000, 100_000_000}
+        self._milestones = set(cfg.training.milestone_steps)
         self._milestones_hit: set[int] = set()
 
     def _on_step(self) -> bool:

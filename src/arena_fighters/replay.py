@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 
 from arena_fighters.config import IDLE, NUM_ACTIONS
+from arena_fighters.evaluation import (
+    action_distribution_from_counts as _action_distribution_from_counts,
+)
 
 
 AGENT_NAMES = ("agent_0", "agent_1")
@@ -126,19 +129,6 @@ def _sum_frame_actions(frames: list[dict]) -> dict[str, dict[int, int]]:
                 )
                 action_counts[str(agent_name)][action_idx] += 1
     return action_counts
-
-
-def _action_distribution_from_counts(
-    action_counts: dict[str, dict[int, int]],
-) -> dict[str, dict[int, float]]:
-    distribution = {}
-    for agent_name, counts in action_counts.items():
-        total = sum(counts.values())
-        distribution[agent_name] = {
-            action: count / total if total else 0.0
-            for action, count in counts.items()
-        }
-    return distribution
 
 
 def _action_behavior_from_counts(action_counts: dict[str, dict[int, int]]) -> dict:

@@ -50,6 +50,15 @@ class TrainingConfig:
     opponent_pool_seed: int | None = None
     curriculum_name: str | None = None
     replay_save_interval: int = 100
+    milestone_steps: tuple[int, ...] = (
+        100_000,
+        500_000,
+        1_000_000,
+        5_000_000,
+        10_000_000,
+        50_000_000,
+        100_000_000,
+    )
 
 
 @dataclass(frozen=True)
