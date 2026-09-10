@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 
-import numpy as np
 import pytest
 
 from arena_fighters.config import (
@@ -21,7 +20,7 @@ from arena_fighters.config import (
     Config,
     reward_config_for_preset,
 )
-from arena_fighters.env import ArenaFightersEnv, Bullet
+from arena_fighters.env import ArenaFightersEnv
 
 
 def _make_env() -> ArenaFightersEnv:

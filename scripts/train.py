@@ -21,7 +21,6 @@ from pathlib import Path
 from arena_fighters.config import (
     Config,
     CURRICULUMS,
-    IDLE,
     NUM_ACTIONS,
     PLATFORM_LAYOUTS,
     REWARD_PRESET_ALIASES,
@@ -812,8 +811,8 @@ def run_watch(
             if model:
                 print(f"  \033[90mCheckpoint: {checkpoint_label}\033[0m")
             else:
-                print(f"  \033[90mRandom agents (no checkpoint)\033[0m")
-            print(f"\n  \033[90mStarting in 2s...\033[0m")
+                print("  \033[90mRandom agents (no checkpoint)\033[0m")
+            print("\n  \033[90mStarting in 2s...\033[0m")
             time.sleep(2)
 
             winner = None
@@ -859,14 +858,14 @@ def run_watch(
             print(f"\033[90m{'=' * 44}\033[0m")
             print(f"\n  \033[1mRound {round_num} Result\033[0m\n")
             if winner == "agent_0":
-                print(f"  \033[1;33m>>> @ WINS! <<<\033[0m")
+                print("  \033[1;33m>>> @ WINS! <<<\033[0m")
             elif winner == "agent_1":
-                print(f"  \033[1;35m>>> X WINS! <<<\033[0m")
+                print("  \033[1;35m>>> X WINS! <<<\033[0m")
             else:
-                print(f"  \033[90m>>> DRAW <<<\033[0m")
+                print("  \033[90m>>> DRAW <<<\033[0m")
             print(f"\n  Score: \033[1;33m@\033[0m {score[0]}  -  {score[1]} \033[1;35mX\033[0m  (draws: {draws})")
             print(f"  Win rates: \033[33m@\033[0m {score[0]*100/round_num:.0f}%  \033[35mX\033[0m {score[1]*100/round_num:.0f}%")
-            print(f"\n  \033[90mNext round in 3s... (Ctrl+C to quit)\033[0m")
+            print("\n  \033[90mNext round in 3s... (Ctrl+C to quit)\033[0m")
             time.sleep(3)
             env.close()
 

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any
 
-import gymnasium
 import numpy as np
 from gymnasium import spaces
 from pettingzoo.utils.env import ParallelEnv
@@ -545,7 +544,7 @@ class ArenaFightersEnv(ParallelEnv):
         lines.append("\033[90m+" + "-" * w + "+\033[0m")
 
         # Legend
-        lines.append(f"  \033[1;33m@\033[0m Agent 0  \033[1;35mX\033[0m Agent 1  \033[33m-\033[0m bullet  \033[90m█\033[0m platform")
+        lines.append("  \033[1;33m@\033[0m Agent 0  \033[1;35mX\033[0m Agent 1  \033[33m-\033[0m bullet  \033[90m█\033[0m platform")
 
         return "\n".join(lines)
 
