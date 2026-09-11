@@ -109,24 +109,99 @@ and camper leaving the ground floor.
 **Verdict: GAIN** (zoner is the strongest scripted baseline in the repo; camper
 adds the first platform-control archetype).
 
-## Cycle 4 — 2026-09-11 — anti-stall training run (in progress)
+## Cycle 4 — 2026-09-11 — anti-stall training run (complete)
 
 **Lane:** trained policy gains.
 
 The first trained checkpoint in repo history (`checkpoints/ppo_final`, 150k
 steps, default rewards, classic only) collapsed to **duck on 100% of ticks**
-across all eight suite matchups, winning 0 of 40 episodes (draws vs idle and
-evasive, losses vs scripted and aggressive). Holding duck blocks horizontal
-bullets, and no-damage draws cost only -1 under the default preset, so ducking
-is a local optimum worth escaping.
+in every matchup, winning 0 of 84 episodes and dealing 0 damage; holding duck
+blocks horizontal bullets and a no-damage draw costs only -1, so ducking was a
+local optimum the default preset never punished.
 
-Cycle 4 runs 1M steps with `--reward-preset anti_stall` on classic+flat, and
-will be evaluated with the extended suite (now including zoner and camper) and
-ranked against the 150k checkpoint. Status: training in progress at the time of
-writing; results appended below when complete.
+Cycle 4 ran 1M steps with `--reward-preset anti_stall` on classic+flat
+(`checkpoints/antistall-1m/`, seed 21, 254-330 fps). Both checkpoints were
+re-evaluated under identical settings (7 opponents x 2 maps x 6 rounds) after
+the redo fixes:
+
+| checkpoint | mean win rate | losses | action mix | damage | draws |
+|---|---|---|---|---|---|
+| `ppo_final` 150k, default rewards | **0.000** | 4 matchups | duck 1.00 | 0 | 10 |
+| `antistall-1m/ppo_final` | **0.845** | 0.17 (random@flat) | duck 0.07-0.60, shoot 0.33-0.99 | 60/matchup | 1 (evasive) |
+
+* The anti-stall policy kills every scripted archetype in 10-33 ticks; only
+  `evasive` remains a 500-tick stalemate, which is baseline-specific (zoner is
+  also 0.00 wins vs evasive).
+* League telemetry confirms the cycle-1 pool fix in a real run: pool 10,
+  24515 latest / 5429 historical samples, historical rate 18.1% (target 20%),
+  13 checkpoints saved.
+* Head-to-head between the run's own checkpoints (100K vs 500K vs 1M, both
+  sides, both maps, 32 episodes each) is **100% draws with zero damage**, and
+  the action distribution contains essentially no left/right movement. The
+  policy is a stationary trench gunner: it out-trades anything that walks into
+  its fire lane and cannot beat a copy of itself. The rendered contact sheet
+  (`renders/antistall-1m-vs-scripted/`) shows the pattern directly.
+
+**Verdict: GAIN** (0.000 -> 0.845 mean win rate; the reward preset escapes the
+duck collapse), with a clearly identified next target: the policy never learned
+positioning, so mirror matches stall.
+
+## Cycle 5 — 2026-09-11 — redo pass: three further defects fixed
+
+**Lane:** correctness foundation for every other lane.
+
+An independent re-verification from first principles (probes written against
+the specification, not the implementation) found three more defects, all fixed
+and regression-tested; details and evidence in
+`docs/verification-2026-09-11.md` ("Redo pass"):
+
+1. **D4 bullets skipped tiles between ticks** -- a stationary opponent at an
+   even offset from the shooter was literally unhittable, and shots crossed the
+   far edge of platforms. Hit rate 5/9 offsets -> 9/9 on all four maps.
+2. **D5 tower platforms could be jumped through from below** -- the destination
+   row was free while the platform sat in between; `classic` blocked the same
+   jump, so physics was map-dependent.
+3. **D6 the self-play mirror corrupted bullet geometry** -- the transform
+   flipped the grid and then swapped own/opponent channels, cancelling the
+   reflection for positions while double-transforming bullets; 9398 of 53428
+   enumerated geometries blinded the frozen opponent to a bullet within three
+   tiles, and its movement actions were never un-mirrored.
+
+Re-verification after the fixes: 359 tests pass; 30/30 independent probe
+assertions; round-robin tournament over all seven built-ins re-run; smoke suite
+3/3 green. The cycle-4 checkpoints predate these fixes and are labelled as
+such.
+
+**Verdict: GAIN** (removes three silent gameplay/training defects; the bullet
+sweep also removes the stationary "safe" offsets that made trench play cheap).
+
+## Cycle 6 — 2026-09-11 — four-map anti-stall run (in progress)
+
+**Lane:** trained policy gains across the full map pool.
+
+With physics and mirroring corrected, the next run repeats the successful
+cycle-4 recipe over all four maps (`--randomize-maps --map-choices
+classic,flat,split,tower --reward-preset anti_stall --timesteps 1000000`,
+checkpoint dir `checkpoints/antistall-4map-1m`, seed 33). Goal: a policy that
+keeps the 0.845 win rate while generalizing across platform geometry, which is
+also the prerequisite for the next improvement: a mixed training league that
+includes the scripted archetypes (zoner, camper, evasive) instead of relying on
+self-snapshots alone, so positioning and anti-camper play are under pressure.
+
+Status: launched; results appended below when complete.
 
 ## Unresolved / carried forward
 
+- The trained policy has no positioning behaviour: checkpoint-vs-checkpoint is
+  a pure stalemate and the action distribution has almost no movement. Next
+  lever is opponent diversity during training (mixed league with scripted
+  archetypes) plus spawn/position variety.
+- `evasive` denies every lane to every policy tried so far (zoner, camper and
+  both checkpoints all draw); either it is a valid ceiling on the current
+  action set or the reward preset needs an anti-turtle term -- worth a cycle.
+- Cycle-4 checkpoints were trained under the pre-fix physics/mirror; their
+  results are valid reward-preset evidence but superseded as gameplay
+  baselines.
 - Long-run promotion artifacts unproven at real scale (no long run has ever
   completed in this repo before this session).
 - Audit LOW items from `AUDIT-2026-09-10.md` remain open (assert guard,
