@@ -134,7 +134,9 @@ All source lives in `src/arena_fighters/`:
 
 ## Key Design Decisions
 
-- Shared-weight self-play: one network plays both sides via observation mirroring
+- Shared-weight self-play: one network plays both sides via observation mirroring; every map layout must stay mirror-symmetric about the vertical axis (enforced by tests)
+- Double knockouts pay symmetric draw rewards; single knockouts pay win/lose, and the episode ends for both agents
+- `OpponentPool` is falsy while empty (defines `__len__`), so wrapper code must use identity checks when defaulting it
 - Named maps: classic, flat, split, tower; `--randomize-maps` samples one on each reset
 - Curriculum: `map_progression` stages from flat/default rewards to full map pool/anti-stall rewards through training callback updates
 - Opponent pool (max 20 snapshots): sample frozen historical snapshots, 80% latest and 20% random older; reset info and training logger expose latest-vs-historical sampling telemetry
