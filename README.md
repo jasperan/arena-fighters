@@ -109,6 +109,21 @@ where those episode JSON files are written. Replay analysis flags no-damage,
 no-hit, no-shot, no-melee-attempt, no-attack, idle-heavy, and dominant-action
 episodes for later strategy reports.
 
+### Render
+
+```bash
+python scripts/render_episode.py --agent-policy scripted --opponent aggressive
+python scripts/render_episode.py --checkpoint checkpoints/ppo_final --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json --opponent scripted --output-dir renders/ppo-final
+python scripts/render_episode.py --replay replays/episode_0100.json --output-dir renders/episode-0100
+```
+
+Writes a PNG frame sequence, an animated GIF, and a contact sheet for one
+match, so trained behavior can be reviewed without a terminal. Use `--map`,
+`--seed`, `--stride`, `--cell`, and `--max-ticks` to control the episode; the
+same renderer accepts saved replay files through `--replay`. Pillow is used for
+image output and is already installed as a dependency of matplotlib, which
+Stable-Baselines3 requires.
+
 ### Evaluate
 
 ```bash

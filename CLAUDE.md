@@ -80,6 +80,8 @@ python scripts/reward_shaping_smoke.py
 python scripts/long_run_artifact_smoke.py
 python scripts/smoke_suite.py
 python scripts/smoke_suite.py --summary-output /tmp/arena-smoke-summary.json
+python scripts/render_episode.py --agent-policy scripted --opponent aggressive --output-dir renders/demo
+python scripts/render_episode.py --checkpoint checkpoints/ppo_final --trusted-checkpoint-manifest checkpoints/checkpoint-trust-manifest.json --output-dir renders/ppo-final
 python scripts/train_eval_smoke.py
 
 # TensorBoard
