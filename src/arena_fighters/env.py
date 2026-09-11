@@ -273,16 +273,20 @@ class ArenaFightersEnv(ParallelEnv):
         st = self._agent_states[agent_name]
 
         if st.vy < 0:
-            # Rising
-            new_y = st.y + st.vy  # vy is negative, so this moves up
-            # Clamp to top
-            new_y = max(0, new_y)
-            # Check for solid tiles between current and new position
-            if not self._is_solid(st.x, new_y):
-                st.y = new_y
-            else:
-                # Hit ceiling, stop rising
+            # Rising: a jump covers several tiles per tick, so advance one tile
+            # at a time and stop at the first solid tile. Checking only the
+            # destination would let a fighter pass straight through a platform
+            # on maps whose platforms sit exactly jump_height apart (tower).
+            new_y = st.y
+            for candidate_y in range(st.y - 1, max(-1, st.y + st.vy - 1), -1):
+                if candidate_y < 0 or self._is_solid(st.x, candidate_y):
+                    break
+                new_y = candidate_y
+            if new_y == st.y:
+                # Bumped a ceiling without gaining height: kill the rise.
                 st.vy = 0
+            else:
+                st.y = new_y
             st.vy += 1  # gravity pulls velocity toward 0 then positive
         elif not self._on_ground(st):
             # Falling: move down 1 tile per tick
@@ -298,24 +302,39 @@ class ArenaFightersEnv(ParallelEnv):
     def _update_bullets(self) -> None:
         remaining: list[Bullet] = []
         for b in self._bullets:
-            b.x += b.dx
-            b.y += b.dy
-            bx, by = int(round(b.x)), int(round(b.y))
+            # Advance one substep at a time. Bullets travel bullet_speed (2)
+            # tiles per tick, so checking only the destination let shots skip
+            # whatever stood on the tile in between: a stationary opponent at
+            # an even offset was never hit, and fast shots ignored the far
+            # edge of platforms. Substeps end on the same tile as before, so
+            # trajectories and every rendered position are unchanged.
+            substeps = max(abs(int(b.dx)), abs(int(b.dy)), 1)
+            step_dx = b.dx / substeps
+            step_dy = b.dy / substeps
+            removed = False
+            for _ in range(substeps):
+                b.x += step_dx
+                b.y += step_dy
+                bx, by = int(round(b.x)), int(round(b.y))
 
-            # Out of bounds
-            if bx < 0 or bx >= self.cfg.arena.width or by < 0 or by >= self.cfg.arena.height:
-                continue
+                if (
+                    bx < 0
+                    or bx >= self.cfg.arena.width
+                    or by < 0
+                    or by >= self.cfg.arena.height
+                ):
+                    removed = True
+                    break
 
-            # Hit platform
-            if self._is_solid(bx, by):
-                continue
+                if self._is_solid(bx, by):
+                    removed = True
+                    break
 
-            # Check hit on opponent
-            hit = False
-            for agent_name, st in self._agent_states.items():
-                if agent_name == b.owner:
-                    continue
-                if st.x == bx and st.y == by:
+                for agent_name, st in self._agent_states.items():
+                    if agent_name == b.owner:
+                        continue
+                    if st.x != bx or st.y != by:
+                        continue
                     # Ducking avoids horizontal bullets only
                     if st.duck_ticks > 0 and b.dy == 0:
                         continue
@@ -329,10 +348,12 @@ class ArenaFightersEnv(ParallelEnv):
                     self._rewards[agent_name] += (
                         self.cfg.reward.take_damage_per_hp * dmg
                     )
-                    hit = True
+                    removed = True
+                    break
+                if removed:
                     break
 
-            if not hit:
+            if not removed:
                 remaining.append(b)
 
         self._bullets = remaining

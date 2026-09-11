@@ -20,7 +20,7 @@ from arena_fighters.config import (
     Config,
     reward_config_for_preset,
 )
-from arena_fighters.env import ArenaFightersEnv
+from arena_fighters.env import ArenaFightersEnv, Bullet
 
 
 def _make_env() -> ArenaFightersEnv:
@@ -557,3 +557,129 @@ def test_get_state_serializable():
     assert "agents" in state
     assert "bullets" in state
     assert state["agents"]["agent_0"]["x"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Bullet sweep: fast projectiles must not skip tiles on their path
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("map_name", sorted(PLATFORM_LAYOUTS))
+@pytest.mark.parametrize("offset", [2, 3, 4, 5, 6, 7, 8, 9, 10])
+def test_bullet_hits_stationary_target_at_every_offset(map_name, offset):
+    """Regression: bullets moved 2 tiles per tick and only tested the
+    destination tile, so shots fired at an even offset from a stationary
+    opponent flew straight through it: the target was unhittable, and an
+    arena position that granted immunity to horizontal fire existed on every
+    map. Sweeping the path makes every reachable offset connect.
+    """
+    env = ArenaFightersEnv(config=Config(arena=replace(Config().arena, map_name=map_name)))
+    env.reset(seed=0)
+    gunner = env._agent_states["agent_0"]
+    target = env._agent_states["agent_1"]
+    gunner.x, gunner.y, gunner.facing, gunner.shoot_cd = 10, 18, 1, 0
+    target.x, target.y = 10 + offset, 18
+
+    for _ in range(12):
+        if not env.agents:
+            break
+        env.step({"agent_0": SHOOT_FORWARD, "agent_1": IDLE})
+
+    assert target.hp <= 0, f"offset {offset} on {map_name} never connected"
+
+
+def test_bullet_hits_target_behind_the_shot_direction():
+    """Mirror of the above for a shooter facing left."""
+    env = ArenaFightersEnv(config=Config(arena=replace(Config().arena, map_name="flat")))
+    env.reset(seed=0)
+    gunner = env._agent_states["agent_1"]
+    target = env._agent_states["agent_0"]
+    gunner.x, gunner.y, gunner.facing, gunner.shoot_cd = 30, 18, -1, 0
+    target.x, target.y = 26, 18
+
+    for _ in range(12):
+        if not env.agents:
+            break
+        env.step({"agent_0": IDLE, "agent_1": SHOOT_FORWARD})
+
+    assert target.hp <= 0
+
+
+def test_bullet_stops_on_intermediate_platform_tile():
+    """A bullet crossing a solid tile mid-flight is blocked there."""
+    env = ArenaFightersEnv(config=Config(arena=replace(Config().arena, map_name="classic")))
+    env.reset(seed=0)
+    # classic low platform spans x=1..4 at y=15; start a bullet so that its
+    # second substep enters the span.
+    env._bullets = [Bullet(x=2.0, y=15.0, dx=2, dy=0, owner="agent_0")]
+
+    env.step({"agent_0": IDLE, "agent_1": IDLE})
+
+    assert env._bullets == []
+
+
+def test_bullet_keeps_final_position_of_each_tick():
+    """Sweeping must not change bullet trajectories or observation slots."""
+    env = ArenaFightersEnv(config=Config(arena=replace(Config().arena, map_name="flat")))
+    env.reset(seed=0)
+    env._bullets = [Bullet(x=10.0, y=18.0, dx=2, dy=0, owner="agent_0")]
+
+    env.step({"agent_0": IDLE, "agent_1": IDLE})
+
+    assert [(b.x, b.y) for b in env._bullets] == [(12.0, 18.0)]
+
+
+# ---------------------------------------------------------------------------
+# Jump ceiling: rising jumps must not pass through solid tiles
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("map_name", sorted(PLATFORM_LAYOUTS))
+def test_jump_never_crosses_a_solid_tile(map_name):
+    """Regression: a jump moved `jump_height` tiles in one tick and only tested
+    the destination, so on tower -- whose platforms are exactly jump_height
+    apart -- a fighter under a platform jumped straight through it and landed
+    on top. Every standing spot on every map must stop rising below the first
+    solid tile above it.
+    """
+    env = ArenaFightersEnv(config=Config(arena=replace(Config().arena, map_name=map_name)))
+    env.reset(seed=0)
+    agent = env._agent_states["agent_0"]
+
+    for x in range(env.cfg.arena.width):
+        for y in range(env.cfg.arena.height - 1):
+            if env._is_solid(x, y) or not env._is_solid(x, y + 1):
+                continue  # not a standing position
+            agent.x, agent.y, agent.vy = x, y, 0
+            env._agent_states["agent_1"].x = 39 - x
+            env._agent_states["agent_1"].y = y
+            env.step({"agent_0": JUMP, "agent_1": IDLE})
+            crossed = [yy for yy in range(agent.y, y) if env._is_solid(x, yy)]
+            assert not crossed, (
+                f"{map_name}: jumped from ({x},{y}) to y={agent.y} through {crossed}"
+            )
+
+
+def test_jump_bumps_head_and_stays_below_platform():
+    """Under a low platform the fighter rises to just below it, then falls."""
+    env = ArenaFightersEnv(
+        config=Config(arena=replace(Config().arena, map_name="classic"))
+    )
+    env.reset(seed=0)
+    agent = env._agent_states["agent_0"]
+    agent.x, agent.y, agent.vy = 2, 18, 0  # low platform (1..4, y=15) overhead
+
+    env.step({"agent_0": JUMP, "agent_1": IDLE})
+
+    assert agent.y == 16  # rose to just below the platform at y=15
+    env.step({"agent_0": IDLE, "agent_1": IDLE})
+    assert agent.y == 16  # still pinned under the ceiling
+    assert agent.vy >= 0  # no upward velocity left after the ceiling stop
+
+
+def test_tower_platform_cannot_be_mounted_from_directly_below():
+    """Platforms are still only reachable from beside them."""
+    env = ArenaFightersEnv(config=Config(arena=replace(Config().arena, map_name="tower")))
+    env.reset(seed=0)
+    agent = env._agent_states["agent_0"]
+    agent.x, agent.y, agent.vy = 19, 18, 0  # under the (17..22, y=16) platform
+
+    for _ in range(6):
+        env.step({"agent_0": JUMP, "agent_1": IDLE})
+        assert agent.y >= 17, "mounted a platform from directly underneath"
