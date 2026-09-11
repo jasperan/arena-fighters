@@ -1387,6 +1387,7 @@ def test_build_long_run_manifest_emits_non_executing_command_bundle():
         "max_low_engagement_rate": 0.45,
         "max_idle_rate": 0.7,
         "max_dominant_action_rate": 0.9,
+        "max_stand_still_rate": 0.95,
         "max_weaknesses": 10,
     }
     source_control = manifest["manifest_config"]["source_control"]

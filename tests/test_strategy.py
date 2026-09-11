@@ -595,6 +595,7 @@ def test_run_strategy_report_can_save_report(tmp_path, capsys):
         max_low_engagement_rate=0.5,
         max_idle_rate=0.75,
         max_dominant_action_rate=0.95,
+        max_stand_still_rate=0.95,
         output_dir=str(output_dir),
         output_label="bad-strategy",
     )
@@ -608,3 +609,35 @@ def test_run_strategy_report_can_save_report(tmp_path, capsys):
         "schema_version": 1,
     }
     assert saved["issue_count"] >= 2
+
+
+def test_strategy_report_flags_policies_that_never_leave_their_spawn(tmp_path):
+    """A policy that out-trades opponents without ever repositioning is a
+    degenerate strategy: it looks strong on damage while learning nothing about
+    the arena. The report flags it via the stand-still rate."""
+    healthy = _eval_summary("healthy", stand_still_rate=0.2)
+    stationary = _eval_summary("stationary", stand_still_rate=1.0)
+    (tmp_path / "healthy.json").write_text(json.dumps(healthy) + "\n")
+    (tmp_path / "stationary.json").write_text(json.dumps(stationary) + "\n")
+
+    report = build_strategy_report(
+        str(tmp_path),
+        recursive=False,
+        max_draw_rate=0.9,
+        max_no_damage_rate=0.75,
+        max_low_engagement_rate=0.5,
+        max_idle_rate=0.75,
+        max_dominant_action_rate=0.95,
+        max_stand_still_rate=0.9,
+    )
+
+    flagged = [
+        issue
+        for issue in report["issues"]
+        if issue["reason"] == "agent_0_stand_still_rate_above_threshold"
+    ]
+    assert len(flagged) == 1
+    assert flagged[0]["metric"] == "stand_still_rate_agent_0"
+    assert flagged[0]["value"] == 1.0
+    assert flagged[0]["threshold"] == 0.9
+    assert "stationary" in json.dumps(flagged[0])

@@ -479,6 +479,15 @@ def run_episode(
     final_rewards = {"agent_0": 0.0, "agent_1": 0.0}
     final_terminations = {"agent_0": False, "agent_1": False}
     final_truncations = {"agent_0": False, "agent_1": False}
+    previous_positions = {
+        agent_name: env._agent_states[agent_name].x
+        for agent_name in env.possible_agents
+    }
+    # Movement diagnostics: a policy that out-trades opponents from its spawn
+    # can look healthy on damage while never learning to position, so track how
+    # often each agent actually changed columns.
+    moved_ticks = {name: 0 for name in env.possible_agents}
+    travel_distance = {name: 0 for name in env.possible_agents}
 
     while env.agents:
         policies = {
@@ -504,6 +513,12 @@ def run_episode(
             damage_events[agent_name] += (
                 events["projectile_hits"] + events["melee_hits"]
             )
+            previous_x = previous_positions[agent_name]
+            current_x = env._agent_states[agent_name].x
+            if current_x != previous_x:
+                moved_ticks[agent_name] += 1
+                travel_distance[agent_name] += abs(current_x - previous_x)
+            previous_positions[agent_name] = current_x
 
         if any(terminations.values()) or any(truncations.values()):
             break
@@ -529,6 +544,14 @@ def run_episode(
     state = env.get_state()
     episode_length = state["tick"]
     winner = infer_winner(state, final_terminations, final_truncations, final_rewards)
+    stand_still_rate = {
+        agent_name: (
+            1.0 - moved_ticks[agent_name] / total_actions[agent_name]
+            if total_actions[agent_name]
+            else 0.0
+        )
+        for agent_name in env.possible_agents
+    }
 
     return {
         "winner": winner,
@@ -542,6 +565,8 @@ def run_episode(
         "behavior": {
             "idle_rate": idle_rate,
             "dominant_action_rate": dominant_action_rate,
+            "stand_still_rate": stand_still_rate,
+            "travel_distance": travel_distance,
             "damage_events": damage_events,
             "no_damage": no_damage,
             "low_engagement": no_damage and episode_length >= cfg.arena.max_ticks,
@@ -580,6 +605,8 @@ def evaluate_matchup(
     reward_sums = {"agent_0": 0.0, "agent_1": 0.0}
     idle_rate_sum = {"agent_0": 0.0, "agent_1": 0.0}
     dominant_action_rate_sum = {"agent_0": 0.0, "agent_1": 0.0}
+    stand_still_rate_sum = {"agent_0": 0.0, "agent_1": 0.0}
+    travel_distance_sum = {"agent_0": 0.0, "agent_1": 0.0}
     event_totals = {"agent_0": {}, "agent_1": {}}
     no_damage_episodes = 0
     low_engagement_episodes = 0
@@ -606,6 +633,8 @@ def evaluate_matchup(
                 "reward_sums": {"agent_0": 0.0, "agent_1": 0.0},
                 "idle_rate_sum": {"agent_0": 0.0, "agent_1": 0.0},
                 "dominant_action_rate_sum": {"agent_0": 0.0, "agent_1": 0.0},
+                "stand_still_rate_sum": {"agent_0": 0.0, "agent_1": 0.0},
+                "travel_distance_sum": {"agent_0": 0.0, "agent_1": 0.0},
                 "no_damage_episodes": 0,
                 "low_engagement_episodes": 0,
             }
@@ -652,6 +681,18 @@ def evaluate_matchup(
             per_map[map_name]["dominant_action_rate_sum"][agent_name] += result[
                 "behavior"
             ]["dominant_action_rate"][agent_name]
+            stand_still_rate_sum[agent_name] += result["behavior"]["stand_still_rate"][
+                agent_name
+            ]
+            per_map[map_name]["stand_still_rate_sum"][agent_name] += result[
+                "behavior"
+            ]["stand_still_rate"][agent_name]
+            travel_distance_sum[agent_name] += result["behavior"]["travel_distance"][
+                agent_name
+            ]
+            per_map[map_name]["travel_distance_sum"][agent_name] += result["behavior"][
+                "travel_distance"
+            ][agent_name]
 
     per_map_summary = {}
     for map_name, map_metrics in per_map.items():
@@ -700,6 +741,20 @@ def evaluate_matchup(
                     )
                     for agent_name in map_metrics["dominant_action_rate_sum"]
                 },
+                "avg_stand_still_rate": {
+                    agent_name: (
+                        map_metrics["stand_still_rate_sum"][agent_name] / map_episodes
+                        if map_episodes else 0.0
+                    )
+                    for agent_name in map_metrics["stand_still_rate_sum"]
+                },
+                "avg_travel_distance": {
+                    agent_name: (
+                        map_metrics["travel_distance_sum"][agent_name] / map_episodes
+                        if map_episodes else 0.0
+                    )
+                    for agent_name in map_metrics["travel_distance_sum"]
+                },
                 "damage_events": map_metrics["damage_events"],
                 "no_damage_episodes": map_metrics["no_damage_episodes"],
                 "low_engagement_episodes": map_metrics["low_engagement_episodes"],
@@ -734,6 +789,16 @@ def evaluate_matchup(
                     if episodes else 0.0
                 )
                 for agent_name in dominant_action_rate_sum
+            },
+            "avg_stand_still_rate": {
+                agent_name: stand_still_rate_sum[agent_name] / episodes
+                if episodes else 0.0
+                for agent_name in stand_still_rate_sum
+            },
+            "avg_travel_distance": {
+                agent_name: travel_distance_sum[agent_name] / episodes
+                if episodes else 0.0
+                for agent_name in travel_distance_sum
             },
             "damage_events": damage_events,
             "no_damage_episodes": no_damage_episodes,

@@ -2450,6 +2450,19 @@ def eval_strategy_issues(
         threshold=thresholds["max_dominant_action_rate"],
         reason="agent_0_dominant_action_rate_above_threshold",
     )
+    # A policy that never repositions can out-trade scripted baselines from its
+    # spawn while learning nothing about the arena; flag it explicitly.
+    add_rate_issue(
+        issues,
+        path=path,
+        relative_path=relative_path,
+        artifact_type=artifact_type,
+        scope=scope,
+        metric="stand_still_rate_agent_0",
+        value=behavior.get("avg_stand_still_rate", {}).get("agent_0"),
+        threshold=thresholds["max_stand_still_rate"],
+        reason="agent_0_stand_still_rate_above_threshold",
+    )
     return issues
 
 
@@ -3284,6 +3297,7 @@ def build_strategy_report(
     max_low_engagement_rate: float = 0.5,
     max_idle_rate: float = 0.75,
     max_dominant_action_rate: float = 0.95,
+    max_stand_still_rate: float = 0.95,
     max_weaknesses: int = 10,
 ) -> dict:
     root = Path(artifact_dir)
@@ -3293,6 +3307,7 @@ def build_strategy_report(
         "max_low_engagement_rate": max_low_engagement_rate,
         "max_idle_rate": max_idle_rate,
         "max_dominant_action_rate": max_dominant_action_rate,
+        "max_stand_still_rate": max_stand_still_rate,
     }
     pattern = "**/*.json" if recursive else "*.json"
     paths = sorted(
@@ -3388,6 +3403,7 @@ def run_strategy_report(
     max_low_engagement_rate: float,
     max_idle_rate: float,
     max_dominant_action_rate: float,
+    max_stand_still_rate: float,
     max_weaknesses: int = 10,
     output_dir: str | None = None,
     output_label: str | None = None,
@@ -3400,6 +3416,7 @@ def run_strategy_report(
         max_low_engagement_rate=max_low_engagement_rate,
         max_idle_rate=max_idle_rate,
         max_dominant_action_rate=max_dominant_action_rate,
+        max_stand_still_rate=max_stand_still_rate,
         max_weaknesses=max_weaknesses,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
@@ -5562,6 +5579,7 @@ def build_long_run_manifest(
     strategy_max_low_engagement_rate: float = 0.5,
     strategy_max_idle_rate: float = 0.75,
     strategy_max_dominant_action_rate: float = 0.95,
+    strategy_max_stand_still_rate: float = 0.95,
     strategy_max_weaknesses: int = 10,
     require_replay_analysis: bool = True,
     min_maps: int = 2,
@@ -5648,6 +5666,7 @@ def build_long_run_manifest(
         "max_low_engagement_rate": strategy_max_low_engagement_rate,
         "max_idle_rate": strategy_max_idle_rate,
         "max_dominant_action_rate": strategy_max_dominant_action_rate,
+        "max_stand_still_rate": strategy_max_stand_still_rate,
         "max_weaknesses": strategy_max_weaknesses,
     }
 
@@ -6260,6 +6279,7 @@ def run_long_run_manifest(
     strategy_max_low_engagement_rate: float = 0.5,
     strategy_max_idle_rate: float = 0.75,
     strategy_max_dominant_action_rate: float = 0.95,
+    strategy_max_stand_still_rate: float = 0.95,
     strategy_max_weaknesses: int = 10,
     require_replay_analysis: bool,
     min_maps: int,
@@ -6685,6 +6705,15 @@ def main():
         help="Agent 0 idle-rate threshold for strategy_report mode (default: 0.75)",
     )
     parser.add_argument(
+        "--strategy-max-stand-still-rate",
+        type=float,
+        default=0.95,
+        help=(
+            "Flag evaluated policies that never change columns for this fraction "
+            "of ticks (default: 0.95)"
+        ),
+    )
+    parser.add_argument(
         "--strategy-max-dominant-action-rate",
         type=float,
         default=0.95,
@@ -7087,6 +7116,7 @@ def main():
             max_low_engagement_rate=args.strategy_max_low_engagement_rate,
             max_idle_rate=args.strategy_max_idle_rate,
             max_dominant_action_rate=args.strategy_max_dominant_action_rate,
+            max_stand_still_rate=args.strategy_max_stand_still_rate,
             max_weaknesses=args.strategy_max_weaknesses,
             output_dir=args.eval_output_dir,
             output_label=args.eval_label,

@@ -157,6 +157,7 @@ def _eval_summary(
     idle_rate: float = 0.1,
     no_damage_episodes: int = 0,
     low_engagement_episodes: int = 0,
+    stand_still_rate: float = 0.2,
 ):
     return {
         "artifact": artifact_metadata("eval"),
@@ -171,6 +172,8 @@ def _eval_summary(
         "behavior": {
             "avg_idle_rate": {"agent_0": idle_rate, "agent_1": 0.1},
             "avg_dominant_action_rate": {"agent_0": 0.4, "agent_1": 0.4},
+            "avg_stand_still_rate": {"agent_0": stand_still_rate, "agent_1": 0.2},
+            "avg_travel_distance": {"agent_0": 4.0, "agent_1": 4.0},
             "damage_events": {"agent_0": 2, "agent_1": 1},
             "no_damage_episodes": no_damage_episodes,
             "low_engagement_episodes": low_engagement_episodes,
