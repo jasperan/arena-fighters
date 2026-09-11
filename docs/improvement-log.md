@@ -181,20 +181,34 @@ such.
 **Verdict: GAIN** (removes three silent gameplay/training defects; the bullet
 sweep also removes the stationary "safe" offsets that made trench play cheap).
 
-## Cycle 6 — 2026-09-11 — four-map anti-stall run (in progress)
+## Cycle 6 — 2026-09-11 — four-map anti-stall run: NO GAIN
 
 **Lane:** trained policy gains across the full map pool.
 
-With physics and mirroring corrected, the next run repeats the successful
-cycle-4 recipe over all four maps (`--randomize-maps --map-choices
-classic,flat,split,tower --reward-preset anti_stall --timesteps 1000000`,
-checkpoint dir `checkpoints/antistall-4map-1m`, seed 33). Goal: a policy that
-keeps the 0.845 win rate while generalizing across platform geometry, which is
-also the prerequisite for the next improvement: a mixed training league that
-includes the scripted archetypes (zoner, camper, evasive) instead of relying on
-self-snapshots alone, so positioning and anti-camper play are under pressure.
+Ran 1M steps on all four maps (`checkpoints/antistall-4map-1m`, seed 33) with
+the cycle-4 recipe. Result: **the run collapsed**. Evaluated with the extended
+suite over all four maps (7 opponents x 4 maps x 4 rounds = 112 episodes,
+jittered spawns):
 
-Status: launched; results appended below when complete.
+* final checkpoint: **0.000 mean win rate**, stand-still rate 1.000, action
+  distribution **duck 1.00** -- it loses to scripted and camper, draws (500-tick,
+  no damage) against zoner and idle, and never deals damage.
+* five checkpoints sampled across the run (100K, snap_300, 500K, snap_450,
+  final) all score **0.00**, so the degeneracy is not just a late-training
+  artifact.
+* the same evaluation run on the cycle-4 (classic+flat) policy scores **0.812
+  across all four maps** -- the two-map policy generalizes to split and tower
+  better than the model trained on them.
+
+Monitoring lesson: the action telemetry added in cycle 4b reported a *healthy*
+sampled policy at the end of this run (entropy 0.837, dominant action `shoot`
+0.383) while the deterministic policy is 100% duck. Sampled-action entropy does
+not detect a degenerate greedy policy; suite/rank evaluation of the actual
+checkpoint does, which is what the promotion tooling exists for.
+
+**Verdict: NO GAIN** (1 of 3 allowed before the loop stops). The four-map
+recipe is retired; map variety is being reintroduced through a curriculum
+rather than from step 0.
 
 ## Cycle 7 — 2026-09-11 — opponent diversity and spawn variety
 
@@ -252,6 +266,20 @@ episode; the cycle-4 checkpoint 0.83 with 2 tiles; a hand-written never-moving
 fighter 1.00 with 0 tiles. 366 tests pass, smoke suite 3/3.
 
 **Verdict: GAIN** (the loop can now see the failure mode it just produced).
+
+## Cycle 9 — 2026-09-11 — mixed-league run (in progress)
+
+**Lane:** trained policy gains under the fixed foundations.
+
+Cycle 6 showed that four-map randomization from step 0 collapses, so the next
+run returns to the proven two-map recipe and adds the cycle-7 pressure instead:
+anti-stall rewards, classic+flat, symmetric spawn jitter, and a mixed league of
+zoner/camper/evasive at `--scripted-opponent-prob 0.35`
+(`checkpoints/mixed-league-1m`, seed 55). The expectation is a policy that keeps
+the cycle-4 win rate while finally learning to reposition, which the stand-still
+diagnostic (cycle 8) can now measure directly.
+
+Status: launched; results appended below when complete.
 
 ## Unresolved / carried forward
 
