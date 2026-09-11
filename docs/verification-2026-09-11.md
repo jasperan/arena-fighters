@@ -96,3 +96,103 @@ map. Regression tests: `test_all_map_layouts_are_mirror_symmetric`,
   result cannot be reproduced offline against the torch-cu124 index).
 - `/tmp` evidence paths are ephemeral; every claim above is reproducible with
   the listed commands.
+
+---
+
+# Redo pass (2026-09-11, later the same day)
+
+Everything above was re-verified from scratch with independent probes written
+against first principles (no reuse of the repo's own tests), covering 30
+environment/plumbing assertions plus dedicated physics, mirror-contract, and
+tournament harnesses. Three further defects surfaced, all fixed in this pass.
+The probes live in `/tmp/reverify/` and are reproducible from the commands
+below.
+
+## D4 (HIGH) — bullets skipped whatever stood between two ticks
+
+`_update_bullets` advanced a bullet by `bullet_speed` (2) tiles per tick and
+tested only the destination tile. A bullet fired from an even column only ever
+visited even columns, so a **stationary opponent at an even offset was never
+hit** — nine offsets, five hit — and the same held for the far edge of
+platforms.
+
+Evidence: `python /tmp/reverify/probe_physics.py` before the fix reported
+`{"2": false, "3": true, "4": false, ...}` for offsets 2..10; after the fix all
+nine connect on all four maps (`tests/test_env.py::test_bullet_hits_stationary_
+target_at_every_offset`, parametrized over 4 maps × 9 offsets × 2 directions).
+
+Fix: bullets advance one tile per substep and stop at the first barrier, hit
+target, or ducked defender. Substeps land on exactly the tile the old code
+jumped to, so trajectories, observations, and rendered bullet positions are
+unchanged; only the tiles passed over are now tested.
+
+Consequence for strategy: standing still is no longer partially bullet-proof,
+which matters for the duck/shoot stalemate seen in training (see cycle 4).
+
+## D5 (HIGH) — tower's platforms could be jumped through from below
+
+A jump sets `vy = -jump_height` and the rising branch moved that many tiles in
+one tick, testing only the destination. On `tower`, whose platform rows are
+exactly `jump_height` apart, the destination row was free while the platform
+lay in between, so a fighter under a platform **tunnelled through it and
+landed on top**. `classic` blocked the equivalent jump, making physics
+map-dependent and contradicting the documented rule that platforms are not
+reachable by jumping from directly underneath.
+
+Evidence: `probe_physics.py` reported `y_after_jump=9` with a solid tile at
+row 10 on tower (tunnelled), while classic stayed at 18. Post-fix: tower stops
+at row 11, classic bumps its head at row 16 and still cannot mount.
+Regression tests: `test_jump_never_crosses_a_solid_tile[map]` (every standing
+position on all four maps), `test_jump_bumps_head_and_stays_below_platform`,
+`test_tower_platform_cannot_be_mounted_from_directly_below`.
+
+## D6 (HIGH) — the self-play mirror corrupted bullet geometry
+
+The frozen opponent is fed `mirror_obs`, which flipped the grid **and** then
+exchanged the own/opponent position and bullet channels. The flip already
+moves both fighters to mirrored positions, so the channel exchange cancelled
+the reflection for positions while double-transforming bullets: the opponent
+read enemy bullets at mirrored coordinates. An incoming shot four tiles away
+appeared twenty-five tiles away.
+
+Evidence: exhaustive enumeration of 53,428 (own, opponent, bullet) geometries —
+the old transform made an incoming bullet within three tiles invisible in
+**9,398 cases (17.6%)**, with zero false alarms; the pure reflection has zero
+mismatches. Mirror-consistency probes (`probe_mirror_contract.py`) confirmed
+that observation transform and action convention must be paired: flip+swap
+requires raw actions, flip-only requires mirrored MOVE_LEFT/MOVE_RIGHT, and
+each pairing was checked against the environment's mirror symmetry.
+
+Fix: `mirror_obs` is now a pure reflection (labels stay attached to the
+fighter they describe, vector passed through), `mirror_action` converts
+horizontal movement back to the true frame, and it is applied by
+`SelfPlayWrapper`, `ModelPolicy`, and the new `predict_for_agent` helper shared
+with `--mode watch`. The two tests that encoded the old behaviour were
+replaced by stronger invariants (all channels reflected in place, enemy-bullet
+distance preserved, movement actions round-trip).
+
+## Re-verification after the fixes
+
+- `uv run pytest -q` → **359 passed**.
+- `/tmp/reverify/probe_env.py` → **30/30** independent assertions pass
+  (observation channels, reward accounting, double/single knockout symmetry,
+  timeout semantics, determinism, mirror involution of the whole step function,
+  pool sampling/eviction/falsiness, wrapper pool identity, map randomization,
+  event counters).
+- Round-robin tournament over all seven built-ins, both sides, all four maps
+  (`/tmp/reverify/tournament.py`, 6 rounds per pairing per map):
+  zoner 0.70 win / 0.07 loss, random 0.43/0.52, scripted 0.36/0.22, aggressive
+  0.33/0.23, camper 0.30/0.14, idle 0.00/0.73, evasive 0.00/0.21.
+- `scripts/smoke_suite.py` → 3/3 smokes pass (`long_run_artifact`,
+  `reward_shaping`, `self_play_sampling`).
+- Compile, lint (F/E and ERA/PGH/PLW/FURB via ruff 0.16.7), and
+  `git diff --check` all clean.
+
+## Still open after the redo
+
+- The 1M-step anti-stall run in progress was trained under the pre-fix physics
+  and mirror path; its checkpoints are labelled as such and superseded by the
+  next run on corrected dynamics.
+- Audit LOW items unchanged (assert-based pool guard, redaction scope, broad
+  except in artifact scanning, `lru_cache` on env methods, no CI config,
+  `scripts/train.py` size).
