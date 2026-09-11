@@ -230,6 +230,28 @@ def test_self_play_wrapper_uses_loaded_snapshot_policy_for_opponent_action():
     assert wrapper._env._agent_states["agent_1"].x == start_x - 1
 
 
+def test_self_play_wrapper_keeps_empty_caller_pool():
+    """An empty pool is falsy (it defines __len__); the wrapper must keep it.
+
+    Regression: `opponent_pool or OpponentPool()` silently replaced an empty
+    caller-supplied pool, so every snapshot added by the training loop was
+    ignored and self-play never refreshed its opponent.
+    """
+    pool = OpponentPool(max_size=3)
+    wrapper = SelfPlayWrapper(config=Config(), opponent_pool=pool)
+
+    assert wrapper.opponent_pool is pool
+
+    pool.add({"action": MOVE_LEFT})
+    policy = RecordingPolicy()
+    wrapper.opponent_policy = policy
+    wrapper.reset()
+
+    assert policy.loaded_snapshots == [{"action": MOVE_LEFT}]
+    assert pool.stats()["latest_samples"] == 1
+    assert wrapper.opponent_pool.stats()["latest_samples"] == 1
+
+
 def test_self_play_wrapper_delegates_map_pool_updates():
     wrapper = SelfPlayWrapper(config=Config())
     wrapper.set_map_pool(("flat",))

@@ -133,7 +133,13 @@ class SelfPlayWrapper(gym.Env):
     ):
         super().__init__()
         self.cfg = config or Config()
-        self.opponent_pool = opponent_pool or OpponentPool()
+        # NOTE: `opponent_pool or OpponentPool()` is wrong here: OpponentPool is
+        # falsy while empty (it defines __len__), so an empty caller-supplied
+        # pool would be silently replaced by a private one and every snapshot
+        # registered by the training loop would be ignored.
+        self.opponent_pool = (
+            opponent_pool if opponent_pool is not None else OpponentPool()
+        )
         self.opponent_policy = opponent_policy
         self.replay_logger = replay_logger
         self.render_mode = render_mode
