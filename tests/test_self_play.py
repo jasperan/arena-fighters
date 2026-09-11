@@ -1,6 +1,14 @@
 from dataclasses import replace
 
-from arena_fighters.config import Config, IDLE, MOVE_LEFT, reward_config_for_preset
+import numpy as np
+
+from arena_fighters.config import (
+    CH_OWN_POS,
+    Config,
+    IDLE,
+    MOVE_LEFT,
+    reward_config_for_preset,
+)
 from arena_fighters.replay import ReplayLogger, load_replay
 from arena_fighters.self_play import SelfPlayWrapper, OpponentPool
 
@@ -278,3 +286,118 @@ def test_self_play_wrapper_delegates_reward_config_updates():
 
     assert wrapper.cfg.reward == anti_stall
     assert wrapper._env.cfg.reward == anti_stall
+
+
+def test_scripted_opponent_is_sampled_and_acts_in_the_true_frame():
+    """A mixed league can put a scripted archetype on the opponent side.
+
+    Scripted policies read the environment directly and act in the true arena
+    frame, so the wrapper must hand them raw (un-mirrored) observations and
+    apply their action unchanged -- unlike frozen network snapshots, which are
+    fed a mirrored observation and need their horizontal movement un-mirrored.
+    """
+    calls: list[tuple[str, int]] = []
+    raw_obs_ids: list[int] = []
+
+    class RecordingScripted:
+        def act(self, agent_name, obs, env):
+            calls.append((agent_name, int(np.argmax(obs["grid"][CH_OWN_POS].sum(axis=0)))))
+            raw_obs_ids.append(int(np.argmax(obs["grid"][CH_OWN_POS].sum(axis=0))))
+            return MOVE_LEFT
+
+    cfg = Config()
+    cfg = replace(
+        cfg,
+        training=replace(
+            cfg.training,
+            scripted_opponent_names=("zoner",),
+            scripted_opponent_prob=1.0,
+        ),
+    )
+    pool = OpponentPool(max_size=3)
+    pool.add({"unused": 1})
+    wrapper = SelfPlayWrapper(
+        config=cfg,
+        opponent_pool=pool,
+        opponent_policy=RecordingPolicy(),
+        scripted_policy_factory=lambda name: RecordingScripted(),
+    )
+
+    _, info = wrapper.reset(seed=0)
+    start_x = wrapper._env._agent_states["agent_1"].x
+    wrapper.step(IDLE)
+
+    assert info["scripted_opponent"] == "zoner"
+    assert info["scripted_opponent_samples"] == 1
+    assert calls and calls[0][0] == "agent_1"
+    # raw observation: the agent reports its own true column (34), not the
+    # mirrored one (5)
+    assert raw_obs_ids[0] == start_x
+    # scripted action applied un-mirrored: MOVE_LEFT is really left
+    assert wrapper._env._agent_states["agent_1"].x == start_x - 1
+
+
+def test_scripted_opponent_probability_zero_never_uses_archetypes():
+    factory_calls: list[str] = []
+
+    cfg = Config()
+    cfg = replace(
+        cfg,
+        training=replace(
+            cfg.training,
+            scripted_opponent_names=("camper",),
+            scripted_opponent_prob=0.0,
+        ),
+    )
+    pool = OpponentPool(max_size=3)
+    pool.add({"action": MOVE_LEFT})
+    wrapper = SelfPlayWrapper(
+        config=cfg,
+        opponent_pool=pool,
+        opponent_policy=RecordingPolicy(),
+        scripted_policy_factory=lambda name: factory_calls.append(name),
+    )
+
+    for _ in range(5):
+        _, info = wrapper.reset(seed=0)
+        assert info["scripted_opponent"] is None
+        wrapper.step(IDLE)
+
+    assert factory_calls == []
+    assert info["scripted_opponent_samples"] == 0
+
+
+def test_scripted_opponent_mix_uses_both_sources_over_many_episodes():
+    cfg = Config()
+    cfg = replace(
+        cfg,
+        training=replace(
+            cfg.training,
+            scripted_opponent_names=("zoner", "camper"),
+            scripted_opponent_prob=0.5,
+            latest_opponent_prob=1.0,
+        ),
+    )
+    pool = OpponentPool(max_size=3)
+    pool.add({"action": MOVE_LEFT})
+
+    class FixedScripted:
+        def act(self, agent_name, obs, env):
+            return IDLE
+
+    wrapper = SelfPlayWrapper(
+        config=cfg,
+        opponent_pool=pool,
+        opponent_policy=RecordingPolicy(),
+        scripted_policy_factory=lambda name: FixedScripted(),
+    )
+
+    names = set()
+    for _ in range(60):
+        _, info = wrapper.reset(seed=0)
+        names.add(info["scripted_opponent"])
+        pool_size = len(pool)
+        assert pool_size == 1
+
+    assert None in names or any(name is not None for name in names), names
+    assert 0 < info["scripted_opponent_samples"] < 60

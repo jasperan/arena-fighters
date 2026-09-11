@@ -28,6 +28,8 @@ def test_checkpoint_metadata_includes_curriculum_state():
         "max_size": cfg.training.opponent_pool_size,
         "latest_opponent_prob": cfg.training.latest_opponent_prob,
         "seed": 123,
+        "scripted_opponent_names": [],
+        "scripted_opponent_prob": 0.0,
     }
 
 

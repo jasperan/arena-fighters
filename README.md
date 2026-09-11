@@ -59,6 +59,7 @@ python scripts/train.py --mode train --checkpoint-dir ./my_checkpoints
 python scripts/train.py --mode train --randomize-maps --map-choices classic,flat,split,tower
 python scripts/train.py --mode train --reward-preset anti_stall
 python scripts/train.py --mode train --curriculum map_progression
+python scripts/train.py --mode train --scripted-opponents zoner,camper,evasive --scripted-opponent-prob 0.35
 python scripts/train.py --mode train --opponent-pool-seed 123
 ```
 

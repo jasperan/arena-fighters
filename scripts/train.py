@@ -191,6 +191,8 @@ def checkpoint_metadata(
             "max_size": cfg.training.opponent_pool_size,
             "latest_opponent_prob": cfg.training.latest_opponent_prob,
             "seed": cfg.training.opponent_pool_seed,
+            "scripted_opponent_names": list(cfg.training.scripted_opponent_names),
+            "scripted_opponent_prob": cfg.training.scripted_opponent_prob,
         },
     }
     if opponent_pool_stats is not None:
@@ -610,7 +612,10 @@ class SelfPlayCallback(BaseCallback):
                 ckpt_path,
                 self.cfg,
                 self.num_timesteps,
-                opponent_pool_stats=self.opponent_pool.stats(),
+                opponent_pool_stats={
+                    **self.opponent_pool.stats(),
+                    **self._mixed_league_stats(),
+                },
             )
 
             if self.wrapper.opponent_policy is None:
@@ -618,12 +623,14 @@ class SelfPlayCallback(BaseCallback):
 
             if self.verbose:
                 pool_stats = self.opponent_pool.stats()
+                mixed = self._mixed_league_stats()
                 print(
                     f"[Snapshot] rollout={self._rollout_count}  "
                     f"pool_size={len(self.opponent_pool)}  "
                     f"latest_samples={pool_stats['latest_samples']}  "
                     f"historical_samples={pool_stats['historical_samples']}  "
                     f"last_snapshot_id={pool_stats['last_sample_id']}  "
+                    f"scripted_samples={mixed['scripted_opponent_samples']}  "
                     f"saved={ckpt_path}"
                 )
         self._record_action_stats()
@@ -671,6 +678,17 @@ class SelfPlayCallback(BaseCallback):
         self.logger.record("self_play/action_samples", total)
         self._action_counts = [0] * NUM_ACTIONS
 
+    def _mixed_league_stats(self) -> dict:
+        """Scripted-archetype sampling counters from the training wrapper."""
+        return {
+            "scripted_opponent_samples": int(
+                getattr(self.wrapper, "scripted_opponent_samples", 0)
+            ),
+            "scripted_opponent_counts": dict(
+                getattr(self.wrapper, "scripted_opponent_counts", {}) or {}
+            ),
+        }
+
     def _record_self_play_stats(self) -> None:
         pool_stats = self.opponent_pool.stats()
         self.logger.record("self_play/opponent_pool_size", pool_stats["size"])
@@ -706,6 +724,13 @@ class SelfPlayCallback(BaseCallback):
             "self_play/last_sample_was_historical",
             1.0 if pool_stats["last_sample_kind"] == "historical" else 0.0,
         )
+        mixed = self._mixed_league_stats()
+        self.logger.record(
+            "self_play/scripted_opponent_samples",
+            mixed["scripted_opponent_samples"],
+        )
+        for name, count in mixed["scripted_opponent_counts"].items():
+            self.logger.record(f"self_play/scripted_opponent_{name}", count)
 
     def _apply_curriculum(self) -> None:
         if self.curriculum_name is None:
@@ -742,6 +767,9 @@ def build_training_wrapper(
         config=cfg,
         opponent_pool=pool,
         replay_logger=replay_logger,
+        scripted_policy_factory=(
+            make_builtin_policy if cfg.training.scripted_opponent_names else None
+        ),
     )
     return wrapper, pool
 
@@ -798,7 +826,11 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
         final_path,
         cfg,
         model.num_timesteps,
-        opponent_pool_stats=pool.stats(),
+        opponent_pool_stats={
+            **pool.stats(),
+            "scripted_opponent_samples": int(wrapper.scripted_opponent_samples),
+            "scripted_opponent_counts": dict(wrapper.scripted_opponent_counts),
+        },
     )
     trust_manifest_path = write_checkpoint_trust_manifest(
         discover_checkpoints(checkpoint_dir),
@@ -6401,6 +6433,24 @@ def main():
         help="Seed for reproducible opponent-pool sampling in train/manifest modes",
     )
     parser.add_argument(
+        "--scripted-opponents",
+        type=str,
+        default=None,
+        help=(
+            "CSV of built-in archetypes (zoner, camper, evasive, ...) to mix into "
+            "the training league as the frozen opponent"
+        ),
+    )
+    parser.add_argument(
+        "--scripted-opponent-prob",
+        type=float,
+        default=None,
+        help=(
+            "Probability that an episode uses a scripted archetype instead of a "
+            "pool snapshot (0.0-1.0, default: config value)"
+        ),
+    )
+    parser.add_argument(
         "--rounds",
         type=int,
         default=0,
@@ -6855,6 +6905,33 @@ def main():
             training=replace(
                 cfg.training,
                 opponent_pool_seed=args.opponent_pool_seed,
+            ),
+        )
+    scripted_opponents = (
+        tuple(name.strip() for name in args.scripted_opponents.split(",") if name.strip())
+        if args.scripted_opponents
+        else ()
+    )
+    if scripted_opponents:
+        unknown_opponents = [n for n in scripted_opponents if n not in BUILTIN_POLICY_NAMES]
+        if unknown_opponents:
+            parser.error(
+                "Unknown --scripted-opponents: " + ", ".join(unknown_opponents)
+            )
+    if args.scripted_opponent_prob is not None and not 0.0 <= args.scripted_opponent_prob <= 1.0:
+        parser.error("--scripted-opponent-prob must be between 0.0 and 1.0")
+    if scripted_opponents or args.scripted_opponent_prob is not None:
+        cfg = replace(
+            cfg,
+            training=replace(
+                cfg.training,
+                scripted_opponent_names=scripted_opponents
+                or cfg.training.scripted_opponent_names,
+                scripted_opponent_prob=(
+                    cfg.training.scripted_opponent_prob
+                    if args.scripted_opponent_prob is None
+                    else args.scripted_opponent_prob
+                ),
             ),
         )
     if (

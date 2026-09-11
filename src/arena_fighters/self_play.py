@@ -130,6 +130,7 @@ class SelfPlayWrapper(gym.Env):
         opponent_policy: Any | None = None,
         replay_logger: ReplayLogger | None = None,
         render_mode: str | None = None,
+        scripted_policy_factory: Any | None = None,
     ):
         super().__init__()
         self.cfg = config or Config()
@@ -143,6 +144,7 @@ class SelfPlayWrapper(gym.Env):
         self.opponent_policy = opponent_policy
         self.replay_logger = replay_logger
         self.render_mode = render_mode
+        self.scripted_policy_factory = scripted_policy_factory
 
         self._env = ArenaFightersEnv(config=self.cfg, render_mode=render_mode)
 
@@ -163,7 +165,13 @@ class SelfPlayWrapper(gym.Env):
         self.action_space = spaces.Discrete(NUM_ACTIONS)
 
         self._opponent_obs: dict[str, np.ndarray] | None = None
+        self._raw_opponent_obs: dict[str, np.ndarray] | None = None
         self._opponent_snapshot_loaded = False
+        self._scripted_opponent: Any | None = None
+        self._scripted_opponent_name: str | None = None
+        self.scripted_opponent_samples = 0
+        self.scripted_opponent_counts: dict[str, int] = {}
+        self._opponent_rng = random.Random(self.cfg.training.opponent_pool_seed)
         self._episode_id = 0
         self._episode_frames: list[dict[str, Any]] = []
 
@@ -173,7 +181,7 @@ class SelfPlayWrapper(gym.Env):
         options: dict | None = None,
     ) -> tuple[dict[str, np.ndarray], dict]:
         super().reset(seed=seed)
-        self._sample_opponent_from_pool()
+        self._select_opponent()
         obs_dict, info_dict = self._env.reset(seed=seed, options=options)
         self._episode_id += 1
         if self.replay_logger is not None:
@@ -182,10 +190,13 @@ class SelfPlayWrapper(gym.Env):
         agent0_obs = obs_dict["agent_0"]
         agent1_obs = obs_dict["agent_1"]
         self._opponent_obs = mirror_obs(agent1_obs)
+        self._raw_opponent_obs = agent1_obs
 
         info = dict(info_dict.get("agent_0", {}))
         info["opponent_snapshot_loaded"] = self._opponent_snapshot_loaded
         info["opponent_pool"] = self.opponent_pool.stats()
+        info["scripted_opponent"] = self._scripted_opponent_name
+        info["scripted_opponent_samples"] = self.scripted_opponent_samples
 
         return agent0_obs, info
 
@@ -223,18 +234,49 @@ class SelfPlayWrapper(gym.Env):
         if not (terminated or truncated):
             agent1_obs = obs_dict["agent_1"]
             self._opponent_obs = mirror_obs(agent1_obs)
+            self._raw_opponent_obs = agent1_obs
         else:
             self._opponent_obs = None
+            self._raw_opponent_obs = None
 
         return agent0_obs, reward, terminated, truncated, info
 
     def _get_opponent_action(self) -> int:
+        if self._scripted_opponent is not None and self._raw_opponent_obs is not None:
+            # Scripted archetypes read the environment directly and act in the
+            # true arena frame, so they receive raw (un-mirrored) observations.
+            return int(
+                self._scripted_opponent.act(
+                    "agent_1", self._raw_opponent_obs, self._env
+                )
+            )
         if self.opponent_policy is not None and self._opponent_obs is not None:
             action, _ = self.opponent_policy.predict(self._opponent_obs, deterministic=False)
             # The opponent observed a mirrored arena, so its horizontal
             # movement actions must be converted back to the true frame.
             return mirror_action(int(action))
         return self.action_space.sample()
+
+    def _select_opponent(self) -> None:
+        """Choose the opponent for the next episode: scripted archetype or pool."""
+        self._opponent_snapshot_loaded = False
+        self._scripted_opponent = None
+        self._scripted_opponent_name = None
+
+        names = self.cfg.training.scripted_opponent_names
+        prob = self.cfg.training.scripted_opponent_prob
+        if names and self.scripted_policy_factory is not None and prob > 0.0:
+            if self._opponent_rng.random() < prob:
+                name = str(self._opponent_rng.choice(list(names)))
+                self._scripted_opponent = self.scripted_policy_factory(name)
+                self._scripted_opponent_name = name
+                self.scripted_opponent_samples += 1
+                self.scripted_opponent_counts[name] = (
+                    self.scripted_opponent_counts.get(name, 0) + 1
+                )
+                return
+
+        self._sample_opponent_from_pool()
 
     def _infer_winner(
         self,

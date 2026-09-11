@@ -143,6 +143,7 @@ All source lives in `src/arena_fighters/`:
 - Named maps: classic, flat, split, tower; `--randomize-maps` samples one on each reset
 - Curriculum: `map_progression` stages from flat/default rewards to full map pool/anti-stall rewards through training callback updates
 - Opponent pool (max 20 snapshots): sample frozen historical snapshots, 80% latest and 20% random older; reset info and training logger expose latest-vs-historical sampling telemetry
+- Mixed league (optional): `--scripted-opponents zoner,camper,evasive --scripted-opponent-prob 0.35` puts built-in archetypes on the opponent side for that fraction of episodes, so the learner faces positioning and platform-control play instead of self-snapshots only; sampling counters land in reset info, TensorBoard (`self_play/scripted_opponent_*`), snapshot logs, and checkpoint metadata
 - Opponent pool telemetry includes active snapshot ids, per-snapshot sample counts, last sampled snapshot id, and historical sample rate so league collapse is easier to spot
 - Checkpoint metadata records latest opponent-pool stats; generated real-run long-run checks require historical opponent samples
 - Long-run status summarizes checkpoint opponent-pool metadata and flags missing historical-opponent sample evidence

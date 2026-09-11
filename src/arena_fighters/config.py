@@ -50,6 +50,11 @@ class TrainingConfig:
     opponent_pool_seed: int | None = None
     curriculum_name: str | None = None
     replay_save_interval: int = 100
+    # Mixed league: sample built-in scripted archetypes (zoner, camper, ...) as
+    # the training opponent for this fraction of episodes, so the learner faces
+    # positioning and platform-control play instead of self-snapshots only.
+    scripted_opponent_names: tuple[str, ...] = ()
+    scripted_opponent_prob: float = 0.0
     milestone_steps: tuple[int, ...] = (
         100_000,
         500_000,
