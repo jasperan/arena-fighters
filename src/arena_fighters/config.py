@@ -9,6 +9,11 @@ class ArenaConfig:
     map_name: str = "classic"
     randomize_maps: bool = False
     map_choices: tuple[str, ...] = ("classic", "flat", "split", "tower")
+    # Symmetric start-position jitter (in tiles). Seeded episodes shift both
+    # spawns toward or away from the centre by the same amount, so matchups
+    # between deterministic policies still explore different openings and
+    # training sees varied starting distances. 0 pins the classic 5/34 spawns.
+    spawn_jitter: int = 2
 
 
 @dataclass(frozen=True)

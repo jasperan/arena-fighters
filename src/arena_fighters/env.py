@@ -124,9 +124,10 @@ class ArenaFightersEnv(ParallelEnv):
         self._set_map(self._select_map(seed))
 
         hp = self.cfg.agent.start_hp
+        spawn_x0, spawn_x1 = self._spawn_columns(seed)
         self._agent_states = {
-            "agent_0": AgentState(x=5, y=18, hp=hp, facing=1),
-            "agent_1": AgentState(x=34, y=18, hp=hp, facing=-1),
+            "agent_0": AgentState(x=spawn_x0, y=18, hp=hp, facing=1),
+            "agent_1": AgentState(x=spawn_x1, y=18, hp=hp, facing=-1),
         }
 
         obs = {a: self._build_obs(a) for a in self.agents}
@@ -211,6 +212,30 @@ class ArenaFightersEnv(ParallelEnv):
             self.agents = []
 
         return obs, self._rewards, terminations, truncations, infos
+
+    def _spawn_columns(self, seed: int | None) -> tuple[int, int]:
+        """Mirror-symmetric spawn columns, jittered by the episode seed.
+
+        Without jitter, deterministic policies replay a single episode for
+        every seed, so N-round evaluations are N copies of one outcome. The
+        offset keeps ``x0 + x1 == width - 1`` (the match stays mirror
+        symmetric) and falls back to the classic columns if a jittered tile is
+        solid.
+        """
+        base_left = 5
+        base_right = self.cfg.arena.width - 1 - base_left
+        jitter = max(0, int(self.cfg.arena.spawn_jitter))
+        if jitter == 0:
+            return base_left, base_right
+
+        rng = np.random.default_rng(seed)
+        offset = int(rng.integers(-jitter, jitter + 1))
+        spawn_y = 18
+        if self._is_solid(base_left + offset, spawn_y) or self._is_solid(
+            base_right - offset, spawn_y
+        ):
+            return base_left, base_right
+        return base_left + offset, base_right - offset
 
     def _process_action(self, agent_name: str, action: int) -> None:
         st = self._agent_states[agent_name]

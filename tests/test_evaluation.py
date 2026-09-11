@@ -407,7 +407,11 @@ def test_zoner_holds_firing_lane_at_range():
 
 def test_zoner_beats_scripted_without_taking_damage():
     """Zoner's spacing discipline should dominate the closing scripted bot."""
-    env = ArenaFightersEnv(config=Config())
+    # Pinned spawns: the claim is about the policies' spacing duel, so it is
+    # measured from the classic opening rather than a jittered one.
+    env = ArenaFightersEnv(
+        config=Config(arena=replace(ArenaConfig(), spawn_jitter=0))
+    )
     obs, _ = env.reset(seed=7)
     zoner = ZonerPolicy()
     scripted = ScriptedPolicy()

@@ -17,6 +17,7 @@ from arena_fighters.config import (
     SHOOT_DIAG_DOWN,
     SHOOT_DIAG_UP,
     SHOOT_FORWARD,
+    ArenaConfig,
     Config,
     reward_config_for_preset,
 )
@@ -69,9 +70,11 @@ def test_agents_start_on_ground():
     env.reset()
     st0 = env._agent_states["agent_0"]
     st1 = env._agent_states["agent_1"]
-    # agent_0 at (5, 18), agent_1 at (34, 18)
-    assert st0.x == 5 and st0.y == 18
-    assert st1.x == 34 and st1.y == 18
+    # Mirror-symmetric spawns on the ground row; the exact columns may be
+    # jittered symmetrically by the episode seed.
+    assert st0.y == 18 and st1.y == 18
+    assert st0.x + st1.x == env.cfg.arena.width - 1
+    assert abs(st0.x - 5) <= env.cfg.arena.spawn_jitter
     # Both should be on ground (y=19 is solid ground)
     assert env._on_ground(st0)
     assert env._on_ground(st1)
@@ -556,7 +559,10 @@ def test_get_state_serializable():
     assert "tick" in state
     assert "agents" in state
     assert "bullets" in state
-    assert state["agents"]["agent_0"]["x"] == 5
+    assert (
+        state["agents"]["agent_0"]["x"] + state["agents"]["agent_1"]["x"]
+        == env.cfg.arena.width - 1
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -683,3 +689,42 @@ def test_tower_platform_cannot_be_mounted_from_directly_below():
     for _ in range(6):
         env.step({"agent_0": JUMP, "agent_1": IDLE})
         assert agent.y >= 17, "mounted a platform from directly underneath"
+
+
+# ---------------------------------------------------------------------------
+# Spawn jitter: seeded episodes must differ, and stay mirror-symmetric
+# ---------------------------------------------------------------------------
+def test_spawn_jitter_varies_openings_and_stays_mirror_symmetric():
+    """Deterministic policies replay one episode per seed without variety.
+
+    Seeded spawns are shifted symmetrically toward or away from the centre, so
+    N-round evaluations sample distinct openings while the match stays a mirror
+    image of itself.
+    """
+    env = ArenaFightersEnv(config=Config(arena=replace(ArenaConfig(), map_name="flat")))
+    seen = set()
+    for seed in range(12):
+        env.reset(seed=seed)
+        a0 = env._agent_states["agent_0"]
+        a1 = env._agent_states["agent_1"]
+        assert a0.x + a1.x == env.cfg.arena.width - 1
+        assert not env._is_solid(a0.x, a0.y) and not env._is_solid(a1.x, a1.y)
+        assert env._on_ground(a0) and env._on_ground(a1)
+        seen.add(a0.x)
+    assert len(seen) > 1, "spawn jitter never changed the opening"
+
+
+def test_spawn_jitter_is_reproducible_for_a_seed():
+    env = ArenaFightersEnv(config=Config(arena=replace(ArenaConfig(), map_name="classic")))
+    env.reset(seed=11)
+    first = {name: st.x for name, st in env._agent_states.items()}
+    env.reset(seed=11)
+    assert {name: st.x for name, st in env._agent_states.items()} == first
+
+
+def test_spawn_jitter_zero_pins_classic_columns():
+    env = ArenaFightersEnv(config=Config(arena=replace(ArenaConfig(), spawn_jitter=0)))
+    for seed in range(5):
+        env.reset(seed=seed)
+        assert env._agent_states["agent_0"].x == 5
+        assert env._agent_states["agent_1"].x == 34
