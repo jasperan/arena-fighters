@@ -26,7 +26,7 @@ from arena_fighters.config import (
     Config,
 )
 from arena_fighters.env import ArenaFightersEnv
-from arena_fighters.observations import mirror_obs
+from arena_fighters.observations import mirror_action, mirror_obs
 
 
 DEFAULT_GATE_RULES = {
@@ -370,6 +370,25 @@ class CamperPolicy:
         return env._is_solid(probe_x, st.y + 1) or env._is_solid(probe_x, st.y)
 
 
+def predict_for_agent(
+    model: Any,
+    agent_name: str,
+    obs: dict[str, np.ndarray],
+    *,
+    deterministic: bool = True,
+) -> int:
+    """Run a shared-weight policy for either agent in the canonical frame.
+
+    The policy only ever sees canonical (agent 0 frame) observations, and the
+    horizontal movement actions it returns are converted back to the true
+    arena frame when it is playing agent 1.
+    """
+    model_obs = mirror_obs(obs) if agent_name == "agent_1" else obs
+    action, _ = model.predict(model_obs, deterministic=deterministic)
+    action = int(action)
+    return mirror_action(action) if agent_name == "agent_1" else action
+
+
 @dataclass
 class ModelPolicy:
     model: Any
@@ -381,11 +400,9 @@ class ModelPolicy:
         obs: dict[str, np.ndarray],
         env: ArenaFightersEnv,
     ) -> int:
-        model_obs = obs
-        if agent_name == "agent_1":
-            model_obs = mirror_obs(obs)
-        action, _ = self.model.predict(model_obs, deterministic=self.deterministic)
-        return int(action)
+        return predict_for_agent(
+            self.model, agent_name, obs, deterministic=self.deterministic
+        )
 
 
 def make_builtin_policy(name: str, seed: int | None = None) -> EvalPolicy:

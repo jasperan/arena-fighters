@@ -22,11 +22,13 @@ from arena_fighters.config import (
     SHOOT_DIAG_DOWN,
     SHOOT_DIAG_UP,
     SHOOT_FORWARD,
+    ArenaConfig,
     Config,
     VEC_OPP_HP,
     VEC_OWN_HP,
 )
-from arena_fighters.env import ArenaFightersEnv
+from arena_fighters.env import ArenaFightersEnv, Bullet
+from arena_fighters.observations import mirror_action, mirror_obs
 from arena_fighters.evaluation import (
     AggressivePolicy,
     artifact_metadata,
@@ -42,7 +44,7 @@ from arena_fighters.evaluation import (
     evaluate_pairwise_suite,
     infer_winner,
     make_builtin_policy,
-    mirror_obs,
+    predict_for_agent,
     gate_eval_comparison,
     gate_rank_summary,
     load_eval_summary,
@@ -110,7 +112,19 @@ def test_load_eval_summary_requires_json_object(tmp_path):
         raise AssertionError("expected non-object eval summary to fail")
 
 
-def test_mirror_obs_flips_agent_perspective_without_mutating_input():
+def test_mirror_obs_reflects_every_channel_without_exchanging_labels():
+    """The mirror is a pure horizontal reflection of the canonical frame.
+
+    Regression: the transform used to flip the grid and then exchange the
+    own/opponent position and bullet channels. Because the flip already moves
+    both fighters to mirrored positions, exchanging the channels afterwards
+    cancelled the reflection for positions while double-transforming bullets:
+    an agent playing through mirrored observations then read enemy bullets at
+    mirrored positions, e.g. an incoming shot four tiles away appeared
+    twenty-five tiles away. For 9398 of 53428 enumerated geometries the shot
+    was invisible in the mirrored view. Channels must stay attached to the
+    fighter they describe; only geometry is reflected.
+    """
     grid = np.zeros((NUM_CHANNELS, 2, 4), dtype=np.float32)
     grid[CH_PLATFORMS] = np.array(
         [[0, 1, 0, 1], [1, 0, 1, 0]],
@@ -131,38 +145,89 @@ def test_mirror_obs_flips_agent_perspective_without_mutating_input():
     vector[VEC_OWN_HP] = 20
     vector[VEC_OPP_HP] = 15
     obs = {"grid": grid.copy(), "vector": vector.copy()}
-    expected_vector = vector.copy()
-    expected_vector[VEC_OWN_HP], expected_vector[VEC_OPP_HP] = 15, 20
 
     mirrored = mirror_obs(obs)
 
+    # input untouched
     assert np.array_equal(obs["grid"], grid)
     assert np.array_equal(obs["vector"], vector)
+    # every channel is the reflection of the same channel
+    for channel in range(NUM_CHANNELS):
+        assert np.array_equal(
+            mirrored["grid"][channel], np.flip(grid[channel], axis=1)
+        ), f"channel {channel} was not reflected in place"
+    # own HP stays own HP: the vector describes the acting fighter
+    assert np.array_equal(mirrored["vector"], vector)
+
+
+def test_mirror_obs_preserves_bullet_relative_geometry():
+    """An enemy bullet's distance from the agent survives the mirror.
+
+    This is the property that fails when the transform also exchanges
+    own/opponent channels, and it is what the policy needs in order to dodge.
+    """
+    checked = 0
+    for own_x, opp_x, bullet_x in (
+        (34, 5, 20),
+        (30, 12, 33),
+        (25, 25, 24),
+        (10, 34, 33),
+        (36, 2, 6),
+    ):
+        env = ArenaFightersEnv(config=Config(arena=ArenaConfig(map_name="flat")))
+        env.reset(seed=0)
+        a0, a1 = env._agent_states["agent_0"], env._agent_states["agent_1"]
+        a0.x, a0.y = opp_x, 18
+        a1.x, a1.y = own_x, 18
+        env._bullets = [Bullet(x=float(bullet_x), y=18.0, dx=2, dy=0, owner="agent_0")]
+
+        raw = env._build_obs("agent_1")
+        mirrored = mirror_obs(raw)
+
+        own_col = int(np.argmax(mirrored["grid"][CH_OWN_POS].sum(axis=0)))
+        enemy_bullet_cols = np.flatnonzero(mirrored["grid"][CH_OPP_BULLETS, 18])
+        assert enemy_bullet_cols.size == 1
+        mirrored_distance = abs(int(enemy_bullet_cols[0]) - own_col)
+
+        assert mirrored_distance == abs(bullet_x - own_x), (
+            f"own_x={own_x} opp_x={opp_x} bullet_x={bullet_x}: mirrored "
+            f"distance {mirrored_distance} != true {abs(bullet_x - own_x)}"
+        )
+        checked += 1
+    assert checked == 5
+
+
+def test_mirror_action_swaps_horizontal_moves_only():
+    assert mirror_action(MOVE_LEFT) == MOVE_RIGHT
+    assert mirror_action(MOVE_RIGHT) == MOVE_LEFT
+    for action in (IDLE, JUMP, DUCK, SHOOT_FORWARD, SHOOT_DIAG_UP, SHOOT_DIAG_DOWN, MELEE):
+        assert mirror_action(action) == action
+    assert mirror_action(mirror_action(MOVE_LEFT)) == MOVE_LEFT
+
+
+def test_predict_for_agent_feeds_canonical_observations_and_unmirrors_actions():
+    class RecordingModel:
+        def __init__(self):
+            self.seen = []
+
+        def predict(self, obs, deterministic=True):
+            self.seen.append(obs)
+            return MOVE_LEFT, None
+
+    env = ArenaFightersEnv(config=Config(arena=ArenaConfig(map_name="classic")))
+    obs, _ = env.reset(seed=0)
+    obs = obs.copy()
+    model = RecordingModel()
+
+    agent0_action = predict_for_agent(model, "agent_0", obs["agent_0"])
+    agent1_action = predict_for_agent(model, "agent_1", obs["agent_1"])
+
+    assert agent0_action == MOVE_LEFT
+    assert agent1_action == MOVE_RIGHT
+    assert np.array_equal(model.seen[0]["grid"], obs["agent_0"]["grid"])
     assert np.array_equal(
-        mirrored["grid"][CH_PLATFORMS],
-        np.flip(grid[CH_PLATFORMS], axis=1),
+        model.seen[1]["grid"], np.flip(obs["agent_1"]["grid"], axis=2)
     )
-    assert np.array_equal(
-        mirrored["grid"][CH_OWN_POS],
-        np.flip(grid[CH_OPP_POS], axis=1),
-    )
-    assert np.array_equal(
-        mirrored["grid"][CH_OPP_POS],
-        np.flip(grid[CH_OWN_POS], axis=1),
-    )
-    assert np.array_equal(
-        mirrored["grid"][CH_OWN_BULLETS],
-        np.flip(grid[CH_OPP_BULLETS], axis=1),
-    )
-    assert np.array_equal(
-        mirrored["grid"][CH_OPP_BULLETS],
-        np.flip(grid[CH_OWN_BULLETS], axis=1),
-    )
-    assert np.array_equal(
-        mirrored["grid"][CH_OWN_FACING],
-        np.flip(grid[CH_OWN_FACING], axis=1),
-    )
-    assert np.array_equal(mirrored["vector"], expected_vector)
 
 
 def test_run_episode_returns_metrics():

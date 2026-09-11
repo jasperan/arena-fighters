@@ -208,7 +208,14 @@ def test_self_play_wrapper_loads_opponent_pool_snapshot_on_reset():
     assert info["opponent_pool"]["latest_samples"] == 1
 
 
-def test_self_play_wrapper_uses_loaded_snapshot_policy_for_opponent_action():
+def test_self_play_wrapper_unmirrors_opponent_movement_actions():
+    """The opponent saw a mirrored arena, so its moves must be flipped back.
+
+    The frozen opponent policy is fed `mirror_obs`, i.e. the canonical frame in
+    which "left" is the true arena's right. Applying its movement action
+    unchanged would send it the wrong way, so `SelfPlayWrapper` converts
+    MOVE_LEFT/MOVE_RIGHT back before stepping the environment.
+    """
     cfg = Config()
     cfg = replace(
         cfg,
@@ -227,7 +234,8 @@ def test_self_play_wrapper_uses_loaded_snapshot_policy_for_opponent_action():
     start_x = wrapper._env._agent_states["agent_1"].x
     wrapper.step(IDLE)
 
-    assert wrapper._env._agent_states["agent_1"].x == start_x - 1
+    # MOVE_LEFT in the mirrored frame is MOVE_RIGHT in the true arena.
+    assert wrapper._env._agent_states["agent_1"].x == start_x + 1
 
 
 def test_self_play_wrapper_keeps_empty_caller_pool():

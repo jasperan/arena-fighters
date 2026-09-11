@@ -41,6 +41,7 @@ from arena_fighters.evaluation import (
     gate_rank_summary,
     load_eval_summary,
     make_builtin_policy,
+    predict_for_agent,
     rank_baseline_suites,
     ranking_per_map_score_details,
     score_baseline_suite,
@@ -48,7 +49,6 @@ from arena_fighters.evaluation import (
     write_eval_summary,
 )
 from arena_fighters.network import ArenaFeaturesExtractor
-from arena_fighters.observations import mirror_obs
 from arena_fighters.replay import ReplayLogger, analyze_replay, load_replay
 from arena_fighters.self_play import OpponentPool, SelfPlayWrapper
 from stable_baselines3.common.callbacks import BaseCallback
@@ -864,12 +864,13 @@ def run_watch(
             while env.agents:
                 actions = {}
                 for agent_name in env.agents:
-                    agent_obs = obs_dict[agent_name]
                     if model is not None:
-                        if agent_name == "agent_1":
-                            agent_obs = mirror_obs(agent_obs)
-                        action, _ = model.predict(agent_obs, deterministic=False)
-                        actions[agent_name] = int(action)
+                        actions[agent_name] = predict_for_agent(
+                            model,
+                            agent_name,
+                            obs_dict[agent_name],
+                            deterministic=False,
+                        )
                     else:
                         actions[agent_name] = np.random.randint(0, NUM_ACTIONS)
 

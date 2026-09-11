@@ -19,7 +19,7 @@ from arena_fighters.config import (
     RewardConfig,
 )
 from arena_fighters.env import ArenaFightersEnv
-from arena_fighters.observations import mirror_obs
+from arena_fighters.observations import mirror_action, mirror_obs
 from arena_fighters.replay import ReplayLogger
 
 
@@ -231,7 +231,9 @@ class SelfPlayWrapper(gym.Env):
     def _get_opponent_action(self) -> int:
         if self.opponent_policy is not None and self._opponent_obs is not None:
             action, _ = self.opponent_policy.predict(self._opponent_obs, deterministic=False)
-            return int(action)
+            # The opponent observed a mirrored arena, so its horizontal
+            # movement actions must be converted back to the true frame.
+            return mirror_action(int(action))
         return self.action_space.sample()
 
     def _infer_winner(
