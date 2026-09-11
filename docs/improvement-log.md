@@ -231,6 +231,28 @@ cycle-4 policy still scores **0.845** (robust to varied openings) while the
 **Verdict: GAIN** (opponent diversity attacks the positioning gap; spawn
 variety fixes the statistics of every future evaluation).
 
+## Cycle 8 — 2026-09-11 — movement diagnostics in evaluation and strategy report
+
+**Lane:** training/eval tooling for strategy quality.
+
+The existing degeneracy checks covered stuck actions (dominant-action rate) and
+non-engagement (no-damage/low-engagement rates), but nothing observed movement.
+The cycle-4 policy therefore scored 0.845 while never leaving its spawn, and the
+tooling had no opinion about it.
+
+`run_episode` now records `stand_still_rate` (fraction of ticks whose column did
+not change) and `travel_distance`; `evaluate_matchup` aggregates both into the
+behavior block at match and per-map level, and the strategy report raises
+`agent_0_stand_still_rate_above_threshold` with a new tunable
+(`--strategy-max-stand-still-rate`, default 0.95) that flows into the long-run
+manifest alongside the other thresholds.
+
+Measured: scripted-vs-scripted 0.22 stand-still with 8 tiles of travel per
+episode; the cycle-4 checkpoint 0.83 with 2 tiles; a hand-written never-moving
+fighter 1.00 with 0 tiles. 366 tests pass, smoke suite 3/3.
+
+**Verdict: GAIN** (the loop can now see the failure mode it just produced).
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: checkpoint-vs-checkpoint is
