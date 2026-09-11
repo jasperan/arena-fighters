@@ -197,6 +197,180 @@ class EvasivePolicy:
 
 
 @dataclass
+class ZonerPolicy:
+    """Baseline that holds a firing lane and retreats out of melee range.
+
+    Unlike ``ScriptedPolicy`` (which closes distance), the zoner backs off when
+    the opponent gets inside ``preferred_min`` and only accepts melee when the
+    opponent is pinned against an arena wall.
+    """
+
+    preferred_min: int = 3
+    preferred_max: int = 9
+
+    def act(
+        self,
+        agent_name: str,
+        obs: dict[str, np.ndarray],
+        env: ArenaFightersEnv,
+    ) -> int:
+        st = env._agent_states[agent_name]
+        other = env._agent_states[env._other(agent_name)]
+        dx = other.x - st.x
+        dy = other.y - st.y
+        distance = abs(dx)
+        target_facing = 1 if dx > 0 else -1 if dx < 0 else st.facing
+        facing_target = dx == 0 or st.facing == target_facing
+        width = env.cfg.arena.width
+
+        if abs(dx) == 1 and dy == 0 and facing_target and st.melee_cd <= 0:
+            return MELEE
+
+        if facing_target and st.shoot_cd <= 0 and distance <= self.preferred_max:
+            if dy < 0:
+                return SHOOT_DIAG_UP
+            if dy > 0:
+                return SHOOT_DIAG_DOWN
+            return SHOOT_FORWARD
+
+        if distance < self.preferred_min:
+            pinned_left = st.x <= 1 and dx > 0
+            pinned_right = st.x >= width - 2 and dx < 0
+            if pinned_left or pinned_right:
+                return JUMP
+            return MOVE_LEFT if dx > 0 else MOVE_RIGHT
+
+        if distance > self.preferred_max:
+            return MOVE_RIGHT if dx > 0 else MOVE_LEFT
+        return DUCK if dy == 0 else IDLE
+
+
+@dataclass
+class CamperPolicy:
+    """Baseline that takes and holds an elevated platform, shooting down.
+
+    Jump physics rise in decreasing steps (``vy = -h`` then ``vy += 1``) and
+    treat a solid tile above as a ceiling, so a camper cannot jump straight up
+    under a platform. It instead walks beside the target platform, jumps, and
+    steers onto it while airborne. The climb target is latched during the jump
+    so airborne ticks do not re-target and abort the approach.
+    """
+
+    _climb_target: tuple[int, int, int] | None = None
+
+    def act(
+        self,
+        agent_name: str,
+        obs: dict[str, np.ndarray],
+        env: ArenaFightersEnv,
+    ) -> int:
+        st = env._agent_states[agent_name]
+        other = env._agent_states[env._other(agent_name)]
+        dx = other.x - st.x
+        dy = other.y - st.y
+        target_facing = 1 if dx > 0 else -1 if dx < 0 else st.facing
+        facing_target = dx == 0 or st.facing == target_facing
+
+        if abs(dx) == 1 and dy == 0 and facing_target and st.melee_cd <= 0:
+            return MELEE
+
+        station = (
+            self._standing_platform(env, st)
+            or self._climb_target
+            or self._station(env, st)
+        )
+        x_start, x_end, platform_y = station
+        standing_row = platform_y - 1
+        on_station = st.y == standing_row and x_start <= st.x <= x_end
+        if on_station:
+            self._climb_target = None
+            if not facing_target and abs(dx) > 1:
+                # Facing only changes by moving; step toward the opponent when
+                # the platform supports it, otherwise reposition toward center.
+                if self._can_step(env, st, dx):
+                    return MOVE_RIGHT if dx > 0 else MOVE_LEFT
+                center = (x_start + x_end) // 2
+                if st.x != center and self._can_step(env, st, center - st.x):
+                    return MOVE_RIGHT if center > st.x else MOVE_LEFT
+            if facing_target and st.shoot_cd <= 0:
+                if dy > 0:
+                    return SHOOT_DIAG_DOWN
+                if dy < 0:
+                    return SHOOT_DIAG_UP
+                return SHOOT_FORWARD
+            # Hold the platform: repositioning is what makes campers fall off.
+            return IDLE
+
+        if not env._on_ground(st):
+            # Steering only works above the surface row; below it the tile is
+            # solid and horizontal moves into the platform are blocked.
+            if st.y < platform_y:
+                if st.x < x_start:
+                    return MOVE_RIGHT
+                if st.x > x_end:
+                    return MOVE_LEFT
+                self._climb_target = None
+                return IDLE
+            return IDLE
+
+        # Grounded: walk beside the platform, then jump (never from under it).
+        if x_start <= st.x <= x_end:
+            left_exit = x_start - 1
+            right_exit = x_end + 1
+            if st.x - left_exit <= right_exit - st.x:
+                return MOVE_LEFT
+            return MOVE_RIGHT
+        if st.x < x_start - 1:
+            return MOVE_RIGHT
+        if st.x > x_end + 1:
+            return MOVE_LEFT
+        if st.y > standing_row:
+            self._climb_target = station
+            return JUMP
+        return IDLE
+
+    @staticmethod
+    def _standing_platform(
+        env: ArenaFightersEnv, st: Any
+    ) -> tuple[int, int, int] | None:
+        """An elevated platform the agent is standing on, if any."""
+        if not env._on_ground(st):
+            return None
+        ground_y = max(y for _, _, y in env._platform_layout)
+        for x_start, x_end, y in env._platform_layout:
+            if y == st.y + 1 and y != ground_y and x_start <= st.x <= x_end:
+                return (x_start, x_end, y)
+        return None
+
+    @staticmethod
+    def _station(env: ArenaFightersEnv, st: Any) -> tuple[int, int, int]:
+        """Highest platform reachable from the current standing row.
+
+        An unobstructed jump rises ``h + (h-1) + ... + 1`` tiles because the
+        rising velocity decays by one per tick, so any platform whose standing
+        row is inside that reach is a candidate.
+        """
+        jump_height = env.cfg.agent.jump_height
+        max_rise = jump_height * (jump_height + 1) // 2
+        reachable = [
+            (x_start, x_end, y)
+            for x_start, x_end, y in env._platform_layout
+            if y - 1 < st.y and st.y - (y - 1) <= max_rise and y - 1 != st.y
+        ]
+        if reachable:
+            return min(reachable, key=lambda platform: platform[2])
+        return min(env._platform_layout, key=lambda platform: platform[2])
+
+    @staticmethod
+    def _can_step(env: ArenaFightersEnv, st: Any, dx: int) -> bool:
+        """True when the next cell toward the opponent is walkable or jumpable."""
+        if dx == 0:
+            return False
+        probe_x = st.x + (1 if dx > 0 else -1)
+        return env._is_solid(probe_x, st.y + 1) or env._is_solid(probe_x, st.y)
+
+
+@dataclass
 class ModelPolicy:
     model: Any
     deterministic: bool = True
@@ -225,10 +399,22 @@ def make_builtin_policy(name: str, seed: int | None = None) -> EvalPolicy:
         return AggressivePolicy()
     if name == "evasive":
         return EvasivePolicy()
+    if name == "zoner":
+        return ZonerPolicy()
+    if name == "camper":
+        return CamperPolicy()
     raise ValueError(f"Unknown built-in policy: {name}")
 
 
-BUILTIN_POLICY_NAMES = ("random", "scripted", "idle", "aggressive", "evasive")
+BUILTIN_POLICY_NAMES = (
+    "random",
+    "scripted",
+    "idle",
+    "aggressive",
+    "evasive",
+    "zoner",
+    "camper",
+)
 
 
 def infer_winner(

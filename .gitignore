@@ -20,3 +20,4 @@ progress.md
 dogfood-output/
 .playwright-mcp/
 content/
+renders/

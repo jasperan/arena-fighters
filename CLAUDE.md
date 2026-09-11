@@ -138,6 +138,7 @@ All source lives in `src/arena_fighters/`:
 
 - Shared-weight self-play: one network plays both sides via observation mirroring; every map layout must stay mirror-symmetric about the vertical axis (enforced by tests)
 - Double knockouts pay symmetric draw rewards; single knockouts pay win/lose, and the episode ends for both agents
+- Jump physics rise by decreasing velocity steps and treat solid tiles as ceilings, so platforms must be mounted from beside them while steering in mid-air; platforms are not reachable by jumping from directly underneath
 - `OpponentPool` is falsy while empty (defines `__len__`), so wrapper code must use identity checks when defaulting it
 - Named maps: classic, flat, split, tower; `--randomize-maps` samples one on each reset
 - Curriculum: `map_progression` stages from flat/default rewards to full map pool/anti-stall rewards through training callback updates
@@ -154,7 +155,7 @@ All source lives in `src/arena_fighters/`:
 - Eval and suite configs include active curriculum metadata plus checkpoint metadata when a companion file exists
 - Eval, suite, rank, comparison, gate, rank-gate, promotion-audit, audit-summary, artifact-index, strategy-report, long-run-check, long-run-status, league-health, smoke-suite, long-run-artifact-smoke, and replay-analysis JSON include an `artifact` type/schema marker
 - Env infos include per-step and cumulative combat event counters under `events` and `episode_events`
-- Built-in eval opponents: random, idle, scripted, aggressive, evasive
+- Built-in eval opponents: random, idle, scripted, aggressive, evasive, zoner (holds a firing lane and retreats from melee), camper (takes and holds an elevated platform)
 - Eval summaries can be persisted with `--eval-output-dir`; `evals/` is ignored
 - Compare mode reports metric deltas between two saved eval summaries
 - Gate mode exits non-zero when default comparison guardrails fail

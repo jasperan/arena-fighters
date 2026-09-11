@@ -15,11 +15,13 @@ from arena_fighters.config import (
     IDLE,
     JUMP,
     MELEE,
+    MOVE_LEFT,
     MOVE_RIGHT,
     NUM_CHANNELS,
     NUM_VECTOR_OBS,
     SHOOT_DIAG_DOWN,
     SHOOT_DIAG_UP,
+    SHOOT_FORWARD,
     Config,
     VEC_OPP_HP,
     VEC_OWN_HP,
@@ -28,10 +30,12 @@ from arena_fighters.env import ArenaFightersEnv
 from arena_fighters.evaluation import (
     AggressivePolicy,
     artifact_metadata,
+    CamperPolicy,
     RandomPolicy,
     ScriptedPolicy,
     EvasivePolicy,
     IdlePolicy,
+    ZonerPolicy,
     compare_eval_summaries,
     evaluate_baseline_suite,
     evaluate_matchup,
@@ -301,6 +305,81 @@ def test_make_builtin_policy_supports_baseline_archetypes():
     assert isinstance(make_builtin_policy("scripted"), ScriptedPolicy)
     assert isinstance(make_builtin_policy("aggressive"), AggressivePolicy)
     assert isinstance(make_builtin_policy("evasive"), EvasivePolicy)
+    assert isinstance(make_builtin_policy("zoner"), ZonerPolicy)
+    assert isinstance(make_builtin_policy("camper"), CamperPolicy)
+
+
+def test_zoner_retreats_out_of_melee_range():
+    cfg = _short_cfg()
+    env = ArenaFightersEnv(config=cfg)
+    obs, _ = env.reset()
+    env._agent_states["agent_0"].x = 10
+    env._agent_states["agent_0"].y = 18
+    env._agent_states["agent_0"].shoot_cd = 3
+    env._agent_states["agent_1"].x = 12
+    env._agent_states["agent_1"].y = 18
+
+    action = ZonerPolicy().act("agent_0", obs["agent_0"], env)
+
+    assert action == MOVE_LEFT
+
+
+def test_zoner_holds_firing_lane_at_range():
+    cfg = _short_cfg()
+    env = ArenaFightersEnv(config=cfg)
+    obs, _ = env.reset()
+    env._agent_states["agent_0"].x = 5
+    env._agent_states["agent_0"].y = 18
+    env._agent_states["agent_0"].shoot_cd = 0
+    env._agent_states["agent_0"].facing = 1
+    env._agent_states["agent_1"].x = 11
+    env._agent_states["agent_1"].y = 18
+
+    action = ZonerPolicy().act("agent_0", obs["agent_0"], env)
+
+    assert action == SHOOT_FORWARD
+
+
+def test_zoner_beats_scripted_without_taking_damage():
+    """Zoner's spacing discipline should dominate the closing scripted bot."""
+    env = ArenaFightersEnv(config=Config())
+    obs, _ = env.reset(seed=7)
+    zoner = ZonerPolicy()
+    scripted = ScriptedPolicy()
+    damage_taken = 0
+    ticks = 0
+    while env.agents and ticks < 500:
+        actions = {
+            "agent_0": zoner.act("agent_0", obs["agent_0"], env),
+            "agent_1": scripted.act("agent_1", obs["agent_1"], env),
+        }
+        obs, _rewards, terminations, truncations, info = env.step(actions)
+        damage_taken += info["agent_0"]["events"]["damage_taken"]
+        ticks += 1
+        if any(terminations.values()) or any(truncations.values()):
+            break
+
+    assert damage_taken == 0
+    assert env._agent_states["agent_1"].hp <= 0
+
+
+def test_camper_climbs_onto_an_elevated_platform():
+    env = ArenaFightersEnv(config=Config())
+    obs, _ = env.reset(seed=3)
+    camper = CamperPolicy()
+    idle = IdlePolicy()
+    reached_height = env._agent_states["agent_0"].y
+    for _ in range(80):
+        actions = {
+            "agent_0": camper.act("agent_0", obs["agent_0"], env),
+            "agent_1": idle.act("agent_1", obs["agent_1"], env),
+        }
+        obs, _rewards, terminations, truncations, _info = env.step(actions)
+        reached_height = min(reached_height, env._agent_states["agent_0"].y)
+        if any(terminations.values()) or any(truncations.values()):
+            break
+
+    assert reached_height < 18, "camper should leave the ground floor"
 
 
 def test_aggressive_policy_uses_diagonal_shots_for_vertical_targets():

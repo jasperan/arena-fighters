@@ -28,7 +28,7 @@ Two agents spawn on a multi-platform arena, shoot projectiles, swing melee attac
 - **League health report**: combine strategy, long-run status, rank/head-to-head, and map weakness signals into one promotion-health artifact
 - **Long-run manifest**: emit a reproducible real-compute command bundle and launcher script without executing training
 - **Long-run check**: validate promotion-audit, strategy-report, and artifact-index outputs against documented promotion criteria
-- **Built-in baselines**: random, idle, scripted, aggressive, and evasive evaluation opponents
+- **Built-in baselines**: random, idle, scripted, aggressive, evasive, zoner (firing-lane spacing), and camper (platform control) evaluation opponents
 - **Reward presets**: default and anti-stall reward profiles for evaluation-driven training experiments
 - **Custom CNN extractor**: processes a 6-channel 20x40 grid observation + 6-dim vector (HP, cooldowns, velocity, ducking)
 - **18 modes**: headless training, live ASCII watch, frame-by-frame replay, replay analysis, JSON evaluation, eval comparison, eval gating, baseline suites, checkpoint ranking, rank gating, promotion audit, audit summary, artifact indexing, strategy reporting, long-run manifesting, long-run checking, long-run status, and league health
