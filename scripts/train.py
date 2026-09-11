@@ -572,9 +572,11 @@ class SelfPlayCallback(BaseCallback):
         self._rollout_count = 0
         self._milestones = set(cfg.training.milestone_steps)
         self._milestones_hit: set[int] = set()
+        self._action_counts = [0] * NUM_ACTIONS
 
     def _on_step(self) -> bool:
         self._apply_curriculum()
+        self._accumulate_action_counts()
 
         # Check for milestone checkpoints based on total timesteps
         steps = self.num_timesteps
@@ -624,7 +626,50 @@ class SelfPlayCallback(BaseCallback):
                     f"last_snapshot_id={pool_stats['last_sample_id']}  "
                     f"saved={ckpt_path}"
                 )
+        self._record_action_stats()
         self._record_self_play_stats()
+
+    def _accumulate_action_counts(self) -> None:
+        """Count actions taken this step so collapse is visible while training."""
+        locals_dict = getattr(self, "locals", None) or {}
+        raw_actions = locals_dict.get("actions")
+        if raw_actions is None:
+            return
+        try:
+            actions = list(raw_actions)
+        except TypeError:
+            actions = [raw_actions]
+        for action in actions:
+            try:
+                index = int(action)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= index < NUM_ACTIONS:
+                self._action_counts[index] += 1
+
+    def _record_action_stats(self) -> None:
+        """Log per-rollout action entropy and dominant-action share.
+
+        A policy that collapses onto one action (for example ducking every
+        tick to avoid bullets) drives entropy to zero; recording this next to
+        the opponent-pool telemetry makes that failure visible during a run
+        instead of only in post-hoc evaluation.
+        """
+        total = sum(self._action_counts)
+        if total <= 0:
+            return
+        shares = [count / total for count in self._action_counts]
+        entropy = -sum(share * math.log(share) for share in shares if share > 0)
+        normalized = entropy / math.log(NUM_ACTIONS)
+        self.logger.record("self_play/action_entropy", normalized)
+        self.logger.record(
+            "self_play/dominant_action_share", max(shares)
+        )
+        self.logger.record(
+            "self_play/dominant_action", int(max(range(NUM_ACTIONS), key=shares.__getitem__))
+        )
+        self.logger.record("self_play/action_samples", total)
+        self._action_counts = [0] * NUM_ACTIONS
 
     def _record_self_play_stats(self) -> None:
         pool_stats = self.opponent_pool.stats()

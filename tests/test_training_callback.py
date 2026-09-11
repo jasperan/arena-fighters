@@ -6,6 +6,50 @@ Shared fixtures, fake doubles, and artifact builders live in
 
 from tests._training_helpers import *  # noqa: F401,F403
 
+import numpy as np
+import pytest
+
+
+def test_self_play_callback_records_action_collapse_telemetry():
+    callback = SelfPlayCallback(
+        wrapper=FakeWrapper(),
+        opponent_pool=OpponentPool(),
+        cfg=Config(),
+    )
+    model = FakeModelWithLogger()
+    callback.model = model
+    callback.num_timesteps = 0
+    callback.locals = {"actions": np.array([4, 4, 4, 5])}
+
+    callback._on_step()
+    callback._record_action_stats()
+
+    records = model.logger.records
+    assert records["self_play/dominant_action"] == 4
+    assert records["self_play/dominant_action_share"] == pytest.approx(0.75)
+    assert records["self_play/action_samples"] == 4
+    assert 0.0 < records["self_play/action_entropy"] < 1.0
+    assert all(count == 0 for count in callback._action_counts)
+
+
+def test_self_play_callback_action_entropy_is_zero_when_policy_collapses():
+    callback = SelfPlayCallback(
+        wrapper=FakeWrapper(),
+        opponent_pool=OpponentPool(),
+        cfg=Config(),
+    )
+    model = FakeModelWithLogger()
+    callback.model = model
+    callback.num_timesteps = 0
+    callback.locals = {"actions": np.array([4, 4, 4, 4, 4, 4])}
+
+    callback._on_step()
+    callback._record_action_stats()
+
+    records = model.logger.records
+    assert records["self_play/action_entropy"] == pytest.approx(0.0)
+    assert records["self_play/dominant_action_share"] == pytest.approx(1.0)
+
 
 def test_self_play_callback_applies_curriculum_stages():
     wrapper = FakeWrapper()
