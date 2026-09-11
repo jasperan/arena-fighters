@@ -419,6 +419,93 @@ def test_episode_truncates_at_max_ticks():
     )
 
 
+def test_double_knockout_is_symmetric_draw():
+    """Simultaneous deaths must not hand agent_1 a win reward over agent_0.
+
+    Regression: the termination loop processed only the first dead agent in
+    iteration order, so a double KO always paid agent_0 the lose reward and
+    agent_1 the win reward (+20 reward gap per episode).
+    """
+    env = _make_env()
+    env.reset()
+    env._agent_states["agent_0"].hp = 0
+    env._agent_states["agent_1"].hp = 0
+
+    _, rewards, terms, truncs, _ = _step_idle(env)
+
+    assert terms["agent_0"] is True
+    assert terms["agent_1"] is True
+    assert not any(truncs.values())
+    assert rewards["agent_0"] == pytest.approx(rewards["agent_1"])
+    assert rewards["agent_0"] == pytest.approx(
+        env.cfg.reward.draw + env.cfg.reward.idle_penalty
+    )
+
+
+def test_single_knockout_pays_win_and_lose_rewards():
+    env = _make_env()
+    env.reset()
+    env._agent_states["agent_1"].hp = 0
+
+    _, rewards, terms, truncs, _ = _step_idle(env)
+
+    assert terms["agent_0"] is True
+    assert terms["agent_1"] is True
+    assert not any(truncs.values())
+    assert rewards["agent_0"] == pytest.approx(
+        env.cfg.reward.win + env.cfg.reward.idle_penalty
+    )
+    assert rewards["agent_1"] == pytest.approx(
+        env.cfg.reward.lose + env.cfg.reward.idle_penalty
+    )
+
+
+_MIRRORED_ACTION = {
+    0: 0,  # IDLE
+    1: MOVE_RIGHT,
+    2: MOVE_LEFT,
+    3: 3,  # JUMP
+    4: 4,  # DUCK
+    5: 5,  # SHOOT_FORWARD
+    6: 6,  # SHOOT_DIAG_UP
+    7: 7,  # SHOOT_DIAG_DOWN
+    8: 8,  # MELEE
+}
+
+
+@pytest.mark.parametrize("map_name", sorted(PLATFORM_LAYOUTS))
+def test_mirrored_action_stream_stays_mirror_symmetric(map_name):
+    """Shared-weight self-play relies on mirror symmetry of every map.
+
+    Feeding mirrored action streams from mirrored spawns must keep the match
+    an exact mirror: |x0 + x1| stays at the arena center, HPs stay equal,
+    facings stay opposite, and vertical state stays identical. Any map or
+    physics asymmetry breaks these invariants.
+    """
+    cfg = replace(Config(), arena=replace(Config().arena, map_name=map_name))
+    env = ArenaFightersEnv(config=cfg)
+    env.reset(seed=0)
+    center = env.cfg.arena.width - 1
+    action_stream = [2, 5, 2, 2, 5, 1, 3, 5, 4, 2, 5, 1, 2, 5, 3, 5, 1, 1, 5, 4,
+                     2, 5, 2, 3, 5, 1, 2, 5, 2, 5]
+
+    for action_0 in action_stream:
+        s0 = env._agent_states["agent_0"]
+        s1 = env._agent_states["agent_1"]
+        assert s0.x + s1.x == center
+        assert s0.hp == s1.hp
+        assert s0.facing == -s1.facing
+        assert s0.vy == s1.vy
+
+        env.step({"agent_0": action_0, "agent_1": _MIRRORED_ACTION[action_0]})
+        if not env.agents:
+            break
+
+    s0 = env._agent_states["agent_0"]
+    s1 = env._agent_states["agent_1"]
+    assert s0.hp == s1.hp
+
+
 def test_anti_stall_adds_no_damage_timeout_penalty():
     cfg = replace(Config(), reward=reward_config_for_preset("anti_stall"))
     env = ArenaFightersEnv(config=cfg)

@@ -173,16 +173,26 @@ class ArenaFightersEnv(ParallelEnv):
         terminations = {a: False for a in self.agents}
         truncations = {a: False for a in self.agents}
 
-        for agent_name in self.agents:
-            if self._agent_states[agent_name].hp <= 0:
-                # This agent died
+        dead = [
+            agent_name
+            for agent_name in self.agents
+            if self._agent_states[agent_name].hp <= 0
+        ]
+        if dead:
+            # A knockout ends the episode for every agent, dead or alive.
+            for agent_name in self.agents:
                 terminations[agent_name] = True
-                self._rewards[agent_name] += self.cfg.reward.lose
-                # Other agent wins
-                other = self._other(agent_name)
-                terminations[other] = True
-                self._rewards[other] += self.cfg.reward.win
-                break
+            if len(dead) == len(self.agents):
+                # Double knockout: symmetric draw rewards for both agents.
+                # Damage necessarily occurred, so no no-damage draw penalty.
+                for agent_name in self.agents:
+                    self._rewards[agent_name] += self.cfg.reward.draw
+            else:
+                for agent_name in dead:
+                    self._rewards[agent_name] += self.cfg.reward.lose
+                for agent_name in self.agents:
+                    if agent_name not in dead:
+                        self._rewards[agent_name] += self.cfg.reward.win
 
         if self._tick >= self.cfg.arena.max_ticks and not any(terminations.values()):
             draw_reward = self.cfg.reward.draw
