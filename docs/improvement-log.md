@@ -47,6 +47,84 @@ first time; config lane: symmetric double-KO rewards + symmetric classic map).
 3. Add new scripted opponent archetypes (e.g., zoner that keeps distance,
    camper that holds high platforms) and measure them against the current pool.
 
+## Cycle 2 — 2026-09-11 — reviewable match visuals
+
+**Lane:** tooling for all strategy lanes (vision-reviewable evidence).
+
+**Changes**
+
+1. `feat(render)`: new `arena_fighters.render` (Pillow) plus
+   `scripts/render_episode.py`. Renders any env state or saved replay frame to
+   PNG: gradient arena with vignette, faint cell grid, solid platform runs with
+   exposed top rims, fighter silhouettes (highlight, legs, facing chevron,
+   weapon stub), glow-comet bullets with trails, and an HP/tick/score HUD. The
+   CLI writes PNG frames, an animated GIF, and a sampled contact sheet, and
+   accepts built-in policies, trusted checkpoints, and `--replay` inputs.
+2. Auto-crops empty sky above the highest platform (platforms used to occupy
+   only the bottom half of the frame).
+
+**Evidence**
+
+- `uv run pytest -q` → 305 passed at the time (12 renderer tests).
+- Contact sheets reviewed directly; frame-by-frame inspection caught and fixed
+  a real defect (an `lru_cache` on the background image made successive frames
+  draw over earlier frames — regression test added).
+- `scripts/render_episode.py --agent-policy zoner --opponent aggressive` shows
+  the zoner kiting and winning with full HP at tick 18.
+
+**Verdict: GAIN** (enables fast visual review of every future strategy change).
+
+## Cycle 3 — 2026-09-11 — two new scripted archetypes
+
+**Lane:** new scripted archetypes (+ config-derived behavior).
+
+**Changes**
+
+1. `ZonerPolicy`: holds a firing lane, retreats inside `preferred_min`, only
+   melees when pinned against a wall.
+2. `CamperPolicy`: takes and holds an elevated platform and shoots from it.
+   Required understanding the jump physics: jumps rise in decreasing velocity
+   steps (h + h-1 + ... + 1) and treat solid tiles as ceilings, so a platform
+   cannot be mounted by jumping from directly underneath. The camper walks
+   beside the target span, jumps, steers onto it while airborne, latches the
+   climb target for the duration of the jump, turns to face the opponent by
+   stepping within the platform, and holds station instead of chasing.
+
+**Evidence** — 25 rounds per pairing across classic/flat/split/tower:
+
+| matchup | zoner win rate (as agent_0) | notes |
+|---|---|---|
+| vs scripted | 1.00 | wins without taking damage |
+| vs aggressive | 1.00 | kites the rush |
+| vs idle | 1.00 | |
+| vs random | 0.72 | |
+| vs camper | 0.52 | |
+| vs evasive | 0.00 | 100% draws (evasive denies every lane) |
+
+Camper reaches and holds elevation on classic/split/tower (189-196 of 200
+ticks) with 38-39 shots per episode; ground-only on flat. Tests cover policy
+construction, zoner spacing/firing, a full zoner-vs-scripted no-damage win,
+and camper leaving the ground floor.
+
+**Verdict: GAIN** (zoner is the strongest scripted baseline in the repo; camper
+adds the first platform-control archetype).
+
+## Cycle 4 — 2026-09-11 — anti-stall training run (in progress)
+
+**Lane:** trained policy gains.
+
+The first trained checkpoint in repo history (`checkpoints/ppo_final`, 150k
+steps, default rewards, classic only) collapsed to **duck on 100% of ticks**
+across all eight suite matchups, winning 0 of 40 episodes (draws vs idle and
+evasive, losses vs scripted and aggressive). Holding duck blocks horizontal
+bullets, and no-damage draws cost only -1 under the default preset, so ducking
+is a local optimum worth escaping.
+
+Cycle 4 runs 1M steps with `--reward-preset anti_stall` on classic+flat, and
+will be evaluated with the extended suite (now including zoner and camper) and
+ranked against the 150k checkpoint. Status: training in progress at the time of
+writing; results appended below when complete.
+
 ## Unresolved / carried forward
 
 - Long-run promotion artifacts unproven at real scale (no long run has ever
