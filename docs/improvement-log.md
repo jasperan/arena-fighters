@@ -90,7 +90,13 @@ first time; config lane: symmetric double-KO rewards + symmetric classic map).
    climb target for the duration of the jump, turns to face the opponent by
    stepping within the platform, and holds station instead of chasing.
 
-**Evidence** — 25 rounds per pairing across classic/flat/split/tower:
+**Evidence** — 25 rounds per pairing across classic/flat/split/tower.
+Note (added in cycle 7): these pairings are all deterministic policies and the
+environment had no spawn variety at the time, so every seeded round replayed
+the same episode; read the numbers as the outcome map of the fixed opening,
+not as sampled win probabilities. The conclusions (zoner dominant, camper
+elevation-dependent, evasive denying every lane) reproduce with jittered
+spawns.
 
 | matchup | zoner win rate (as agent_0) | notes |
 |---|---|---|
@@ -189,6 +195,41 @@ includes the scripted archetypes (zoner, camper, evasive) instead of relying on
 self-snapshots alone, so positioning and anti-camper play are under pressure.
 
 Status: launched; results appended below when complete.
+
+## Cycle 7 — 2026-09-11 — opponent diversity and spawn variety
+
+**Lane:** trained policy gains (new strategy pressure) + evaluation rigor.
+
+Two changes, both driven by measurements from the redo pass and cycle 4:
+
+1. **Mixed training league.** Training only ever faced frozen snapshots of
+   itself, so it converged on a stationary trench gunner (checkpoint vs
+   checkpoint = 100% draws, no movement actions). `--scripted-opponents
+   zoner,camper,evasive --scripted-opponent-prob 0.35` now puts a built-in
+   archetype on the opponent side for that fraction of episodes. Scripted
+   policies read the environment directly, so they receive raw observations and
+   their actions are applied unchanged; frozen snapshots keep the mirrored
+   observation path. Telemetry: reset info, TensorBoard
+   (`self_play/scripted_opponent_*`), `[Snapshot]` log line, and checkpoint
+   metadata. Verified end-to-end with a 40k-step run: **308 scripted episodes
+   over 20 rollouts (~35%, the configured rate), split camper 103 / evasive
+   108 / zoner 97**, with pool sampling still active.
+2. **Symmetric spawn jitter.** Every seeded episode previously started from
+   the same columns with identical physics, so a deterministic pairing replayed
+   one episode no matter how many rounds were requested: win rates in suite,
+   rank, and tournament artifacts were deterministic scans over (map, opponent)
+   pairs with no statistical content. `reset(seed)` now shifts both spawns by a
+   shared offset in `[-2, 2]` (default `spawn_jitter=2`), keeping the opening
+   mirror symmetric, and unseeded auto-resets during training draw a fresh
+   offset each episode. Measured: scripted vs aggressive now yields 3 distinct
+   outcomes over 6 seeds (ticks 9/10) instead of one repeated episode.
+
+Re-measured under jittered spawns (7 opponents x 2 maps x 6 rounds): the
+cycle-4 policy still scores **0.845** (robust to varied openings) while the
+150k default-reward checkpoint stays at **0.000**.
+
+**Verdict: GAIN** (opponent diversity attacks the positioning gap; spawn
+variety fixes the statistics of every future evaluation).
 
 ## Unresolved / carried forward
 

@@ -196,3 +196,22 @@ distance preserved, movement actions round-trip).
 - Audit LOW items unchanged (assert-based pool guard, redaction scope, broad
   except in artifact scanning, `lru_cache` on env methods, no CI config,
   `scripts/train.py` size).
+
+## Methodology correction (cycle 7)
+
+The redo pass above found three defects, but one of its own measurements was
+too optimistic: every seeded episode started from the same spawn columns and
+physics are deterministic, so for deterministic policies (all scripted
+archetypes, and checkpoints evaluated with `deterministic=True`) an N-round
+matchup replayed a single episode N times. The tournament table and the suite
+"mean win rate" figures are therefore deterministic scans over (map, opponent)
+pairs -- correct as outcome maps, but with no statistical content beyond those
+cells.
+
+Fixed in cycle 7: `reset(seed)` now jitters both spawns by a shared offset
+(`spawn_jitter`, default 2), preserving mirror symmetry, and SB3's unseeded
+auto-resets draw a fresh offset per episode during training. Re-measured under
+varied openings (7 opponents x 2 maps x 6 rounds, `/tmp/reverify/suite-*.out`):
+the cycle-4 anti-stall checkpoint still scores 0.845 mean win rate while the
+150k default-reward checkpoint stays at 0.000, so the cycle-4 conclusion is
+unchanged and now rests on varied openings rather than one fixed duel.
