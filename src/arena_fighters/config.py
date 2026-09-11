@@ -104,14 +104,17 @@ def reward_config_for_preset(name: str) -> RewardConfig:
 # Platform layouts: each tuple is (x_start, x_end, y).
 # y=0 is top of grid, y=19 is bottom.
 PLATFORM_LAYOUTS = {
+    # Layouts must stay mirror-symmetric about the vertical axis: the shared
+    # self-play policy plays agent_1 through mirrored observations, which is
+    # only sound when mirroring maps the arena onto itself.
     "classic": (
         # Ground floor (y=19)
         (0, 39, 19),
         # Low side platforms (y=15)
         (1, 4, 15),
-        (31, 34, 15),
-        # Mid platform (y=12)
-        (14, 21, 12),
+        (35, 38, 15),
+        # Mid platform (y=12), centered
+        (16, 23, 12),
         # High side platforms (y=9)
         (4, 13, 9),
         (26, 35, 9),

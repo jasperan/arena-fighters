@@ -42,6 +42,24 @@ def test_platform_layout_within_bounds():
             assert 0 <= y < cfg.arena.height
 
 
+def test_all_map_layouts_are_mirror_symmetric():
+    """Every map must map onto itself under horizontal mirroring.
+
+    The shared self-play policy plays agent_1 through mirrored observations,
+    so an asymmetric map (regression: `classic` had off-center low/mid
+    platforms) breaks the invariant the whole shared-weight design relies on.
+    """
+    width = Config().arena.width
+    for map_name, layout in PLATFORM_LAYOUTS.items():
+        cells = {
+            (x, y)
+            for x_start, x_end, y in layout
+            for x in range(x_start, x_end + 1)
+        }
+        mirrored = {(width - 1 - x, y) for x, y in cells}
+        assert mirrored == cells, f"map '{map_name}' is not mirror-symmetric"
+
+
 def test_default_platform_layout_alias():
     assert PLATFORM_LAYOUT == list(PLATFORM_LAYOUTS["classic"])
 
