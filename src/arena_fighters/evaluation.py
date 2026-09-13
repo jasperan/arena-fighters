@@ -419,37 +419,15 @@ class RusherPolicy:
         if abs(dx) == 1 and dy == 0 and facing_target and st.melee_cd <= 0:
             return MELEE
 
-        if not env._on_ground(st):
-            # Airborne: keep closing horizontally. The hop is what dodges the
-            # shot (a horizontal bullet passes under the raised body) and the
-            # steering is what turns the dodge into progress.
-            if dx > 0:
-                return MOVE_RIGHT
-            if dx < 0:
-                return MOVE_LEFT
-            return IDLE
-
-        if other.y < st.y:
-            # Opponent is above: never jump from directly underneath a
-            # platform (the ceiling cancels the jump), so step out from under
-            # first, then jump and steer.
-            if env._is_solid(st.x, st.y - 1):
-                step = 1 if dx == 0 else (1 if dx > 0 else -1)
-                probe_x = st.x - step
-                if 0 <= probe_x < env.cfg.arena.width and not env._is_solid(
-                    probe_x, st.y
-                ):
-                    return MOVE_LEFT if step > 0 else MOVE_RIGHT
-                return MOVE_RIGHT if step > 0 else MOVE_LEFT
-            return JUMP
-
         if dy == 0:
             # Duck-march: a duck covers two ticks (duck_duration), so
             # alternating duck and move keeps the body low on every tick while
             # still advancing a tile every other tick. Horizontal fire is
             # blocked the whole way; only a diagonal shot (which ducking does
             # not stop) can interrupt the approach, and that is the intended
-            # counter-play.
+            # counter-play. NOTE: this assumes duck cover can be renewed every
+            # other tick, so the rusher is much weaker when a duck cooldown is
+            # configured (see docs/improvement-log.md, cycle 18).
             if st.duck_ticks == 0:
                 return DUCK
 
@@ -458,45 +436,6 @@ class RusherPolicy:
         if dx > 0:
             return MOVE_RIGHT
         return IDLE
-
-    @staticmethod
-    def _incoming_horizontal_fire(
-        env: ArenaFightersEnv, agent_name: str, st: Any
-    ) -> bool:
-        for bullet in env._bullets:
-            if bullet.owner == agent_name or bullet.dy != 0:
-                continue
-            if int(round(bullet.y)) != st.y:
-                continue
-            distance = abs(int(round(bullet.x)) - st.x)
-            if distance > 4:
-                continue
-            approaching = (bullet.dx > 0 and bullet.x < st.x) or (
-                bullet.dx < 0 and bullet.x > st.x
-            )
-            if approaching:
-                return True
-        return False
-
-    @staticmethod
-    def _incoming_horizontal_fire(
-        env: ArenaFightersEnv, agent_name: str, st: Any
-    ) -> bool:
-        for bullet in env._bullets:
-            if bullet.owner == agent_name or bullet.dy != 0:
-                continue
-            if int(round(bullet.y)) != st.y:
-                continue
-            distance = abs(int(round(bullet.x)) - st.x)
-            if distance > 4:
-                continue
-            approaching = (bullet.dx > 0 and bullet.x < st.x) or (
-                bullet.dx < 0 and bullet.x > st.x
-            )
-            if approaching:
-                return True
-        return False
-
 
 @dataclass
 class ModelPolicy:
