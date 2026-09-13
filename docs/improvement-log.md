@@ -770,6 +770,49 @@ that matters most:**
 
 Status: launched; results appended below when complete.
 
+**Result (cycle 21): NO GAIN.** Holding the cooldown until 500K traded the
+movement back for score parity:
+
+| run | mode | mean | stand-still | travel/ep | rank final | rank 500K |
+|---|---|---|---|---|---|---|
+| cycle 20 (hold to 300K) | stochastic | 0.792 | 0.691 | 7.73 | **0.979** | **1.000** |
+| cycle 21 (hold to 500K) | stochastic | 0.844 | 0.994 | 0.32 | 0.833 | 0.771 |
+| cycle 21 (hold to 500K) | greedy | 0.844 | 1.000 | 0.00 | -- | -- |
+
+Pre-registered criteria: the stochastic bar was met by **equality** (0.844 >=
+0.844), but the promotion criterion failed (final 0.833 < 0.979, 500K 0.771 <
+1.000) and the movement criterion failed (stand-still 0.994). `rank_gate` passes
+and `strategy_report` raises **53 stand-still flags** on cycle-21 artifacts,
+confirming the policy went back to its spawn.
+
+Under the objective's definition -- a gain requires a *measurable improvement* or
+a *new strategy* -- parity on one suite plus a worse promotion artifact and lost
+movement is not a gain, even though a pre-registered inequality was satisfied on
+a technicality. No-gain count: **1** (cycle 21).
+
+The 20-vs-21 comparison is the useful result: the length of the pressured phase
+decides which behaviour survives. 300K of pressure produces repositioning that
+dissolves by 1M; 500K produces score without movement. The abrupt release looks
+like the problem, which is what cycle 22 tests.
+
+## Cycle 22 — 2026-09-11 — staged release (planned)
+
+**Lane:** config-derived behaviors (schedule shape).
+
+Design: generalise the single release step into stages so the pressure is
+withdrawn gradually instead of in one step -- `duck_cooldown` 3 until 200K, 2
+from 200K, 1 from 350K, 0 from 500K -- implemented as a `duck_cooldown_stages`
+tuple on `TrainingConfig` (step, cooldown) with the callback applying each
+stage once, tests for stage application and idempotency, and the applied stage
+recorded in checkpoint metadata.
+
+Pre-registered success criteria (any one is a gain): rank final >= 0.979 (cycle
+20's promotion parity) **with** stand-still <= 0.90, or stochastic >= 0.85, or
+greedy >= 0.85 with stand-still <= 0.90. Movement alone (cycle 20) and score
+alone (cycle 21) have both been demonstrated; this cycle is only a gain if it
+holds both at once, which is the bar the objective's four lanes have been
+pointing at.
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: stand_still_rate stays
