@@ -534,7 +534,23 @@ cooldown itself already halves a turtle's cover, so a duck-locking policy eats
 half the incoming horizontal fire whether or not a specialist punisher is
 present.
 
-Status: launched; results appended below when complete.
+**Early read at the 100K milestone (10% of the run), stochastic sampling,
+7 opponents x classic+flat:**
+
+| run | mean win rate | stand-still | travel/episode |
+|---|---|---|---|
+| **cycle 18 (cooldown 2) @100K** | 0.829 | **0.699** | **6.41** |
+| cycle 9 (no cooldown) @1M | 0.844 | 1.000 | 0.00 |
+| cycle 15 (no cooldown, ent-coef) @1M | 0.708 | 0.998 | 0.28 |
+
+The cooldown is the first change that moves the policy off its spawn: movement
+goes up by 20-60x (6.41 tiles per episode, stand-still 0.699 versus 0.998-1.000)
+while the win rate is already in cycle-9 territory at a tenth of the training
+budget. That is the behaviour cycles 7-16 failed to produce, and it arrives with
+the mechanic rather than with a reward tweak. The final verdict still rests on
+the completed run; this is recorded as a partial result, not a claimed gain.
+
+Status: running (100K/1M); final results appended below when complete.
 
 ## Unresolved / carried forward
 

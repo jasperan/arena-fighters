@@ -594,7 +594,10 @@ class SelfPlayCallback(BaseCallback):
                     path,
                     self.cfg,
                     steps,
-                    opponent_pool_stats=self.opponent_pool.stats(),
+                    opponent_pool_stats={
+                        **self.opponent_pool.stats(),
+                        **self._mixed_league_stats(),
+                    },
                 )
                 if self.verbose:
                     print(f"[Milestone] {label} steps reached, saved to {path}")

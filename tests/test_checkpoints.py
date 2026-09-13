@@ -275,3 +275,40 @@ def test_parse_rank_checkpoints_reuses_csv_validation():
         assert "--rank-checkpoints must include at least one value" in str(exc)
     else:
         raise AssertionError("expected empty rank checkpoint list to fail")
+
+
+def test_milestone_metadata_records_mixed_league_counters(tmp_path):
+    """Milestone checkpoints must carry the same league evidence as snapshots.
+
+    A milestone written without the scripted-opponent counters makes the league
+    mix unverifiable for that artifact, which is exactly the provenance gap the
+    cycle-14 audit flagged for suite artifacts.
+    """
+    from tests._training_helpers import FakeModelWithLogger, FakeWrapper
+    from arena_fighters.self_play import OpponentPool
+    from scripts.train import SelfPlayCallback
+
+    class RecordingModel(FakeModelWithLogger):
+        def save(self, path):
+            Path(f"{path}.zip").write_bytes(b"checkpoint")
+
+    wrapper = FakeWrapper()
+    wrapper.scripted_opponent_samples = 7
+    wrapper.scripted_opponent_counts = {"zoner": 4, "camper": 3}
+    callback = SelfPlayCallback(
+        wrapper=wrapper,
+        opponent_pool=OpponentPool(),
+        cfg=Config(),
+        checkpoint_dir=str(tmp_path),
+    )
+    callback.model = RecordingModel()
+    callback.num_timesteps = 100_000
+
+    callback._on_step()
+
+    metadata = json.loads((tmp_path / "ppo_100K.meta.json").read_text())
+    assert metadata["opponent_pool"]["scripted_opponent_samples"] == 7
+    assert metadata["opponent_pool"]["scripted_opponent_counts"] == {
+        "zoner": 4,
+        "camper": 3,
+    }
