@@ -371,25 +371,6 @@ pressure) is therefore measurable from replays as well as from evaluation.
 **Verdict: GAIN** (new replay lane: a positional metric that separates policies
 the action histograms call identical).
 
-## Unresolved / carried forward
-
-- The trained policy has no positioning behaviour: checkpoint-vs-checkpoint is
-  a pure stalemate and the action distribution has almost no movement. Cycles 7
-  and 9 (mixed league) did not fix it; cycle 10 added the rusher, which does
-  beat the trained policy, and cycle 11 tests whether it forces repositioning.
-- `evasive` denies every lane to every policy tried so far (zoner, camper and
-  both checkpoints all draw); either it is a valid ceiling on the current
-  action set or the reward preset needs an anti-turtle term -- worth a cycle.
-- Cycle-4 checkpoints were trained under the pre-fix physics/mirror; their
-  results are valid reward-preset evidence but superseded as gameplay
-  baselines.
-- Long-run promotion artifacts unproven at real scale (no long run has ever
-  completed in this repo before this session).
-- Audit LOW items from `AUDIT-2026-09-10.md` remain open (assert guard,
-  redaction scope, broad artifact `except`, env `lru_cache`, no CI/lint config,
-  `scripts/train.py` monolith).
-- No CI workflow; tests run locally only.
-
 ## Cycle 13 — 2026-09-11 — entropy bonus as an explicit training knob
 
 **Lane:** config-derived behaviors (training recipes).
@@ -450,8 +431,6 @@ Consequences:
 **Verdict: GAIN** (measurement correction worth 0.845 of misjudged policy
 quality, plus provenance in every suite artifact).
 
-## Unresolved / carried forward
-
 ## Cycle 15 — 2026-09-11 — entropy-regularised mixed-league run (in progress)
 
 **Lane:** trained policy gains.
@@ -509,3 +488,74 @@ per-tile magnitude may simply be too small next to a ±12 win/lose swing.
 
 **Verdict: GAIN** (capability + honest negative early signal; the real test is
 deferred to cycle 17, not claimed here).
+
+## Cycle 17 — 2026-09-11 — duck cooldown: capping how long a turtle can hide
+
+**Lane:** config-derived behaviors (mechanics).
+
+Four training runs in a row ended in the same place: hold position, duck the
+incoming fire, fire back (`stand_still_rate` 0.998-1.000, travel 0.0-0.3 tiles
+per episode). Ducking is what makes that work -- a duck covers two ticks and
+blocks every `dy == 0` bullet, so alternate ducks give *continuous* cover while
+standing still.
+
+`AgentConfig.duck_cooldown` (default **0**, so existing behaviour and every
+shipped checkpoint are untouched) adds recovery ticks after a duck during which
+DUCK is refused. With `duck_duration=2` and `duck_cooldown=2`, a dedicated
+ducker covers two of every four ticks. Measured functionally -- blocking a
+bullet versus taking it -- a turtle blocks 12/12 incoming shots at cooldown 0
+and **6/12** at cooldown 2. Exposed as `--duck-cooldown`, recorded in checkpoint
+metadata; tests cover the halved cover, unchanged default, agent symmetry and
+refused back-to-back ducks. 380 tests pass.
+
+**Interaction found before trusting it:** the cooldown also disarms the
+league's anti-turtle archetype. The rusher's duck-march assumes cover can be
+renewed every other tick, and at `duck_cooldown=2` it goes from **4-0 wins to
+0-4 losses** against a stationary gunner and stalls against
+scripted/aggressive/zoner. A hop-based cooldown-aware rewrite produced 500-tick
+stalemates instead and was reverted rather than shipped half-working; the
+archetype documents that it assumes cooldown 0, and the gap is tracked above.
+
+**Verdict: GAIN** (removes the attractor every previous recipe collapsed into,
+with the trade-off measured rather than assumed).
+
+## Cycle 18 — 2026-09-11 — duck-cooldown training run (in progress)
+
+**Lane:** trained policy gains.
+
+1M steps with the best-known recipe plus the mechanic change: anti-stall
+rewards, classic+flat, spawn jitter, mixed league (zoner/camper/evasive at
+0.35), `--ent-coef 0.01`, `--duck-cooldown 2`
+(`checkpoints/duckcd-mixed-1m`, seed 83). Success criteria, both modes
+reported: stochastic mean win rate >= 0.844 (beat cycle 9) **or** a
+stand-still rate clearly below 0.99 at comparable win rate. Because the rusher
+is weak under the new mechanic it is deliberately not in this league; the
+cooldown itself already halves a turtle's cover, so a duck-locking policy eats
+half the incoming horizontal fire whether or not a specialist punisher is
+present.
+
+Status: launched; results appended below when complete.
+
+## Unresolved / carried forward
+
+- The trained policy has no positioning behaviour: stand_still_rate stays
+  0.998-1.000 with 0.0-0.3 tiles of travel per episode in every mode. The mixed
+  league (cycles 7/9/11), the entropy bonus (cycle 15) and the engagement preset
+  (cycle 16) have not fixed it; cycle 17 attacks the mechanic that makes it
+  viable (unlimited duck cover) and cycle 18 tests that.
+- The rusher archetype assumes `duck_cooldown == 0`: under a cooldown its
+  duck-march loses its approach timing and it goes from 4-0 wins to 0-4 losses
+  against a stationary gunner. A cooldown-aware melee threat is needed if
+  cooldown runs are to keep anti-turtle pressure in the league.
+- `evasive` denies every lane to every policy tried so far (zoner, camper and
+  both checkpoints all draw); either it is a valid ceiling on the current
+  action set or the reward preset needs an anti-turtle term -- worth a cycle.
+- Cycle-4 checkpoints were trained under the pre-fix physics/mirror; their
+  results are valid reward-preset evidence but superseded as gameplay
+  baselines.
+- Long-run promotion artifacts unproven at real scale (no long run has ever
+  completed in this repo before this session).
+- Audit LOW items from `AUDIT-2026-09-10.md` remain open (assert guard,
+  redaction scope, broad artifact `except`, env `lru_cache`, no CI/lint config,
+  `scripts/train.py` monolith).
+- No CI workflow; tests run locally only.
