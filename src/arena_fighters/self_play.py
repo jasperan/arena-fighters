@@ -338,6 +338,13 @@ class SelfPlayWrapper(gym.Env):
         """Delegate curriculum map-pool updates to the inner env."""
         self._env.set_map_pool(map_choices)
 
+    def set_duck_cooldown(self, duck_cooldown: int) -> None:
+        """Delegate duck-cooldown schedule updates to the inner env."""
+        self.cfg = replace(
+            self.cfg, agent=replace(self.cfg.agent, duck_cooldown=duck_cooldown)
+        )
+        self._env.set_duck_cooldown(duck_cooldown)
+
     def set_reward_config(self, reward_config: RewardConfig) -> None:
         """Delegate curriculum reward updates to the inner env."""
         self.cfg = replace(self.cfg, reward=reward_config)

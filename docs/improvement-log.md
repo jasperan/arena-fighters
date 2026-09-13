@@ -669,6 +669,40 @@ that transient: it shows the policy *can* move under pressure, which points at
 schedules (strong mechanic early, relaxed later) rather than static shaping, and
 at a cooldown-aware melee threat to keep that pressure alive.
 
+## Cycle 20 — 2026-09-11 — duck-cooldown schedule: pressure early, released later
+
+**Lane:** config-derived behaviors (schedule).
+
+Evidence from cycle 18: with a duck cooldown the policy genuinely repositioned
+early (100K: stand-still 0.699, 6.41 tiles of travel per episode) and then
+converged back to a stationary gunner by 1M (stand-still 1.000, travel 0.01).
+The mechanic creates the behaviour while the policy is still forming; it does not
+survive a long run. So the cooldown is applied as a *schedule*: keep it until a
+configured step, then release it, letting the policy keep the habits it built
+without paying the cooldown's cost for another 700K steps.
+
+Implementation: `TrainingConfig.duck_cooldown_until`, the CLI
+`--duck-cooldown-until`, `SelfPlayCallback._apply_duck_cooldown_schedule`
+(idempotent, logs a `[Schedule]` line), plus `set_duck_cooldown` on both the env
+and the training wrapper. Recorded in checkpoint metadata as
+`duck_cooldown_until`. Tests: the schedule fires once at the threshold and not
+before (`test_duck_cooldown_schedule_relaxes_at_the_configured_step`), and the
+setter changes blocked-shot behaviour mid-episode, including the two ticks of
+residual timer. 383 tests pass.
+
+Run: 1M steps, `--duck-cooldown 3 --duck-cooldown-until 300000` on the cycle-9
+recipe (anti-stall, classic+flat, spawn jitter, mixed league
+zoner/camper/evasive at 0.35, `--ent-coef 0.01`), checkpoint dir
+`checkpoints/cooldown-sched-1m`, seed 101. The stronger cooldown (3, not 2) is
+used during the formative phase where cycle 18 showed movement.
+
+**Pre-registered success criteria (any one is a gain):** stochastic mean win
+rate >= 0.844 (matching the best), or a stand-still rate <= 0.90 with mean win
+rate >= 0.80 (movement at the top of the range). Anything else is a no-gain and
+makes it two consecutive (19, 20).
+
+Status: launched; results appended below when complete.
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: stand_still_rate stays

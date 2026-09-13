@@ -63,14 +63,24 @@ from scripts.train import (
 
 class FakeWrapper:
     def __init__(self):
+        self.cfg = Config()
         self.map_pools = []
         self.reward_configs = []
+        self.duck_cooldowns = []
 
     def set_map_pool(self, map_choices):
         self.map_pools.append(map_choices)
 
     def set_reward_config(self, reward_config):
         self.reward_configs.append(reward_config)
+
+    def set_duck_cooldown(self, duck_cooldown):
+        from dataclasses import replace as _replace
+
+        self.duck_cooldowns.append(duck_cooldown)
+        self.cfg = _replace(
+            self.cfg, agent=_replace(self.cfg.agent, duck_cooldown=duck_cooldown)
+        )
 
 
 class FakeLogger:

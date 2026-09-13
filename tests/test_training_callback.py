@@ -186,3 +186,33 @@ def test_effective_reward_config_uses_curriculum_stage_reward():
     assert effective_reward_config(cfg, 1_000_000) == reward_config_for_preset(
         "anti_stall"
     )
+
+
+def test_duck_cooldown_schedule_relaxes_at_the_configured_step():
+    """The cooldown that produced real movement at 100K faded by 1M, so the
+    schedule keeps it while the policy forms and releases it later."""
+    wrapper = FakeWrapper()
+    cfg = Config()
+    cfg = replace(
+        cfg,
+        agent=replace(cfg.agent, duck_cooldown=3),
+        training=replace(cfg.training, duck_cooldown_until=250_000),
+    )
+    callback = SelfPlayCallback(
+        wrapper=wrapper,
+        opponent_pool=OpponentPool(),
+        cfg=cfg,
+    )
+    callback.model = FakeModelWithLogger()
+
+    callback.num_timesteps = 100_000
+    callback._apply_duck_cooldown_schedule()
+    assert wrapper.duck_cooldowns == []
+    assert cfg.agent.duck_cooldown == 3
+
+    callback.num_timesteps = 250_000
+    callback._apply_duck_cooldown_schedule()
+    callback._apply_duck_cooldown_schedule()  # idempotent
+
+    assert wrapper.duck_cooldowns == [0]
+    assert wrapper.cfg.agent.duck_cooldown == 0

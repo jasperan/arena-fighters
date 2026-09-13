@@ -850,3 +850,43 @@ def test_far_penalty_knobs_scale_with_configuration():
     _, rewards, _, _, _ = _step_idle(env)
 
     assert rewards["agent_0"] == pytest.approx(-0.02 * 6 + cfg.reward.idle_penalty)
+
+
+def test_set_duck_cooldown_changes_behaviour_mid_episode():
+    """Schedule support: the recovery window can be relaxed without rebuilding
+    the environment. Measured functionally (shots blocked), because duck_ticks
+    decays inside the step and reads 0 on every other covered tick."""
+    cfg = Config(
+        arena=replace(ArenaConfig(), map_name="flat"),
+        agent=replace(Config().agent, duck_cooldown=3),
+    )
+    env = ArenaFightersEnv(config=cfg)
+    env.reset(seed=0)
+    ducker = env._agent_states["agent_0"]
+
+    def blocked_shots(ticks: int) -> int:
+        blocked = 0
+        for _ in range(ticks):
+            ducker.hp = 25
+            env._bullets = [
+                Bullet(
+                    x=float(ducker.x - 2),
+                    y=float(ducker.y),
+                    dx=2,
+                    dy=0,
+                    owner="agent_1",
+                )
+            ]
+            env.step({"agent_0": DUCK, "agent_1": IDLE})
+            if ducker.hp == 25:
+                blocked += 1
+        return blocked
+
+    with_cooldown = blocked_shots(8)
+    env.set_duck_cooldown(0)
+    without_cooldown = blocked_shots(8)
+
+    assert with_cooldown < without_cooldown
+    # Relaxing the config does not cancel the timer already running, so the
+    # first two ticks are still refused and six of eight shots are blocked.
+    assert without_cooldown == 6

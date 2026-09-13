@@ -189,6 +189,7 @@ def checkpoint_metadata(
         "curriculum": curriculum_metadata(cfg, num_timesteps),
         "ent_coef": cfg.training.ent_coef,
         "duck_cooldown": cfg.agent.duck_cooldown,
+        "duck_cooldown_until": cfg.training.duck_cooldown_until,
         "opponent_pool_config": {
             "max_size": cfg.training.opponent_pool_size,
             "latest_opponent_prob": cfg.training.latest_opponent_prob,
@@ -579,6 +580,7 @@ class SelfPlayCallback(BaseCallback):
         self._action_counts = [0] * NUM_ACTIONS
 
     def _on_step(self) -> bool:
+        self._apply_duck_cooldown_schedule()
         self._apply_curriculum()
         self._accumulate_action_counts()
 
@@ -640,6 +642,20 @@ class SelfPlayCallback(BaseCallback):
                 )
         self._record_action_stats()
         self._record_self_play_stats()
+
+    def _apply_duck_cooldown_schedule(self) -> None:
+        """Release the duck cooldown once the configured step is reached."""
+        until = self.cfg.training.duck_cooldown_until
+        if until is None or getattr(self, "_duck_cooldown_relaxed", False):
+            return
+        if self.num_timesteps < until:
+            return
+        self.wrapper.set_duck_cooldown(0)
+        self._duck_cooldown_relaxed = True
+        if self.verbose:
+            print(
+                f"[Schedule] duck cooldown relaxed to 0 at step {self.num_timesteps}"
+            )
 
     def _accumulate_action_counts(self) -> None:
         """Count actions taken this step so collapse is visible while training."""
@@ -6472,6 +6488,15 @@ def main():
         help="Per-tick penalty per tile of excess distance while the opponent is far",
     )
     parser.add_argument(
+        "--duck-cooldown-until",
+        type=int,
+        default=None,
+        help=(
+            "Relax the duck cooldown to zero once this many steps have elapsed "
+            "(schedule support; default: never relax)"
+        ),
+    )
+    parser.add_argument(
         "--duck-cooldown",
         type=int,
         default=None,
@@ -6972,6 +6997,13 @@ def main():
                 cfg.training,
                 opponent_pool_seed=args.opponent_pool_seed,
             ),
+        )
+    if args.duck_cooldown_until is not None:
+        if args.duck_cooldown_until < 0:
+            parser.error("--duck-cooldown-until must be non-negative")
+        cfg = replace(
+            cfg,
+            training=replace(cfg.training, duck_cooldown_until=args.duck_cooldown_until),
         )
     if (args.far_distance is not None) or (args.far_penalty_per_tile is not None):
         if args.far_distance is not None and args.far_distance < 0:

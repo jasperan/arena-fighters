@@ -77,6 +77,11 @@ class TrainingConfig:
     # positioning and platform-control play instead of self-snapshots only.
     scripted_opponent_names: tuple[str, ...] = ()
     scripted_opponent_prob: float = 0.0
+    # Schedule support: keep the configured duck cooldown until this step, then
+    # relax it to zero. The duck-cooldown run showed real repositioning at 100K
+    # that had faded by 1M, so the pressure is applied while the policy is still
+    # forming and released once it has somewhere to move to.
+    duck_cooldown_until: int | None = None
     milestone_steps: tuple[int, ...] = (
         100_000,
         500_000,

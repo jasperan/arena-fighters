@@ -526,6 +526,14 @@ class ArenaFightersEnv(ParallelEnv):
                 raise ValueError(f"Unknown arena map: {map_name}")
         self._map_pool = tuple(map_choices)
 
+    def set_duck_cooldown(self, duck_cooldown: int) -> None:
+        """Change the duck recovery window mid-run (schedule support)."""
+        if duck_cooldown < 0:
+            raise ValueError("duck_cooldown must be non-negative")
+        self.cfg = replace(
+            self.cfg, agent=replace(self.cfg.agent, duck_cooldown=duck_cooldown)
+        )
+
     def set_reward_config(self, reward_config: RewardConfig) -> None:
         self.cfg = replace(self.cfg, reward=reward_config)
 
