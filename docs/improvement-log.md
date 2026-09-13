@@ -742,6 +742,34 @@ still loses to the rusher (0.00-0.17); that matchup is a known gap.
 **Verdict: GAIN** (new strategy: repositioning, verified by three independent
 artifacts; promotion metric improved 0.938 -> 0.979).
 
+## Cycle 21 — 2026-09-11 — longer schedule hold (in progress)
+
+**Lane:** trained policy gains (schedule tuning).
+
+Cycle 20's schedule (cooldown 3 until 300K, then released) produced the first
+repositioning policy and the best promotion score (final 0.979 vs 0.938), but
+missed the pre-registered stochastic bar (0.792 vs 0.844) and the movement
+criterion's mean bar by 0.008. The obvious single-variable follow-up is to hold
+the same pressure longer, so the movement habits have more time to consolidate
+before the handicap is lifted.
+
+Cycle 21 runs the identical recipe with `--duck-cooldown 3
+--duck-cooldown-until 500000` (`checkpoints/sched500k-1m`, seed 113). Evidence
+completeness also improved: the release step is now written into checkpoint
+metadata (`opponent_pool.duck_cooldown_released_at`) rather than only appearing
+in stdout, with a test that drives the callback and reads the metadata back.
+
+**Pre-registered success criteria (any one is a gain), including the promotion
+metric this time -- cycle 20's lesson was that the rank score is the artifact
+that matters most:**
+
+1. `rank` final score >= 0.979 with the 500K snapshot >= 1.000 (promotion
+   parity or better), or
+2. stochastic mean win rate >= 0.844, or
+3. stand-still <= 0.90 **and** mean win rate >= 0.80.
+
+Status: launched; results appended below when complete.
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: stand_still_rate stays

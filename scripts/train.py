@@ -599,6 +599,7 @@ class SelfPlayCallback(BaseCallback):
                     opponent_pool_stats={
                         **self.opponent_pool.stats(),
                         **self._mixed_league_stats(),
+                        **self._schedule_stats(),
                     },
                 )
                 if self.verbose:
@@ -622,6 +623,7 @@ class SelfPlayCallback(BaseCallback):
                 opponent_pool_stats={
                     **self.opponent_pool.stats(),
                     **self._mixed_league_stats(),
+                    **self._schedule_stats(),
                 },
             )
 
@@ -652,6 +654,7 @@ class SelfPlayCallback(BaseCallback):
             return
         self.wrapper.set_duck_cooldown(0)
         self._duck_cooldown_relaxed = True
+        self.duck_cooldown_released_at = int(self.num_timesteps)
         if self.verbose:
             print(
                 f"[Schedule] duck cooldown relaxed to 0 at step {self.num_timesteps}"
@@ -707,6 +710,14 @@ class SelfPlayCallback(BaseCallback):
             ),
             "scripted_opponent_counts": dict(
                 getattr(self.wrapper, "scripted_opponent_counts", {}) or {}
+            ),
+        }
+
+    def _schedule_stats(self) -> dict:
+        """Whether and when a scheduled mechanic change actually fired."""
+        return {
+            "duck_cooldown_released_at": getattr(
+                self, "duck_cooldown_released_at", None
             ),
         }
 
@@ -852,6 +863,9 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
             **pool.stats(),
             "scripted_opponent_samples": int(wrapper.scripted_opponent_samples),
             "scripted_opponent_counts": dict(wrapper.scripted_opponent_counts),
+            "duck_cooldown_released_at": getattr(
+                callback, "duck_cooldown_released_at", None
+            ),
         },
     )
     trust_manifest_path = write_checkpoint_trust_manifest(

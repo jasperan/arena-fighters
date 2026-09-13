@@ -312,3 +312,38 @@ def test_milestone_metadata_records_mixed_league_counters(tmp_path):
         "zoner": 4,
         "camper": 3,
     }
+
+
+def test_milestone_metadata_records_schedule_release_step(tmp_path):
+    """A scheduled mechanic change must leave evidence in the artifact, not
+    only in stdout: the release step is written next to the pool stats."""
+    from tests._training_helpers import FakeModelWithLogger, FakeWrapper
+    from arena_fighters.self_play import OpponentPool
+    from scripts.train import SelfPlayCallback
+
+    class RecordingModel(FakeModelWithLogger):
+        def save(self, path):
+            Path(f"{path}.zip").write_bytes(b"checkpoint")
+
+    cfg = Config()
+    cfg = replace(
+        cfg,
+        agent=replace(cfg.agent, duck_cooldown=3),
+        training=replace(cfg.training, duck_cooldown_until=100_000),
+    )
+    wrapper = FakeWrapper()
+    callback = SelfPlayCallback(
+        wrapper=wrapper,
+        opponent_pool=OpponentPool(),
+        cfg=cfg,
+        checkpoint_dir=str(tmp_path),
+    )
+    callback.model = RecordingModel()
+    callback.num_timesteps = 100_000
+
+    callback._on_step()
+
+    metadata = json.loads((tmp_path / "ppo_100K.meta.json").read_text())
+    assert metadata["duck_cooldown_until"] == 100_000
+    assert metadata["opponent_pool"]["duck_cooldown_released_at"] == 100_000
+    assert wrapper.duck_cooldowns == [0]
