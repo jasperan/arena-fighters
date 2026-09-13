@@ -581,6 +581,65 @@ third consecutive no-gain and the loop stops, per the objective's stop rule.
 
 Status: launched; results appended below when complete.
 
+**Result (cycle 19): NO GAIN.** None of the three pre-registered criteria
+were met:
+
+| criterion | required | measured |
+|---|---|---|
+| stochastic mean win rate | >= 0.844 | 0.771 |
+| greedy mean win rate | >= 0.85 | 0.750 |
+| stand-still rate (with mean >= 0.80) | <= 0.90 | 0.993 |
+
+The fourfold passive-distance penalty (0.02 per excess tile, free radius 4) did
+not change where the policy fights: travel rose only to 0.36 tiles per episode
+against 0.01 for the same recipe without the penalty, and the score stayed
+below cycle 9. Paying for passivity is not sufficient either.
+
+# Loop conclusion (cycles 1-19)
+
+**Stop rule satisfied:** three consecutive no-gain cycles (15, 18, 19), so the
+improvement loop ends here by its own criteria.
+
+**What was verified:** `docs/verification-2026-09-11.md` records the
+first-principles pass (its "Redo pass" section covers six defects, D1-D6, each
+with a reproducing probe and a regression test), and `/tmp/reverify/*.py` holds
+the independent probes: 30/30 environment/plumbing assertions, a mirror-contract
+test that enumerates 53,428 bullet geometries, a physics probe, a greedy-vs-
+stochastic probe, and an eight-archetype round robin. `uv run pytest -q` is at
+382 passing; the smoke suite is 3/3.
+
+**Lane coverage across the 19 cycles:**
+
+* new scripted archetypes: zoner, camper, rusher (cycles 3, 10) plus the
+  rusher's measured counter-play against the best trained policy (6-0)
+* trained-policy gains: cycle 4 (0.000 -> 0.845 after the anti-stall preset
+  escaped a 100% duck collapse), cycle 9 (re-graded in cycle 14: 0.844 with the
+  evasive stalemate solved), cycle 5 (physics/mirror fixes that made training
+  sound at all)
+* config-derived behaviors: anti-stall preset, mixed league, spawn jitter,
+  entropy coefficient, engagement preset, duck cooldown (cycles 7, 13, 16, 17)
+* novel replay behaviors: positional replay analysis that exposed the
+  trench-gunner gradient across four runs (cycle 12)
+* measurement/tooling: action-entropy telemetry, stand-still diagnostics,
+  dual-mode evaluation with `policy_sampling` provenance, movement/gate/report
+  verification (cycles 8, 14)
+
+**Best artifacts:** `checkpoints/antistall-1m/` (cycle 4) and
+`checkpoints/mixed-league-1m/` (cycle 9, best measured policy: 0.844 stochastic
+over eight opponents and two maps, 0.958 for its 500K snapshot over six
+opponents); both are trust-manifested. `evals/` holds the suite, rank, gate,
+strategy-report and league-health artifacts behind every number quoted here.
+
+**The one unsolved problem**, stated plainly: every recipe ends with
+`stand_still_rate` ~1.000. Six levers were tried against it -- mixed league
+(7/9/11), spawn jitter (7), entropy bonus (15), passive-distance shaping (16,
+19), capped duck cover (17/18) -- and the only real movement seen anywhere was a
+transient at 100K steps of the duck-cooldown run (stand-still 0.699, 6.41 tiles
+of travel per episode) that had faded by 1M. The lead worth following next is
+that transient: it shows the policy *can* move under pressure, which points at
+schedules (strong mechanic early, relaxed later) rather than static shaping, and
+at a cooldown-aware melee threat to keep that pressure alive.
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: stand_still_rate stays
