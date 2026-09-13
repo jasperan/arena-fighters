@@ -216,3 +216,27 @@ def test_duck_cooldown_schedule_relaxes_at_the_configured_step():
 
     assert wrapper.duck_cooldowns == [0]
     assert wrapper.cfg.agent.duck_cooldown == 0
+
+
+def test_duck_cooldown_stages_apply_in_order_once_each():
+    """Staged release: 3 -> 2 -> 1 -> 0, each stage firing exactly once."""
+    wrapper = FakeWrapper()
+    cfg = Config()
+    cfg = replace(
+        cfg,
+        agent=replace(cfg.agent, duck_cooldown=3),
+        training=replace(
+            cfg.training,
+            duck_cooldown_stages=((200_000, 2), (350_000, 1), (500_000, 0)),
+        ),
+    )
+    callback = SelfPlayCallback(wrapper=wrapper, opponent_pool=OpponentPool(), cfg=cfg)
+    callback.model = FakeModelWithLogger()
+
+    for step in (0, 199_999, 200_000, 349_999, 350_000, 499_999, 500_000, 900_000):
+        callback.num_timesteps = step
+        callback._apply_duck_cooldown_schedule()
+
+    assert wrapper.duck_cooldowns == [2, 1, 0]
+    assert wrapper.cfg.agent.duck_cooldown == 0
+    assert callback.duck_cooldown_stage == {"step": 500_000, "cooldown": 0}

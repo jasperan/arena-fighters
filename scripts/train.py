@@ -646,7 +646,28 @@ class SelfPlayCallback(BaseCallback):
         self._record_self_play_stats()
 
     def _apply_duck_cooldown_schedule(self) -> None:
-        """Release the duck cooldown once the configured step is reached."""
+        """Apply whichever scheduled duck-cooldown change is due."""
+        stages = list(self.cfg.training.duck_cooldown_stages)
+        if stages:
+            applied = getattr(self, "_duck_stage_index", 0)
+            for index in range(applied, len(stages)):
+                step, cooldown = stages[index]
+                if self.num_timesteps < step:
+                    break
+                self.wrapper.set_duck_cooldown(int(cooldown))
+                self._duck_stage_index = index + 1
+                self.duck_cooldown_released_at = int(self.num_timesteps)
+                self.duck_cooldown_stage = {
+                    "step": int(step),
+                    "cooldown": int(cooldown),
+                }
+                if self.verbose:
+                    print(
+                        f"[Schedule] duck cooldown -> {cooldown} at step "
+                        f"{self.num_timesteps}"
+                    )
+            return
+
         until = self.cfg.training.duck_cooldown_until
         if until is None or getattr(self, "_duck_cooldown_relaxed", False):
             return
@@ -719,6 +740,7 @@ class SelfPlayCallback(BaseCallback):
             "duck_cooldown_released_at": getattr(
                 self, "duck_cooldown_released_at", None
             ),
+            "duck_cooldown_stage": getattr(self, "duck_cooldown_stage", None),
         }
 
     def _record_self_play_stats(self) -> None:
@@ -6502,6 +6524,15 @@ def main():
         help="Per-tick penalty per tile of excess distance while the opponent is far",
     )
     parser.add_argument(
+        "--duck-cooldown-stages",
+        type=str,
+        default=None,
+        help=(
+            "Staged duck-cooldown schedule as step:cooldown pairs, e.g. "
+            "'200000:2,350000:1,500000:0' (applied in order, each once)"
+        ),
+    )
+    parser.add_argument(
         "--duck-cooldown-until",
         type=int,
         default=None,
@@ -7011,6 +7042,27 @@ def main():
                 cfg.training,
                 opponent_pool_seed=args.opponent_pool_seed,
             ),
+        )
+    if args.duck_cooldown_stages:
+        stages = []
+        for entry in args.duck_cooldown_stages.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            try:
+                step_text, cooldown_text = entry.split(":")
+                step, cooldown = int(step_text), int(cooldown_text)
+            except ValueError:
+                parser.error(
+                    "--duck-cooldown-stages entries must look like 'step:cooldown'"
+                )
+            if step < 0 or cooldown < 0:
+                parser.error("--duck-cooldown-stages values must be non-negative")
+            stages.append((step, cooldown))
+        stages.sort()
+        cfg = replace(
+            cfg,
+            training=replace(cfg.training, duck_cooldown_stages=tuple(stages)),
         )
     if args.duck_cooldown_until is not None:
         if args.duck_cooldown_until < 0:

@@ -82,6 +82,12 @@ class TrainingConfig:
     # that had faded by 1M, so the pressure is applied while the policy is still
     # forming and released once it has somewhere to move to.
     duck_cooldown_until: int | None = None
+    # Staged schedule: (step, duck_cooldown) pairs applied in order, each once.
+    # Cycle 20 showed a long pressured phase creates movement that dissolves at
+    # release, and cycle 21 showed a late abortive release keeps the score but
+    # loses the movement; stages withdraw the pressure gradually instead of in
+    # one step.
+    duck_cooldown_stages: tuple[tuple[int, int], ...] = ()
     milestone_steps: tuple[int, ...] = (
         100_000,
         500_000,

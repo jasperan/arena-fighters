@@ -806,6 +806,12 @@ tuple on `TrainingConfig` (step, cooldown) with the callback applying each
 stage once, tests for stage application and idempotency, and the applied stage
 recorded in checkpoint metadata.
 
+Implemented and tested: `--duck-cooldown-stages '200000:2,350000:1,500000:0'`
+parsed and validated (non-negative, sorted), the callback applies each stage
+exactly once and records `duck_cooldown_stage` in metadata, and
+`test_duck_cooldown_stages_apply_in_order_once_each` drives it through every
+boundary (386 tests pass).
+
 Pre-registered success criteria (any one is a gain): rank final >= 0.979 (cycle
 20's promotion parity) **with** stand-still <= 0.90, or stochastic >= 0.85, or
 greedy >= 0.85 with stand-still <= 0.90. Movement alone (cycle 20) and score
