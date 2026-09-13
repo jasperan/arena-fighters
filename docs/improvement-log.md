@@ -277,7 +277,7 @@ fighter 1.00 with 0 tiles. 366 tests pass, smoke suite 3/3.
 
 **Verdict: GAIN** (the loop can now see the failure mode it just produced).
 
-## Cycle 9 — 2026-09-11 — mixed-league run (in progress)
+## Cycle 9 — 2026-09-11 — mixed-league run (GAIN)
 
 **Lane:** trained policy gains under the fixed foundations.
 
@@ -289,7 +289,13 @@ zoner/camper/evasive at `--scripted-opponent-prob 0.35`
 the cycle-4 win rate while finally learning to reposition, which the stand-still
 diagnostic (cycle 8) can now measure directly.
 
-Status: launched; results appended below when complete.
+**Result: GAIN (re-graded in cycle 14).** This entry was left unfinished when
+the loop moved on; measured over 8 opponents x classic+flat x 6 rounds it is
+stochastic **0.844** mean win rate (greedy 0.798) with the evasive stalemate
+solved (0.00 -> 1.00) -- the best policy of the whole loop. Its 500K snapshot
+scored **0.969** (win 0.958) on the six-opponent rank suite, above the final
+checkpoint's 0.917. Artifacts: `evals/*cycle9-stochastic.json`,
+`evals/*cycle9-rank-stochastic.json`, `evals/*cycle9-rank-gate.json`.
 
 ## Cycle 10 — 2026-09-11 — rusher archetype: punishing turtling
 
@@ -326,7 +332,7 @@ opponent is above, reusing the ceiling lesson from the camper work.
 **Verdict: GAIN** (new archetype + a league counter to the recurring degenerate
 strategy which no previous opponent punished).
 
-## Cycle 11 — 2026-09-11 — mixed league with the rusher (in progress)
+## Cycle 11 — 2026-09-11 — mixed league with the rusher (NO GAIN)
 
 **Lane:** trained policy gains.
 
@@ -338,7 +344,11 @@ cycle-8 diagnostic: a stand-still rate well below 1.000 together with a win
 rate near the cycle-4 level would mean the policy finally learned to reposition
 instead of trading from its spawn.
 
-Status: launched; results appended below when complete.
+**Result: NO GAIN.** Greedy **0.000** / stochastic **0.719** (8 opponents,
+classic+flat, 6 rounds) against cycle 9's 0.798 / 0.844. Partial gain: first wins
+against the rusher (0.00 -> 0.17). Regression: camper on classic 1.00 -> 0.17.
+Stand-still 1.000 in both modes. Artifacts: `evals/*cycle11-greedy.json`,
+`evals/*cycle11-stochastic.json`.
 
 ## Cycle 12 — 2026-09-11 — positional replay analysis: the trench pattern in numbers
 
@@ -431,7 +441,7 @@ Consequences:
 **Verdict: GAIN** (measurement correction worth 0.845 of misjudged policy
 quality, plus provenance in every suite artifact).
 
-## Cycle 15 — 2026-09-11 — entropy-regularised mixed-league run (in progress)
+## Cycle 15 — 2026-09-11 — entropy-regularised mixed-league run (NO GAIN)
 
 **Lane:** trained policy gains.
 
@@ -448,7 +458,11 @@ win rate well above 0.000 (the mode is no longer degenerate). Stand-still and
 replay-spatial metrics are reported alongside, since positioning remains the
 open problem.
 
-Status: launched; results appended below when complete.
+**Result: NO GAIN.** Greedy **0.000** / stochastic **0.708** against the 0.844
+best; stand-still 0.998, travel 0.28 tiles per episode. The entropy bonus did
+not fix the degenerate greedy mode (0.000 with and without `--ent-coef 0.01`),
+so the mechanic (cycle 17) was tried instead. Artifacts:
+`evals/*cycle15-greedy.json`, `evals/*cycle15-stochastic.json`.
 
 ## Cycle 16 — 2026-09-11 — engagement preset: paying for passivity
 
@@ -519,7 +533,7 @@ archetype documents that it assumes cooldown 0, and the gap is tracked above.
 **Verdict: GAIN** (removes the attractor every previous recipe collapsed into,
 with the trade-off measured rather than assumed).
 
-## Cycle 18 — 2026-09-11 — duck-cooldown training run (in progress)
+## Cycle 18 — 2026-09-11 — duck-cooldown training run (NO GAIN)
 
 **Lane:** trained policy gains.
 
@@ -550,9 +564,14 @@ budget. That is the behaviour cycles 7-16 failed to produce, and it arrives with
 the mechanic rather than with a reward tweak. The final verdict still rests on
 the completed run; this is recorded as a partial result, not a claimed gain.
 
-Status: running (100K/1M); final results appended below when complete.
+**Result: NO GAIN.** Completed 1M steps: greedy **0.750** / stochastic **0.781**
+(8 opponents, classic+flat, 6 rounds) against cycle 9's 0.798 / 0.844;
+stand-still 1.000, travel 0.01 tiles per episode. The 100K movement spike
+(stand-still 0.699, 6.41 tiles) had faded by 1M. Artifacts:
+`evals/*cycle18-greedy.json`, `evals/*cycle18-stochastic.json`,
+`evals/*duckcd-100k-stoch.json`.
 
-## Cycle 19 — 2026-09-11 — strong engagement shaping run (in progress)
+## Cycle 19 — 2026-09-11 — strong engagement shaping run (NO GAIN)
 
 **Lane:** trained policy gains (config-derived shaping).
 
@@ -595,10 +614,20 @@ not change where the policy fights: travel rose only to 0.36 tiles per episode
 against 0.01 for the same recipe without the penalty, and the score stayed
 below cycle 9. Paying for passivity is not sufficient either.
 
-# Loop conclusion (cycles 1-19)
+# Loop status (corrected after audit, cycles 1-19)
 
-**Stop rule satisfied:** three consecutive no-gain cycles (15, 18, 19), so the
-improvement loop ends here by its own criteria.
+**Stop rule NOT satisfied — the loop continues.** An earlier version of this
+section claimed three consecutive no-gain cycles (15, 18, 19). That was wrong:
+cycles **16 and 17 are gains** and sit between 15 and 18. The verdict sequence is
+
+    1-5 gain, 6 no-gain, 7-10 gain, 11 no-gain, 12-14 gain,
+    15 no-gain, 16-17 gain, 18 no-gain, 19 no-gain
+
+so the longest run of consecutive no-gain cycles is **two (18, 19)**, one short
+of the objective's stop condition. The loop therefore resumes with cycle 20
+rather than stopping, and every further cycle must run the full promotion
+evaluation (suite + rank + strategy_report) and have its result appended to its
+own entry.
 
 **What was verified:** `docs/verification-2026-09-11.md` records the
 first-principles pass (its "Redo pass" section covers six defects, D1-D6, each
