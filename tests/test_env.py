@@ -767,3 +767,65 @@ def test_presets_without_shaping_are_unaffected():
     _, rewards, _, _, _ = _step_idle(env)
 
     assert rewards["agent_0"] == pytest.approx(Config().reward.idle_penalty)
+
+
+# ---------------------------------------------------------------------------
+# Duck cooldown: capping how long a turtle can stay bullet-proof
+# ---------------------------------------------------------------------------
+def _duck_uptime(duck_cooldown: int, ticks: int = 12) -> int:
+    """How many incoming horizontal bullets a dedicated ducker blocks.
+
+    Measured functionally (block a bullet vs get hit) rather than by reading
+    ``duck_ticks`` after the step, because the counter decays inside the same
+    step and hides the second covered tick.
+    """
+    cfg = Config(
+        arena=replace(ArenaConfig(), map_name="flat"),
+        agent=replace(Config().agent, duck_cooldown=duck_cooldown),
+    )
+    env = ArenaFightersEnv(config=cfg)
+    env.reset(seed=0)
+    ducker = env._agent_states["agent_0"]
+    blocked = 0
+    for _ in range(ticks):
+        # Fresh cushion each tick so a leaking shot registers as damage without
+        # ending the episode (start_hp is 1).
+        ducker.hp = 25
+        env._bullets = [
+            Bullet(x=float(ducker.x - 2), y=float(ducker.y), dx=2, dy=0, owner="agent_1")
+        ]
+        env.step({"agent_0": DUCK, "agent_1": IDLE})
+        if ducker.hp == 25:
+            blocked += 1
+    return blocked
+
+
+def test_duck_cooldown_halves_duck_cover():
+    """duck_duration 2 + cooldown 2 covers two of every four ticks, so half of
+    the incoming horizontal fire gets through: ducking can no longer be held."""
+    assert _duck_uptime(duck_cooldown=2) == 6
+
+
+def test_duck_cooldown_zero_keeps_continuous_cover():
+    """Default behaviour is unchanged: alternate ducks block every shot."""
+    assert _duck_uptime(duck_cooldown=0) == 12
+
+
+def test_duck_cooldown_is_symmetric_and_blocks_back_to_back_ducks():
+    cfg = Config(
+        arena=replace(ArenaConfig(), map_name="flat"),
+        agent=replace(Config().agent, duck_cooldown=3),
+    )
+    env = ArenaFightersEnv(config=cfg)
+    env.reset(seed=0)
+
+    env.step({"agent_0": DUCK, "agent_1": DUCK})
+    assert env._agent_states["agent_0"].duck_ticks > 0
+    assert env._agent_states["agent_1"].duck_ticks > 0
+
+    # A second duck in a row is refused for both agents.
+    env.step({"agent_0": DUCK, "agent_1": DUCK})
+    assert env._agent_states["agent_0"].duck_ticks == 0
+    assert env._agent_states["agent_1"].duck_ticks == 0
+    assert env._agent_states["agent_0"].duck_cooldown_ticks > 0
+    assert env._agent_states["agent_1"].duck_cooldown_ticks > 0

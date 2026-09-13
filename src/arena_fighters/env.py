@@ -51,6 +51,7 @@ class AgentState:
     shoot_cd: int = 0
     melee_cd: int = 0
     duck_ticks: int = 0
+    duck_cooldown_ticks: int = 0
 
 
 @dataclass
@@ -164,6 +165,7 @@ class ArenaFightersEnv(ParallelEnv):
             st.shoot_cd = max(0, st.shoot_cd - 1)
             st.melee_cd = max(0, st.melee_cd - 1)
             st.duck_ticks = max(0, st.duck_ticks - 1)
+            st.duck_cooldown_ticks = max(0, st.duck_cooldown_ticks - 1)
 
         # 5) Idle penalty
         for agent_name in self.agents:
@@ -273,7 +275,13 @@ class ArenaFightersEnv(ParallelEnv):
                 st.vy = -self.cfg.agent.jump_height
 
         elif action == DUCK:
-            st.duck_ticks = self.cfg.agent.duck_duration
+            # A duck is refused while the recovery timer runs, so ducking
+            # cannot be maintained indefinitely.
+            if st.duck_cooldown_ticks <= 0:
+                st.duck_ticks = self.cfg.agent.duck_duration
+                st.duck_cooldown_ticks = (
+                    self.cfg.agent.duck_duration + self.cfg.agent.duck_cooldown
+                )
 
         elif action in (SHOOT_FORWARD, SHOOT_DIAG_UP, SHOOT_DIAG_DOWN):
             if st.shoot_cd <= 0:
@@ -648,6 +656,7 @@ class ArenaFightersEnv(ParallelEnv):
                     "shoot_cd": st.shoot_cd,
                     "melee_cd": st.melee_cd,
                     "duck_ticks": st.duck_ticks,
+                    "duck_cooldown_ticks": st.duck_cooldown_ticks,
                 }
                 for name, st in self._agent_states.items()
             },

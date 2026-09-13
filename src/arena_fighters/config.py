@@ -24,6 +24,11 @@ class AgentConfig:
     shoot_cooldown: int = 5
     melee_cooldown: int = 3
     duck_duration: int = 2
+    # Extra ticks after a duck effect ends during which DUCK is ignored. 0 keeps
+    # the original behaviour (a duck on alternate ticks gives continuous cover);
+    # raising it caps the fraction of ticks a turtle can stay bullet-proof,
+    # which is the attractor every training run has collapsed into.
+    duck_cooldown: int = 0
     jump_height: int = 3
     bullet_speed: int = 2
 

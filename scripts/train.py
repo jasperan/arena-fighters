@@ -188,6 +188,7 @@ def checkpoint_metadata(
         "reward": effective_reward_config(cfg, num_timesteps).__dict__,
         "curriculum": curriculum_metadata(cfg, num_timesteps),
         "ent_coef": cfg.training.ent_coef,
+        "duck_cooldown": cfg.agent.duck_cooldown,
         "opponent_pool_config": {
             "max_size": cfg.training.opponent_pool_size,
             "latest_opponent_prob": cfg.training.latest_opponent_prob,
@@ -6456,6 +6457,15 @@ def main():
         help="Seed for reproducible opponent-pool sampling in train/manifest modes",
     )
     parser.add_argument(
+        "--duck-cooldown",
+        type=int,
+        default=None,
+        help=(
+            "Extra ticks after a duck ends during which DUCK is ignored "
+            "(default: config value, 0). Caps how long a turtle can hide."
+        ),
+    )
+    parser.add_argument(
         "--ent-coef",
         type=float,
         default=None,
@@ -6947,6 +6957,13 @@ def main():
                 cfg.training,
                 opponent_pool_seed=args.opponent_pool_seed,
             ),
+        )
+    if args.duck_cooldown is not None:
+        if args.duck_cooldown < 0:
+            parser.error("--duck-cooldown must be non-negative")
+        cfg = replace(
+            cfg,
+            agent=replace(cfg.agent, duck_cooldown=args.duck_cooldown),
         )
     if args.ent_coef is not None:
         if args.ent_coef < 0:
