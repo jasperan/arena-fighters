@@ -491,5 +491,21 @@ by jittering in place: only actually closing the gap stops the bleed.
 Tests cover the free radius, the scaling with distance, symmetry between
 agents, and that presets without shaping are unaffected. 377 tests pass.
 
-**Verdict: GAIN** (a targeted, testable lever for the one problem every previous
-cycle left unsolved; the training comparison follows in cycle 17).
+**Smoke test (120k steps, same league/ent-coef as the control)** — the
+mechanism works but the behavioural effect is *not* demonstrated yet, and one
+measurement came out opposite to the intent:
+
+| checkpoint | stochastic win vs scripted | vs zoner | mean distance vs scripted | fraction > 6 tiles | stand-still |
+|---|---|---|---|---|---|
+| engagement 120k | 0.50 | 0.83 | **18.35** | **0.890** | 0.916 |
+| anti-stall 100k (control) | 0.50 | 0.67 | 14.98 | 0.757 | 0.890 |
+
+At 120k both policies are still almost stationary, so the distance is dominated
+by what the opponent does rather than by shaping, and six-round win rates carry
+no weight. The preset is a verified capability (tests: free radius, scaling,
+symmetry, no effect when disabled) but its usefulness is unproven; a full 1M
+comparison with the distance/far-fraction metrics is the test, and the 0.005
+per-tile magnitude may simply be too small next to a ±12 win/lose swing.
+
+**Verdict: GAIN** (capability + honest negative early signal; the real test is
+deferred to cycle 17, not claimed here).
