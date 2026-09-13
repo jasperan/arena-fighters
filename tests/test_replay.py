@@ -8,6 +8,7 @@ from arena_fighters.replay import (
     analyze_replay,
     load_replay,
     summarize_replay_frames,
+    summarize_spatial_behavior,
 )
 
 
@@ -255,3 +256,59 @@ def test_analyze_replay_reports_action_behavior_from_frames():
     assert analysis["behavior"]["avg_idle_rate"]["agent_0"] == 2 / 3
     assert analysis["behavior"]["avg_dominant_action_rate"]["agent_0"] == 2 / 3
     assert analysis["flags"]["no_recorded_actions"] is False
+
+
+def _spatial_frames(agent_positions, agent_name="agent_0"):
+    return [
+        {"tick": tick, "agents": {agent_name: {"x": x, "y": y, "hp": 1}}}
+        for tick, (x, y) in enumerate(agent_positions)
+    ]
+
+
+def test_spatial_behavior_detects_a_policy_that_never_moves():
+    frames = _spatial_frames([(5, 18)] * 10)
+
+    spatial = summarize_spatial_behavior(frames)["agent_0"]
+
+    assert spatial["stand_still_rate"] == 1.0
+    assert spatial["lateral_range"] == 0
+    assert spatial["travel_distance"] == 0
+    assert spatial["spawn_camp_rate"] == 1.0
+    assert spatial["occupancy_by_column"] == {"5": 10}
+    assert spatial["elevated_rate"] == 0.0
+
+
+def test_spatial_behavior_measures_movement_and_elevation():
+    frames = _spatial_frames(
+        [(5, 18), (6, 18), (7, 15), (7, 15), (5, 18), (3, 18), (1, 18)]
+    )
+
+    spatial = summarize_spatial_behavior(frames)["agent_0"]
+
+    assert spatial["start_x"] == 5 and spatial["end_x"] == 1
+    assert spatial["x_min"] == 1 and spatial["x_max"] == 7
+    assert spatial["lateral_range"] == 6
+    assert spatial["travel_distance"] == 8  # 1+1+0+2+2+2
+    assert 0.0 < spatial["stand_still_rate"] < 1.0
+    assert spatial["elevated_rate"] == 2 / 7
+    assert spatial["occupancy_by_column"]["7"] == 2
+    assert spatial["frames"] == 7
+
+
+def test_spatial_behavior_handles_missing_frames_and_agents():
+    assert summarize_spatial_behavior([]) == {}
+    frames = [{"tick": 0, "agents": {}}, {"tick": 1, "agents": {"agent_0": {"hp": 1}}}]
+    assert summarize_spatial_behavior(frames) == {}
+
+
+def test_analyze_replay_embeds_spatial_behavior():
+    replay = {
+        "episode_id": 1,
+        "winner": "agent_0",
+        "length": 3,
+        "frames": _spatial_frames([(5, 18), (5, 18), (5, 18)]),
+    }
+
+    analysis = analyze_replay(replay)
+
+    assert analysis["spatial_behavior"]["agent_0"]["spawn_camp_rate"] == 1.0

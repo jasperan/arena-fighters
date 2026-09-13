@@ -178,6 +178,7 @@ All source lives in `src/arena_fighters/`:
 - Milestone checkpoints auto-saved at 100K, 500K, 1M, 5M, 10M steps into `checkpoints/`
 - Episode frames logged as JSON to `replays/` with top-level map, action, and event metadata for post-hoc analysis
 - Replay directory analysis samples action-collapse buckets for idle-heavy and dominant-action episodes
+- `analyze_replay` embeds `spatial_behavior` (lateral range, travel, stand-still rate, spawn-camp rate, elevated rate, per-column occupancy) so policies that hold their spawn are distinguishable from repositioning ones even when action histograms match
 
 ## Observation & Action Space
 

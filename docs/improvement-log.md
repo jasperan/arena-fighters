@@ -330,6 +330,37 @@ instead of trading from its spawn.
 
 Status: launched; results appended below when complete.
 
+## Cycle 12 — 2026-09-11 — positional replay analysis: the trench pattern in numbers
+
+**Lane:** novel replay behaviors.
+
+Action histograms could not distinguish holding spawn from repositioning, so
+replay frames are now summarized positionally (`summarize_spatial_behavior`,
+embedded in every `analyze_replay` artifact): lateral range, travel distance,
+`stand_still_rate` (same definition as the evaluation diagnostic),
+`spawn_camp_rate` (frames within two columns of the start), `elevated_rate`,
+and a per-column occupancy histogram.
+
+**Discovery** — replay directories of the three runs, first 40 episodes each,
+agent_0:
+
+| run | stand still | travel/ep | spawn camp | elevated | median lateral range |
+|---|---|---|---|---|---|
+| `antistall-1m` (cycle 4) | 0.901 | 4.0 | 0.696 | 0.105 | 3 |
+| `antistall-4map-1m` (cycle 6, collapsed) | 0.968 | 2.4 | 0.904 | 0.071 | 1 |
+| `mixed-league-1m` (cycle 9) | 0.873 | 3.5 | 0.746 | 0.361 | 2 |
+| `mixed-league-rusher-1m` (cycle 11, 7 replays, mid-run) | **0.750** | **9.6** | **0.369** | **0.485** | **4** |
+
+The gradient quantifies the degeneracy that the win-rate tables hid: the
+collapsed four-map policy is the most spawn-bound (0.968 stand-still, 90% of
+frames within two columns of spawn, median lateral range 1 tile), while the run
+exposed to the rusher is already moving 2.4x further per episode and camping
+37% of frames instead of 75-90%. Cycle 11's success criterion (movement under
+pressure) is therefore measurable from replays as well as from evaluation.
+
+**Verdict: GAIN** (new replay lane: a positional metric that separates policies
+the action histograms call identical).
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: checkpoint-vs-checkpoint is

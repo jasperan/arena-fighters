@@ -189,6 +189,7 @@ def analyze_replay(data: dict) -> dict:
         "action_counts": action_counts,
         "action_distribution": _action_distribution_from_counts(action_counts),
         "behavior": action_behavior,
+        "spatial_behavior": summarize_spatial_behavior(frames),
         "flags": {
             "no_damage": totals["damage_dealt"] == 0,
             "no_projectile_hits": totals["projectile_hits"] == 0,
@@ -203,6 +204,57 @@ def analyze_replay(data: dict) -> dict:
             ),
         },
     }
+
+
+def summarize_spatial_behavior(frames: list[dict]) -> dict[str, dict]:
+    """Positional summary of an episode, per agent.
+
+    An action histogram cannot tell a policy that holds its spawn apart from
+    one that repositions, and the environment rewards neither, so replay frames
+    are also summarized by *where* each fighter spent the episode: lateral
+    range, travel, how much of it stayed near the starting column, elevated
+    time, and a per-column occupancy histogram. ``stand_still_rate`` uses the
+    same definition as the evaluation-time diagnostic (fraction of ticks whose
+    column did not change).
+    """
+    tracks: dict[str, list[tuple[int, int]]] = {}
+    for frame in frames:
+        for agent_name, state in (frame.get("agents") or {}).items():
+            if "x" not in state or "y" not in state:
+                continue
+            tracks.setdefault(agent_name, []).append(
+                (int(state["x"]), int(state["y"]))
+            )
+
+    summary: dict[str, dict] = {}
+    for agent_name, points in tracks.items():
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        start_x = xs[0]
+        travel = sum(abs(b - a) for a, b in zip(xs, xs[1:]))
+        moved = sum(1 for a, b in zip(xs, xs[1:]) if a != b)
+        occupancy: dict[str, int] = {}
+        for x in xs:
+            occupancy[str(x)] = occupancy.get(str(x), 0) + 1
+        summary[agent_name] = {
+            "frames": len(points),
+            "start_x": start_x,
+            "end_x": xs[-1],
+            "x_min": min(xs),
+            "x_max": max(xs),
+            "lateral_range": max(xs) - min(xs),
+            "travel_distance": travel,
+            "stand_still_rate": 1.0 - moved / max(1, len(points) - 1),
+            "spawn_camp_rate": sum(1 for x in xs if abs(x - start_x) <= 2) / len(xs),
+            # y < 18 is above the ground standing row on every shipped map.
+            "elevated_rate": sum(1 for y in ys if y < 18) / len(ys),
+            "y_min": min(ys),
+            "y_max": max(ys),
+            "occupancy_by_column": {
+                key: occupancy[key] for key in sorted(occupancy, key=int)
+            },
+        }
+    return summary
 
 
 def _sum_agent_event_totals(event_totals: dict) -> dict[str, int]:
