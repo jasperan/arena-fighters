@@ -156,7 +156,8 @@ All source lives in `src/arena_fighters/`:
 - Eval and suite configs include active curriculum metadata plus checkpoint metadata when a companion file exists
 - Eval, suite, rank, comparison, gate, rank-gate, promotion-audit, audit-summary, artifact-index, strategy-report, long-run-check, long-run-status, league-health, smoke-suite, long-run-artifact-smoke, and replay-analysis JSON include an `artifact` type/schema marker
 - Env infos include per-step and cumulative combat event counters under `events` and `episode_events`
-- Built-in eval opponents: random, idle, scripted, aggressive, evasive, zoner (holds a firing lane and retreats from melee), camper (takes and holds an elevated platform)
+- Built-in eval opponents: random, idle, scripted, aggressive, evasive, zoner (holds a firing lane and retreats from melee), camper (takes and holds an elevated platform), rusher (duck-marches through horizontal fire and finishes with melee, which ducking does not block; beats stationary duck/shoot policies that no other archetype punishes)
+- Ducking blocks `dy == 0` bullets for `duck_duration` ticks and does not stop melee, so a duck on alternate ticks gives continuous cover while still advancing one tile per two ticks (the rusher's approach)
 - Eval summaries can be persisted with `--eval-output-dir`; `evals/` is ignored
 - Compare mode reports metric deltas between two saved eval summaries
 - Gate mode exits non-zero when default comparison guardrails fail

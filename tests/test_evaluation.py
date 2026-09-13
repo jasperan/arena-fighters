@@ -1107,3 +1107,97 @@ def test_gate_eval_comparison_fails_per_map_regressions():
             "map_name": "tower",
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# Rusher: the melee-first archetype that punishes turtling
+# ---------------------------------------------------------------------------
+def _run_policies(policy0, policy1, map_name="flat", seed=0, max_ticks=500):
+    env = ArenaFightersEnv(config=Config(arena=ArenaConfig(map_name=map_name)))
+    obs, _ = env.reset(seed=seed)
+    totals = {"agent_0": 0.0, "agent_1": 0.0}
+    term = {"agent_0": False, "agent_1": False}
+    trunc = dict(term)
+    while env.agents:
+        actions = {
+            "agent_0": policy0.act("agent_0", obs["agent_0"], env),
+            "agent_1": policy1.act("agent_1", obs["agent_1"], env),
+        }
+        obs, rewards, term, trunc, _ = env.step(actions)
+        for name in totals:
+            totals[name] += rewards[name]
+    return infer_winner(env.get_state(), term, trunc, totals), env.get_state()["tick"]
+
+
+def test_rusher_melees_an_adjacent_opponent():
+    env = ArenaFightersEnv(config=Config(arena=ArenaConfig(map_name="flat")))
+    env.reset(seed=0)
+    a0, a1 = env._agent_states["agent_0"], env._agent_states["agent_1"]
+    a0.x, a0.y, a0.facing, a0.melee_cd = 10, 18, 1, 0
+    a1.x, a1.y = 11, 18
+
+    action = make_builtin_policy("rusher").act("agent_0", env._build_obs("agent_0"), env)
+
+    assert action == MELEE
+
+
+def test_rusher_advances_under_duck_cover():
+    """Ducking lasts two ticks, so duck/move alternation keeps the rusher
+    covered on every tick while still closing one tile per two ticks."""
+    env = ArenaFightersEnv(config=Config(arena=ArenaConfig(map_name="flat")))
+    obs, _ = env.reset(seed=0)
+    rusher = make_builtin_policy("rusher")
+    idle = make_builtin_policy("idle")
+    start_x = env._agent_states["agent_0"].x
+    ducked_ticks = 0
+    steps = 0
+
+    while env.agents and steps < 20:
+        action = rusher.act("agent_0", obs["agent_0"], env)
+        obs, _, term, trunc, _ = env.step(
+            {"agent_0": action, "agent_1": idle.act("agent_1", obs["agent_1"], env)}
+        )
+        steps += 1
+        if env._agent_states["agent_0"].duck_ticks > 0:
+            ducked_ticks += 1
+
+    assert env._agent_states["agent_0"].x > start_x, "rusher never advanced"
+    # duck_ticks decays at the end of each step, so a ducked tick reads 1 and
+    # the following (still covered) move tick reads 0: expect about half.
+    # Survival under fire is proven by test_rusher_beats_a_stationary_duck_shooter.
+    assert ducked_ticks >= steps // 2 - 1, "rusher advanced without duck cover"
+
+
+def test_rusher_beats_a_stationary_duck_shooter():
+    """The property the league needs: a policy that never leaves its spawn and
+    trades fire cannot hold off the rusher, because melee ignores ducking."""
+
+    class StationaryGunner:
+        def act(self, agent_name, obs, env):
+            st = env._agent_states[agent_name]
+            other = env._agent_states[env._other(agent_name)]
+            for bullet in env._bullets:
+                if (
+                    bullet.owner != agent_name
+                    and bullet.dy == 0
+                    and int(round(bullet.y)) == st.y
+                    and abs(int(round(bullet.x)) - st.x) <= 4
+                ):
+                    return DUCK
+            if st.facing != (1 if other.x > st.x else -1):
+                return IDLE
+            return SHOOT_FORWARD
+
+    for seed in range(4):
+        winner, ticks = _run_policies(
+            make_builtin_policy("rusher"), StationaryGunner(), seed=seed
+        )
+        assert winner == "agent_0", f"seed {seed}: gunner survived ({winner}, {ticks} ticks)"
+
+
+def test_rusher_beats_idle_and_loses_nothing_to_nothing():
+    winner, ticks = _run_policies(
+        make_builtin_policy("rusher"), make_builtin_policy("idle"), seed=1
+    )
+    assert winner == "agent_0"
+    assert ticks < 120

@@ -281,12 +281,61 @@ diagnostic (cycle 8) can now measure directly.
 
 Status: launched; results appended below when complete.
 
+## Cycle 10 — 2026-09-11 — rusher archetype: punishing turtling
+
+**Lane:** new scripted archetypes.
+
+Cycle 9 was a no-gain because the mixed league did not actually pressure the
+turtling strategy: every existing archetype fights at range, and ducking blocks
+horizontal bullets, so standing still and trading fire stayed close to optimal
+(stand-still rate stayed 1.000 across 1M steps).
+
+The `rusher` archetype closes the gap with a **duck-march** -- a duck covers two
+ticks (`duck_duration`), so alternating duck and move keeps the body low on
+every tick while still advancing a tile every other tick -- then finishes with
+melee, which ducking does not block. Outbound fire is blocked the whole way;
+the counter-play is a diagonal shot, since ducking only stops `dy == 0`
+bullets. It also steps out from under a platform before jumping when the
+opponent is above, reusing the ceiling lesson from the camper work.
+
+**Evidence**
+
+* Head-to-head against the strongest trained policy: the cycle-4 1M checkpoint
+  (`checkpoints/antistall-1m/ppo_final`) **loses 0-6 on classic and 0-6 on
+  flat** to the rusher (`evals/*rusher-vs-1m.json`), while still beating
+  scripted 1.00 and drawing evasive -- the rusher is a genuine counter to the
+  policy that every recipe so far has converged to.
+* Round robin over all eight built-ins, both sides, all four maps
+  (`/tmp/reverify/tournament-rusher.json`): rusher **win 0.33 / loss 0.01 /
+  draw 0.66** -- it almost never loses. It beats idle 1.00, splits 0.50/0.50
+  with zoner, and forces mutual knockouts (20-tick draws) against
+  scripted/aggressive/camper. Evasive still outruns it.
+* Regression tests: melee on contact, duck-march advance under cover, a
+  stationary duck/shooter losing on four seeds, and a fast win over idle.
+
+**Verdict: GAIN** (new archetype + a league counter to the recurring degenerate
+strategy which no previous opponent punished).
+
+## Cycle 11 — 2026-09-11 — mixed league with the rusher (in progress)
+
+**Lane:** trained policy gains.
+
+Next run repeats the cycle-9 recipe (anti-stall, classic+flat, spawn jitter)
+and adds the rusher to the mixed league:
+`--scripted-opponents rusher,zoner,camper,evasive --scripted-opponent-prob 0.4`
+(`checkpoints/mixed-league-rusher-1m`, seed 61). Success is measured with the
+cycle-8 diagnostic: a stand-still rate well below 1.000 together with a win
+rate near the cycle-4 level would mean the policy finally learned to reposition
+instead of trading from its spawn.
+
+Status: launched; results appended below when complete.
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: checkpoint-vs-checkpoint is
-  a pure stalemate and the action distribution has almost no movement. Next
-  lever is opponent diversity during training (mixed league with scripted
-  archetypes) plus spawn/position variety.
+  a pure stalemate and the action distribution has almost no movement. Cycles 7
+  and 9 (mixed league) did not fix it; cycle 10 added the rusher, which does
+  beat the trained policy, and cycle 11 tests whether it forces repositioning.
 - `evasive` denies every lane to every policy tried so far (zoner, camper and
   both checkpoints all draw); either it is a valid ceiling on the current
   action set or the reward preset needs an anti-turtle term -- worth a cycle.
