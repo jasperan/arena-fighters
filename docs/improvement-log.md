@@ -210,6 +210,11 @@ checkpoint does, which is what the promotion tooling exists for.
 recipe is retired; map variety is being reintroduced through a curriculum
 rather than from step 0.
 
+*Corrected in cycle 14:* the 0.000 figure is the greedy mode; with stochastic
+sampling the same checkpoint scores 0.609 across all four maps. It is still a
+no-gain (0.609 < 0.729 cycle-4 / 0.844 cycle-9 on the comparable metric), but it
+is greedy-degenerate rather than collapsed.
+
 ## Cycle 7 — 2026-09-11 — opponent diversity and spawn variety
 
 **Lane:** trained policy gains (new strategy pressure) + evaluation rigor.
@@ -244,6 +249,11 @@ cycle-4 policy still scores **0.845** (robust to varied openings) while the
 
 **Verdict: GAIN** (opponent diversity attacks the positioning gap; spawn
 variety fixes the statistics of every future evaluation).
+
+*Corrected in cycle 14:* in stochastic sampling this run is the strongest policy
+produced so far -- **0.844** mean win rate, with the evasive stalemate solved
+(0.00 -> 1.00), versus 0.729 for cycle 4. It had been graded NO GAIN from a
+greedy-mode suite that reported 0.798 against cycle 4's 0.845.
 
 ## Cycle 8 — 2026-09-11 — movement diagnostics in evaluation and strategy report
 
@@ -399,3 +409,45 @@ field. 375 tests pass.
 
 **Verdict: GAIN** (a recorded, testable knob for the collapse mode that cost
 cycles 6 and 9, and an input for the planned ablation).
+
+## Cycle 14 — 2026-09-11 — dual-mode evaluation: greedy is a bad promotion metric
+
+**Lane:** training/eval tooling (correct measurement).
+
+Cycles 6, 9 and 11 were judged with `--mode suite`, which evaluates checkpoints
+with `deterministic=True`. Re-running the same checkpoints with `--stochastic`
+(the flag already existed; the loop had never used it) overturns two of those
+verdicts. Same opponents, maps and rounds, stochastic sampling:
+
+| run (recipe) | greedy mean | **stochastic mean** | notes |
+|---|---|---|---|
+| cycle 4 — 2 maps, anti-stall | 0.845 | **0.729** | loses to evasive 0.00 |
+| cycle 6 — 4 maps, anti-stall | 0.000 | **0.609** | not a collapse; mediocre, greedy-degenerate |
+| cycle 9 — 2 maps, mixed league | 0.798 | **0.844** | beats evasive 1.00 |
+| cycle 11 — 2 maps, mixed league + rusher | 0.000 | **0.719** | first wins vs rusher (0.17); camper-classic 0.17 |
+
+Consequences:
+
+* **Cycle 9 is re-graded from NO GAIN to GAIN**: in the mode where these
+  policies actually behave, the mixed league raised the mean from 0.729 to
+  0.844 and solved the evasive stalemate (0.00 -> 1.00), which no other recipe
+  has done.
+* **Cycle 11 stands as NO GAIN** (0.719 < 0.844) with a partial gain (rusher
+  0.00 -> 0.17) and a new weakness (camper on classic 1.00 -> 0.17).
+* **Cycle 6 stands as NO GAIN** but was mischaracterised: the four-map policy is
+  greedy-degenerate, not useless (0.609 stochastic across all four maps).
+* Deterministic evaluation of these PPO checkpoints measures the mode of a
+  distribution the policy does not actually act from, and the mode can be the
+  worst action in the distribution. Promotion decisions need both modes, or
+  stochastic alone.
+* Tooling gap found and fixed: suite artifacts did not record which mode they
+  used. `suite_config.policy_sampling` is now `"greedy"` or `"stochastic"` for
+  every suite written, verified with a fresh 2-round run.
+* Still true in every mode: `stand_still_rate` is ~1.000 for all four
+  checkpoints (travel 0.0-0.02 tiles/episode). The positioning problem is not a
+  sampling artifact -- it is real and unsolved.
+
+**Verdict: GAIN** (measurement correction worth 0.845 of misjudged policy
+quality, plus provenance in every suite artifact).
+
+## Unresolved / carried forward

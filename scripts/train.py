@@ -1397,6 +1397,7 @@ def run_suite(
         episodes=episodes,
         seed=seed,
         reward_preset=reward_preset,
+        policy_sampling="greedy" if deterministic else "stochastic",
     )
     suite["suite_config"]["checkpoint_metadata"] = (
         read_checkpoint_metadata(path) if checkpoint else None

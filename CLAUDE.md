@@ -151,10 +151,11 @@ All source lives in `src/arena_fighters/`:
 - Strategy report scans reward-shaping, long-run-artifact, and smoke-suite summaries for aggregate smoke health and strategy failures
 - League health summarizes strategy, opponent-pool, head-to-head, map weakness, and long-run gate signals in one artifact
 - Checkpoints get companion `.meta.json` files with map settings, reward config, active curriculum stage, file size, and SHA-256 digest
-- Eval JSON includes average cumulative rewards and behavior diagnostics for idle rate, action spam, no-damage episodes, low-engagement episodes, and damage events
+- Eval JSON includes average cumulative rewards and behavior diagnostics for idle rate, action spam, no-damage episodes, low-engagement episodes, damage events, stand-still rate, and travel distance
 - Evaluation winner inference treats timeouts as draws and knockouts by terminal HP; shaped rewards do not create timeout wins
 - Eval and suite configs include active curriculum metadata plus checkpoint metadata when a companion file exists
 - Eval, suite, rank, comparison, gate, rank-gate, promotion-audit, audit-summary, artifact-index, strategy-report, long-run-check, long-run-status, league-health, smoke-suite, long-run-artifact-smoke, and replay-analysis JSON include an `artifact` type/schema marker
+- Suite artifacts record `suite_config.policy_sampling` (`greedy`/`stochastic`): checkpoint policies can lose every greedy episode while winning most sampled ones, so both modes must be measured (pass `--stochastic`) and the artifact must say which was used
 - Env infos include per-step and cumulative combat event counters under `events` and `episode_events`
 - Built-in eval opponents: random, idle, scripted, aggressive, evasive, zoner (holds a firing lane and retreats from melee), camper (takes and holds an elevated platform), rusher (duck-marches through horizontal fire and finishes with melee, which ducking does not block; beats stationary duck/shoot policies that no other archetype punishes)
 - Ducking blocks `dy == 0` bullets for `duck_duration` ticks and does not stop melee, so a duck on alternate ticks gives continuous cover while still advancing one tile per two ticks (the rusher's approach)

@@ -929,6 +929,7 @@ def evaluate_baseline_suite(
     episodes: int,
     seed: int | None = None,
     reward_preset: str = "default",
+    policy_sampling: str = "greedy",
 ) -> dict[str, Any]:
     matchups: dict[str, dict[str, Any]] = {}
     win_rates = []
@@ -975,6 +976,10 @@ def evaluate_baseline_suite(
             "episodes_per_matchup": episodes,
             "seed": seed,
             "reward_preset": reward_preset,
+            # Which action mode the checkpoint played: greedy and stochastic
+            # results differ sharply (a run can lose 100% of greedy episodes
+            # while winning ~70% when sampling), so artifacts must say which.
+            "policy_sampling": policy_sampling,
         },
         "overview": {
             "total_matchups": total_matchups,
