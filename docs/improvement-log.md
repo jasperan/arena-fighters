@@ -379,3 +379,23 @@ the action histograms call identical).
   redaction scope, broad artifact `except`, env `lru_cache`, no CI/lint config,
   `scripts/train.py` monolith).
 - No CI workflow; tests run locally only.
+
+## Cycle 13 — 2026-09-11 — entropy bonus as an explicit training knob
+
+**Lane:** config-derived behaviors (training recipes).
+
+Cycle 6 showed sampled-action entropy (0.837) does not detect a degenerate
+greedy policy: the four-map run logged a healthy-looking distribution while
+every deterministic evaluation came out 100% duck. The entropy bonus was
+implicitly zero and not settable from the CLI, so the obvious lever for that
+failure mode could only be changed by editing the dataclass.
+
+`TrainingConfig.ent_coef` (default 0.0) is now plumbed to PPO and exposed as
+`--ent-coef`, validated as non-negative, and recorded in checkpoint metadata so
+runs remain comparable. Verified end-to-end with a 4,096-step run
+(`--ent-coef 0.02`): the flag reaches PPO and `ent_coef: 0.02` appears in
+`ppo_final.meta.json`. Tests cover the default, the override, and the metadata
+field. 375 tests pass.
+
+**Verdict: GAIN** (a recorded, testable knob for the collapse mode that cost
+cycles 6 and 9, and an input for the planned ablation).

@@ -24,6 +24,7 @@ def test_checkpoint_metadata_includes_curriculum_state():
     assert metadata["curriculum"]["stage"]["name"] == "full_map_pool"
     assert metadata["curriculum"]["active_reward_preset"] == "anti_stall"
     assert metadata["reward"] == reward_config_for_preset("anti_stall").__dict__
+    assert metadata["ent_coef"] == cfg.training.ent_coef
     assert metadata["opponent_pool_config"] == {
         "max_size": cfg.training.opponent_pool_size,
         "latest_opponent_prob": cfg.training.latest_opponent_prob,

@@ -48,6 +48,11 @@ class TrainingConfig:
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
+    # Entropy bonus keeps the action distribution from collapsing onto a single
+    # mode. Sampled-action entropy can stay high while the greedy action
+    # degenerates (the four-map run logged 0.837 entropy with a 100% duck
+    # policy), so this is the lever for that failure mode.
+    ent_coef: float = 0.0
     total_timesteps: int = 10_000_000
     snapshot_interval: int = 50
     opponent_pool_size: int = 20

@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from arena_fighters.config import (
     CH_OPP_BULLETS,
     CH_OPP_POS,
@@ -145,3 +147,11 @@ def test_observation_constants():
         VEC_DUCKING,
     ) == tuple(range(NUM_VECTOR_OBS))
     assert NUM_VECTOR_OBS == 6
+
+
+def test_entropy_coefficient_defaults_to_zero_and_is_configurable():
+    """Sampled-action entropy can stay high while the greedy action collapses,
+    so the entropy bonus is an explicit, recorded training knob."""
+    assert Config().training.ent_coef == 0.0
+    cfg = Config(training=replace(Config().training, ent_coef=0.02))
+    assert cfg.training.ent_coef == 0.02

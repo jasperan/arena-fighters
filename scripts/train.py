@@ -187,6 +187,7 @@ def checkpoint_metadata(
         "map_choices": list(cfg.arena.map_choices),
         "reward": effective_reward_config(cfg, num_timesteps).__dict__,
         "curriculum": curriculum_metadata(cfg, num_timesteps),
+        "ent_coef": cfg.training.ent_coef,
         "opponent_pool_config": {
             "max_size": cfg.training.opponent_pool_size,
             "latest_opponent_prob": cfg.training.latest_opponent_prob,
@@ -795,6 +796,7 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
         gamma=cfg.training.gamma,
         gae_lambda=cfg.training.gae_lambda,
         clip_range=cfg.training.clip_range,
+        ent_coef=cfg.training.ent_coef,
         policy_kwargs=policy_kwargs,
         tensorboard_log="./tb_logs",
         verbose=1,
@@ -6453,6 +6455,15 @@ def main():
         help="Seed for reproducible opponent-pool sampling in train/manifest modes",
     )
     parser.add_argument(
+        "--ent-coef",
+        type=float,
+        default=None,
+        help=(
+            "PPO entropy bonus coefficient (default: config value, 0.0). Raise it "
+            "when a run collapses onto one action."
+        ),
+    )
+    parser.add_argument(
         "--scripted-opponents",
         type=str,
         default=None,
@@ -6935,6 +6946,13 @@ def main():
                 cfg.training,
                 opponent_pool_seed=args.opponent_pool_seed,
             ),
+        )
+    if args.ent_coef is not None:
+        if args.ent_coef < 0:
+            parser.error("--ent-coef must be non-negative")
+        cfg = replace(
+            cfg,
+            training=replace(cfg.training, ent_coef=args.ent_coef),
         )
     scripted_opponents = (
         tuple(name.strip() for name in args.scripted_opponents.split(",") if name.strip())
