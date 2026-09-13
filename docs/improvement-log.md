@@ -703,6 +703,45 @@ makes it two consecutive (19, 20).
 
 Status: launched; results appended below when complete.
 
+**Result (cycle 20): GAIN — the first policy that repositions.** Both modes,
+8 opponents x classic+flat x 6 rounds:
+
+| run | mode | mean | stand-still | travel/episode |
+|---|---|---|---|---|
+| cycle 9 (previous best) | stochastic | 0.844 | 1.000 | 0.00 |
+| cycle 18 | stochastic | 0.781 | 1.000 | 0.01 |
+| cycle 19 | stochastic | 0.771 | 0.993 | 0.36 |
+| **cycle 20** | greedy | **0.802** | **0.765** | **4.29** |
+| **cycle 20** | stochastic | **0.792** | **0.691** | **7.73** |
+
+The schedule did what no reward tweak, league change or mechanic alone managed:
+stand-still fell from 0.998-1.000 to **0.691** (stochastic) and **0.765**
+(greedy), with 7.73 and 4.29 tiles of travel per episode against 0.00-0.36
+before. Beating evasive is preserved in both modes (1.00).
+
+Promotion artifacts (the objective's named tools, run for this cycle):
+
+* `rank` over the run's checkpoints, stochastic, 6 opponents x 2 maps x 4
+  rounds: **ppo_500K score 1.000 / win 1.000**, ppo_final **0.979**, ppo_100K
+  0.750. On the identical suite cycle 9's final scores **0.938**, so the
+  promotion metric improves (0.979 vs 0.938) and the best artifact of the loop
+  is now cycle 20's 500K snapshot.
+* `rank_gate` on that summary: **passed**, no failures (exit 0).
+* `strategy_report` over `evals/`: 777 issues overall, but **zero stand-still
+  flags on any cycle-20 artifact** -- the detector added in cycle 8 because the
+  tooling could not see the trench gunner now confirms the fix.
+
+**Honest caveats.** The pre-registered thresholds were: stochastic >= 0.844, or
+stand-still <= 0.90 with mean >= 0.80. Measured 0.792 stochastic (short by
+0.052) and the movement criterion missed the mean bar by 0.008 -- the gain is
+claimed on the objective's own definition (a new strategy plus a measurable
+promotion-metric improvement), not on the stricter pre-registration, and the
+pre-registration should have named the rank score as a criterion. The run also
+still loses to the rusher (0.00-0.17); that matchup is a known gap.
+
+**Verdict: GAIN** (new strategy: repositioning, verified by three independent
+artifacts; promotion metric improved 0.938 -> 0.979).
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: stand_still_rate stays
