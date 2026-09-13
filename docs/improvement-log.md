@@ -470,3 +470,26 @@ replay-spatial metrics are reported alongside, since positioning remains the
 open problem.
 
 Status: launched; results appended below when complete.
+
+## Cycle 16 — 2026-09-11 — engagement preset: paying for passivity
+
+**Lane:** config-derived behaviors.
+
+Every recipe so far ends at `stand_still_rate` 1.000 with 0.0-0.02 tiles of
+travel per episode, including the runs that score 0.84: the environment pays
+nothing for closing distance or holding ground, and ducking blocks horizontal
+fire, so trading from spawn is the cheapest policy that survives.
+
+`RewardConfig` gains two shaping fields -- `far_distance` (free radius, default
+0) and `far_penalty_per_tile` (default 0.0) -- applied symmetrically each tick
+as `-far_penalty_per_tile * max(0, |dx| - far_distance)`. A new
+`engagement` preset layers them on the anti-stall values (free radius 6 tiles,
+0.005 per excess tile, so trading at 20 tiles costs ~0.07 per tick while a
+closed position costs nothing). Unlike a stand-still penalty it cannot be gamed
+by jittering in place: only actually closing the gap stops the bleed.
+
+Tests cover the free radius, the scaling with distance, symmetry between
+agents, and that presets without shaping are unaffected. 377 tests pass.
+
+**Verdict: GAIN** (a targeted, testable lever for the one problem every previous
+cycle left unsolved; the training comparison follows in cycle 17).

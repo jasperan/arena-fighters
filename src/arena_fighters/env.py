@@ -170,6 +170,21 @@ class ArenaFightersEnv(ParallelEnv):
             if actions.get(agent_name) == IDLE:
                 self._rewards[agent_name] += self.cfg.reward.idle_penalty
 
+        # 5b) Passive-distance shaping: pay per excess tile while the opponent
+        # is far away, so holding spawn and trading fire is no longer free.
+        # Applied symmetrically to both agents (the preset is off by default).
+        far_penalty = self.cfg.reward.far_penalty_per_tile
+        if far_penalty > 0.0:
+            far_distance = self.cfg.reward.far_distance
+            for agent_name in self.agents:
+                other_state = self._agent_states.get(self._other(agent_name))
+                if other_state is None:
+                    continue
+                distance = abs(other_state.x - self._agent_states[agent_name].x)
+                excess = distance - far_distance
+                if excess > 0:
+                    self._rewards[agent_name] -= far_penalty * excess
+
         # 6) Check termination
         terminations = {a: False for a in self.agents}
         truncations = {a: False for a in self.agents}

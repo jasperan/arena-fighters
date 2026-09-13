@@ -37,6 +37,13 @@ class RewardConfig:
     deal_damage_per_hp: float = 0.1
     take_damage_per_hp: float = -0.05
     idle_penalty: float = -0.001
+    # Passive-distance shaping: while an opponent is further away than
+    # ``far_distance`` tiles, pay ``far_penalty_per_tile`` per excess tile each
+    # tick. Every training run so far converged on holding its spawn and trading
+    # fire (stand-still rate 1.000); this is the config lever that makes
+    # closing the gap worth something, without paying for movement as such.
+    far_distance: int = 0
+    far_penalty_per_tile: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -102,6 +109,17 @@ REWARD_PRESETS = {
         deal_damage_per_hp=0.2,
         take_damage_per_hp=-0.1,
         idle_penalty=-0.01,
+    ),
+    "engagement": RewardConfig(
+        win=12.0,
+        lose=-12.0,
+        draw=-5.0,
+        no_damage_draw_penalty=-5.0,
+        deal_damage_per_hp=0.2,
+        take_damage_per_hp=-0.1,
+        idle_penalty=-0.01,
+        far_distance=6,
+        far_penalty_per_tile=0.005,
     ),
 }
 REWARD_PRESET_ALIASES = {

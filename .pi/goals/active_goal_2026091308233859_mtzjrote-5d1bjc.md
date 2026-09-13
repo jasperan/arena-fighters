@@ -5,12 +5,12 @@
   "status": "active",
   "autoContinue": true,
   "usage": {
-    "tokensUsed": 351959,
-    "activeSeconds": 3412
+    "tokensUsed": 431596,
+    "activeSeconds": 3593
   },
   "sisyphus": false,
   "createdAt": "2026-09-13T08:23:38.594Z",
-  "updatedAt": "2026-09-13T09:21:03.743Z",
+  "updatedAt": "2026-09-13T09:24:15.103Z",
   "activePath": ".pi/goals/active_goal_2026091308233859_mtzjrote-5d1bjc.md"
 }
 
@@ -29,5 +29,5 @@ Verify every claim in arena-fighters from first principles, then keep improving
 - Status: running
 - Auto-continue: on
 - Sisyphus mode: no
-- Time spent: 56m52s
-- Tokens used: 352K (351,959) tokens
+- Time spent: 59m53s
+- Tokens used: 432K (431,596) tokens

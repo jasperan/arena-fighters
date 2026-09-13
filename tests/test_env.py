@@ -728,3 +728,42 @@ def test_spawn_jitter_zero_pins_classic_columns():
         env.reset(seed=seed)
         assert env._agent_states["agent_0"].x == 5
         assert env._agent_states["agent_1"].x == 34
+
+
+# ---------------------------------------------------------------------------
+# Passive-distance shaping (engagement preset)
+# ---------------------------------------------------------------------------
+def test_far_penalty_is_zero_when_close_and_scales_with_distance():
+    cfg = Config(
+        arena=replace(ArenaConfig(), map_name="flat"),
+        reward=reward_config_for_preset("engagement"),
+    )
+    assert cfg.reward.far_distance == 6 and cfg.reward.far_penalty_per_tile == 0.005
+    env = ArenaFightersEnv(config=cfg)
+    env.reset(seed=0)
+    a0, a1 = env._agent_states["agent_0"], env._agent_states["agent_1"]
+
+    # 20 tiles apart: 14 excess tiles * 0.005, plus the idle penalty both pay.
+    a0.x, a1.x = 5, 25
+    _, rewards, _, _, _ = _step_idle(env)
+    expected = -0.005 * (20 - 6) + cfg.reward.idle_penalty
+    assert rewards["agent_0"] == pytest.approx(expected)
+    assert rewards["agent_1"] == pytest.approx(expected)
+
+    # Inside the free radius nothing extra is charged.
+    env.reset(seed=0)
+    a0, a1 = env._agent_states["agent_0"], env._agent_states["agent_1"]
+    a0.x, a1.x = 10, 14
+    _, rewards, _, _, _ = _step_idle(env)
+    assert rewards["agent_0"] == pytest.approx(cfg.reward.idle_penalty)
+
+
+def test_presets_without_shaping_are_unaffected():
+    env = ArenaFightersEnv(config=Config(arena=replace(ArenaConfig(), map_name="flat")))
+    env.reset(seed=0)
+    env._agent_states["agent_0"].x = 2
+    env._agent_states["agent_1"].x = 30
+
+    _, rewards, _, _, _ = _step_idle(env)
+
+    assert rewards["agent_0"] == pytest.approx(Config().reward.idle_penalty)
