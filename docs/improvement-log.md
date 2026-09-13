@@ -451,3 +451,22 @@ Consequences:
 quality, plus provenance in every suite artifact).
 
 ## Unresolved / carried forward
+
+## Cycle 15 — 2026-09-11 — entropy-regularised mixed-league run (in progress)
+
+**Lane:** trained policy gains.
+
+Cycle 14 established that the best recipe so far is cycle 9's (anti-stall,
+classic+flat, spawn jitter, mixed league of zoner/camper/evasive at 0.35), whose
+stochastic score is 0.844, and that every checkpoint since cycle 4 has a
+degenerate *greedy* mode (0.000-0.798) even when sampling plays well. Cycle 13
+added the entropy coefficient that exists to counter exactly that.
+
+This run repeats the cycle-9 recipe and adds `--ent-coef 0.01`
+(`checkpoints/entcoef-mixed-1m`, seed 71). Success criteria, both measured:
+stochastic mean win rate >= 0.844 (holding the best score) **and** a greedy mean
+win rate well above 0.000 (the mode is no longer degenerate). Stand-still and
+replay-spatial metrics are reported alongside, since positioning remains the
+open problem.
+
+Status: launched; results appended below when complete.
