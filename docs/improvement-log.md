@@ -552,6 +552,35 @@ the completed run; this is recorded as a partial result, not a claimed gain.
 
 Status: running (100K/1M); final results appended below when complete.
 
+## Cycle 19 — 2026-09-11 — strong engagement shaping run (in progress)
+
+**Lane:** trained policy gains (config-derived shaping).
+
+**Cycle 18 verdict first: NO GAIN.** The completed 1M run with a duck cooldown
+scored greedy 0.750 / stochastic 0.781 with stand-still 1.000 and 0.01 tiles of
+travel per episode -- both modes below cycle 9 (0.798 / 0.844), so the cooldown
+cost a little top-end strength without producing lasting movement. The 100K
+movement spike (stand-still 0.699, travel 6.41) turned out to be a transient.
+No-gain count: **2 of 3** (cycles 15 and 18).
+
+Cycle 19 is the pre-registered next attempt, testing the other half of the
+problem: if standing still is cheap because opponents come to you, make passive
+distance expensive. It repeats the cycle-9 recipe (anti-stall, classic+flat,
+spawn jitter, mixed league zoner/camper/evasive at 0.35), keeps the duck
+cooldown (it removed pure duck-lock even though it lost a little score), and
+raises the passive-distance penalty fourfold with a tighter free radius:
+`--far-distance 4 --far-penalty-per-tile 0.02` (holding at 20 tiles then costs
+0.32 per tick against a 12-point win). `--far-distance` and
+`--far-penalty-per-tile` are new CLI knobs so the magnitude is testable rather
+than hard-coded.
+
+**Pre-registered success criteria (any one is a gain):** stochastic mean win
+rate >= 0.844 (matching the best), or greedy mean win rate >= 0.85, or a
+stand-still rate <= 0.90 with a mean win rate >= 0.80. Anything else is the
+third consecutive no-gain and the loop stops, per the objective's stop rule.
+
+Status: launched; results appended below when complete.
+
 ## Unresolved / carried forward
 
 - The trained policy has no positioning behaviour: stand_still_rate stays

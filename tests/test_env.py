@@ -829,3 +829,24 @@ def test_duck_cooldown_is_symmetric_and_blocks_back_to_back_ducks():
     assert env._agent_states["agent_1"].duck_ticks == 0
     assert env._agent_states["agent_0"].duck_cooldown_ticks > 0
     assert env._agent_states["agent_1"].duck_cooldown_ticks > 0
+
+
+def test_far_penalty_knobs_scale_with_configuration():
+    """The distance penalty is configurable so a run can test whether paying
+    for passivity actually changes where a policy fights."""
+    cfg = Config(
+        arena=replace(ArenaConfig(), map_name="flat"),
+        reward=replace(
+            reward_config_for_preset("default"),
+            far_distance=4,
+            far_penalty_per_tile=0.02,
+        ),
+    )
+    env = ArenaFightersEnv(config=cfg)
+    env.reset(seed=0)
+    env._agent_states["agent_0"].x = 5
+    env._agent_states["agent_1"].x = 15  # 10 tiles, 6 excess
+
+    _, rewards, _, _, _ = _step_idle(env)
+
+    assert rewards["agent_0"] == pytest.approx(-0.02 * 6 + cfg.reward.idle_penalty)

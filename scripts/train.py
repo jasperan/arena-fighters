@@ -6460,6 +6460,18 @@ def main():
         help="Seed for reproducible opponent-pool sampling in train/manifest modes",
     )
     parser.add_argument(
+        "--far-distance",
+        type=int,
+        default=None,
+        help="Free distance before the passive-distance penalty applies (default: config value)",
+    )
+    parser.add_argument(
+        "--far-penalty-per-tile",
+        type=float,
+        default=None,
+        help="Per-tick penalty per tile of excess distance while the opponent is far",
+    )
+    parser.add_argument(
         "--duck-cooldown",
         type=int,
         default=None,
@@ -6959,6 +6971,27 @@ def main():
             training=replace(
                 cfg.training,
                 opponent_pool_seed=args.opponent_pool_seed,
+            ),
+        )
+    if (args.far_distance is not None) or (args.far_penalty_per_tile is not None):
+        if args.far_distance is not None and args.far_distance < 0:
+            parser.error("--far-distance must be non-negative")
+        if args.far_penalty_per_tile is not None and args.far_penalty_per_tile < 0:
+            parser.error("--far-penalty-per-tile must be non-negative")
+        cfg = replace(
+            cfg,
+            reward=replace(
+                cfg.reward,
+                far_distance=(
+                    cfg.reward.far_distance
+                    if args.far_distance is None
+                    else args.far_distance
+                ),
+                far_penalty_per_tile=(
+                    cfg.reward.far_penalty_per_tile
+                    if args.far_penalty_per_tile is None
+                    else args.far_penalty_per_tile
+                ),
             ),
         )
     if args.duck_cooldown is not None:
