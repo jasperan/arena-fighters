@@ -23,28 +23,28 @@ from arena_fighters.config import PLATFORM_LAYOUTS
 
 # --- Theme -----------------------------------------------------------------
 
-BACKGROUND_TOP = (12, 16, 38)
-BACKGROUND_BOTTOM = (32, 40, 84)
-PLATFORM_FILL = (52, 66, 112)
-PLATFORM_TOP = (122, 176, 255)
-PLATFORM_BORDER = (28, 36, 66)
+BACKGROUND_TOP = (18, 27, 29)
+BACKGROUND_BOTTOM = (35, 48, 46)
+PLATFORM_FILL = (61, 76, 68)
+PLATFORM_TOP = (162, 184, 147)
+PLATFORM_BORDER = (16, 25, 25)
 AGENT_COLORS = {
-    "agent_0": (255, 179, 71),
-    "agent_1": (255, 93, 143),
+    "agent_0": (218, 236, 159),
+    "agent_1": (241, 157, 110),
 }
-AGENT_OUTLINE = (16, 18, 30)
+AGENT_OUTLINE = (15, 23, 25)
 BULLET_COLORS = {
-    "agent_0": (255, 236, 120),
-    "agent_1": (255, 148, 196),
+    "agent_0": (239, 255, 196),
+    "agent_1": (255, 201, 157),
 }
-HUD_TEXT = (222, 230, 255)
-HUD_MUTED = (170, 184, 222)
-HP_TRACK = (44, 52, 80)
-HP_FULL = (116, 231, 149)
-HP_LOW = (255, 113, 113)
+HUD_TEXT = (234, 237, 217)
+HUD_MUTED = (153, 170, 157)
+HP_TRACK = (46, 62, 55)
+HP_FULL = (178, 213, 140)
+HP_LOW = (240, 139, 112)
 
 DEFAULT_CELL = 24
-HUD_TOP = 62
+HUD_TOP = 112
 HUD_BOTTOM = 16
 SIDE_PADDING = 18
 
@@ -368,12 +368,24 @@ def _draw_hud(
     tick: int | None,
     title: str | None,
 ) -> None:
-    font_label = _font(15, bold=True)
-    font_small = _font(13)
-    font_title = _font(13)
+    font_label = _font(20, bold=True)
+    font_small = _font(11)
+    font_title = _font(10, bold=True)
+
+    draw.rectangle((0, 0, image_width, HUD_TOP - 1), fill=(16, 24, 25))
+    draw.line((SIDE_PADDING, 29, image_width - SIDE_PADDING, 29), fill=HP_TRACK)
+    draw.line((SIDE_PADDING, HUD_TOP - 1, image_width - SIDE_PADDING, HUD_TOP - 1), fill=HP_TRACK)
+    headline = (title or "ARENA FIGHTERS / MATCH REVIEW").upper()
+    available = max(20, image_width - SIDE_PADDING * 2 - 110)
+    while len(headline) > 1 and draw.textlength(headline, font=font_title) > available:
+        headline = headline[:-2] + "…"
+    draw.text((SIDE_PADDING, 10), headline, font=font_title, fill=HUD_MUTED)
+    map_label = map_name.upper()
+    map_width = draw.textlength(map_label, font=font_title)
+    draw.text((image_width - SIDE_PADDING - map_width, 10), map_label, font=font_title, fill=HUD_TEXT)
 
     agents = state.get("agents", {})
-    bar_w, bar_h = 150, 12
+    bar_w, bar_h = min(210, max(40, int(image_width * .28))), 7
 
     for name, color, left_side in (
         ("agent_0", AGENT_COLORS["agent_0"], True),
@@ -383,49 +395,40 @@ def _draw_hud(
         hp = int(agent.get("hp", 0))
         label = "AGENT 0" if name == "agent_0" else "AGENT 1"
         if left_side:
-            draw.text((SIDE_PADDING, 10), label, font=font_label, fill=color)
-            _draw_hp_bar(draw, SIDE_PADDING, 32, bar_w, bar_h, hp, max_hp)
+            draw.text((SIDE_PADDING, 39), label, font=font_label, fill=color)
+            _draw_hp_bar(draw, SIDE_PADDING, 73, bar_w, bar_h, hp, max_hp)
             draw.text(
-                (SIDE_PADDING + bar_w + 8, 29),
-                f"{max(0, hp)}/{max_hp}",
+                (SIDE_PADDING, 88),
+                f"HEALTH  {max(0, hp)} / {max_hp}",
                 font=font_small,
                 fill=HUD_TEXT,
             )
         else:
             text_w = draw.textlength(label, font=font_label)
             draw.text(
-                (image_width - SIDE_PADDING - text_w, 10),
+                (image_width - SIDE_PADDING - text_w, 39),
                 label,
                 font=font_label,
                 fill=color,
             )
             bar_x = image_width - SIDE_PADDING - bar_w
-            _draw_hp_bar(draw, bar_x, 32, bar_w, bar_h, hp, max_hp, right_aligned=True)
-            hp_text = f"{max(0, hp)}/{max_hp}"
+            _draw_hp_bar(draw, bar_x, 73, bar_w, bar_h, hp, max_hp, right_aligned=True)
+            hp_text = f"HEALTH  {max(0, hp)} / {max_hp}"
             draw.text(
-                (bar_x - 8 - draw.textlength(hp_text, font=font_small), 29),
+                (image_width - SIDE_PADDING - draw.textlength(hp_text, font=font_small), 88),
                 hp_text,
                 font=font_small,
                 fill=HUD_TEXT,
             )
 
     center = image_width // 2
-    headline = title or map_name
-    headline_w = draw.textlength(headline, font=font_title)
-    draw.text((center - headline_w / 2, 6), headline, font=font_title, fill=HUD_MUTED)
     clock = tick if tick is not None else int(state.get("tick", 0))
-    clock_text = f"tick {clock}"
+    clock_text = f"TICK {clock:05d}"
     clock_w = draw.textlength(clock_text, font=font_small)
-    draw.text((center - clock_w / 2, 26), clock_text, font=font_small, fill=HUD_TEXT)
-    if score is not None:
-        score_text = f"{score[0]} : {score[1]}"
-        score_w = draw.textlength(score_text, font=font_label)
-        draw.text(
-            (center - score_w / 2, 42),
-            score_text,
-            font=font_label,
-            fill=HUD_TEXT,
-        )
+    draw.text((center - clock_w / 2, 88), clock_text, font=font_small, fill=HUD_MUTED)
+    score_text = f"{score[0]} : {score[1]}" if score is not None else "VS"
+    score_w = draw.textlength(score_text, font=font_label)
+    draw.text((center - score_w / 2, 44), score_text, font=font_label, fill=HUD_TEXT)
 
 
 def render_state(

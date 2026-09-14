@@ -4,6 +4,21 @@
 
 Two agents spawn on a multi-platform arena, shoot projectiles, swing melee attacks, dodge, duck, and jump. One neural network plays both sides (shared-weight self-play with observation mirroring). An opponent pool keeps old snapshots around so the agent doesn't overfit to its own latest strategy.
 
+## Match review, in focus
+
+The PNG/GIF renderer now uses a broadcast-style HUD, crisp health tracks, a restrained arena grid, and distinct sage/tangerine fighters. Physics, action space, camera cropping, and replay formats are unchanged.
+
+![Arena Fighters seeded replay in the upgraded renderer](docs/visuals/match.gif)
+
+<details><summary>Still frame · contact sheet</summary>
+
+![Arena Fighters match frame](docs/visuals/arena.png)
+![Arena Fighters replay contact sheet](docs/visuals/contact-sheet.png)
+
+</details>
+
+These are actual environment frames from seed 12 with random policies, not evidence of trained-agent performance. [Rendering and verification notes](docs/visuals/README.md).
+
 ## Features
 
 - **9-action combat**: move, jump, duck, shoot (forward, diagonal up, diagonal down), melee, idle
