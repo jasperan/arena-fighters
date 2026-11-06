@@ -585,6 +585,7 @@ class SelfPlayCallback(BaseCallback):
         self._milestones = set(cfg.training.milestone_steps)
         self._milestones_hit: set[int] = set()
         self._action_counts = [0] * NUM_ACTIONS
+        self.saved_checkpoint_paths: list[str] = []
 
     def _on_step(self) -> bool:
         self._apply_duck_cooldown_schedule()
@@ -599,6 +600,7 @@ class SelfPlayCallback(BaseCallback):
                 label = f"{m // 1_000_000}M" if m >= 1_000_000 else f"{m // 1_000}K"
                 path = self.checkpoint_dir / f"ppo_{label}"
                 self.model.save(str(path))
+                self.saved_checkpoint_paths.append(str(path))
                 write_checkpoint_metadata(
                     path,
                     self.cfg,
@@ -623,6 +625,7 @@ class SelfPlayCallback(BaseCallback):
             # Save checkpoint
             ckpt_path = self.checkpoint_dir / f"ppo_snap_{self._rollout_count}"
             self.model.save(str(ckpt_path))
+            self.saved_checkpoint_paths.append(str(ckpt_path))
             write_checkpoint_metadata(
                 ckpt_path,
                 self.cfg,
@@ -897,8 +900,22 @@ def run_train(cfg: Config, checkpoint_dir: str, replay_dir: str) -> None:
             ),
         },
     )
+    written_paths = {
+        checkpoint_file_path(path).resolve()
+        for path in (*callback.saved_checkpoint_paths, final_path)
+    }
+    discovered = discover_checkpoints(checkpoint_dir)
+    trusted_paths = tuple(
+        path for path in discovered if Path(path).resolve() in written_paths
+    )
+    for path in discovered:
+        if path not in trusted_paths:
+            print(
+                f"Not trusting {path}: it was not written by this run. "
+                "Use --mode checkpoint_trust_manifest after reviewing it."
+            )
     trust_manifest_path = write_checkpoint_trust_manifest(
-        discover_checkpoints(checkpoint_dir),
+        trusted_paths,
         Path(checkpoint_dir) / "checkpoint-trust-manifest.json",
     )
     print(f"Training complete. Final model saved to {final_path}")

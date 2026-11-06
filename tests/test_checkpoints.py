@@ -347,3 +347,30 @@ def test_milestone_metadata_records_schedule_release_step(tmp_path):
     assert metadata["duck_cooldown_until"] == 100_000
     assert metadata["opponent_pool"]["duck_cooldown_released_at"] == 100_000
     assert wrapper.duck_cooldowns == [0]
+
+
+def test_run_train_manifest_excludes_checkpoints_it_did_not_write(tmp_path):
+    from scripts.train import run_train
+
+    cfg = Config()
+    cfg = replace(
+        cfg,
+        training=replace(
+            cfg.training,
+            total_timesteps=64,
+            batch_size=32,
+            mini_batch_size=32,
+            n_epochs=1,
+            milestone_steps=(),
+        ),
+    )
+    ckpt_dir = tmp_path / "ckpt"
+    ckpt_dir.mkdir()
+    (ckpt_dir / "ppo_foreign.zip").write_bytes(b"not-from-this-run")
+
+    run_train(cfg, str(ckpt_dir), str(tmp_path / "replays"))
+
+    manifest = json.loads((ckpt_dir / "checkpoint-trust-manifest.json").read_text())
+    listed = json.dumps(manifest["checkpoints"])
+    assert "ppo_final" in listed
+    assert "ppo_foreign" not in listed
