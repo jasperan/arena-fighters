@@ -92,6 +92,13 @@ REPLAY_STRATEGY_METRICS = {
 }
 
 
+def terminal_safe(value: object) -> str:
+    """Render a file-derived value with control characters escaped."""
+    return "".join(
+        ch if ch.isprintable() else f"\\x{ord(ch):02x}" for ch in str(value)
+    )
+
+
 def clear_terminal() -> None:
     print("\033[2J\033[H", end="")
 
@@ -1033,8 +1040,8 @@ def run_replay(cfg: Config, episode_path: str) -> None:
     event_totals = data.get("event_totals", {})
 
     print(
-        f"Replay: {path.name}  Winner: {winner}  "
-        f"Length: {length} ticks  Map: {map_name}"
+        f"Replay: {terminal_safe(path.name)}  Winner: {terminal_safe(winner)}  "
+        f"Length: {terminal_safe(length)} ticks  Map: {terminal_safe(map_name)}"
     )
     if event_totals:
         print(f"Event totals: {json.dumps(event_totals, sort_keys=True)}")
@@ -1078,7 +1085,10 @@ def run_replay(cfg: Config, episode_path: str) -> None:
         tick = frame.get("tick", "?")
         hp0 = agents.get("agent_0", {}).get("hp", "?")
         hp1 = agents.get("agent_1", {}).get("hp", "?")
-        header = f"Tick {tick}/{cfg.arena.max_ticks}  HP: @={hp0}  X={hp1}"
+        header = (
+            f"Tick {terminal_safe(tick)}/{cfg.arena.max_ticks}  "
+            f"HP: @={terminal_safe(hp0)}  X={terminal_safe(hp1)}"
+        )
 
         clear_terminal()
         print(header)
@@ -1086,7 +1096,7 @@ def run_replay(cfg: Config, episode_path: str) -> None:
             print("".join(row))
         time.sleep(0.1)
 
-    print(f"\nReplay complete. Winner: {winner}")
+    print(f"\nReplay complete. Winner: {terminal_safe(winner)}")
 
 
 def run_analyze_replay(

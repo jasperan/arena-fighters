@@ -312,3 +312,36 @@ def test_analyze_replay_embeds_spatial_behavior():
     analysis = analyze_replay(replay)
 
     assert analysis["spatial_behavior"]["agent_0"]["spawn_camp_rate"] == 1.0
+
+
+def test_run_replay_escapes_terminal_control_characters(tmp_path, capsys, monkeypatch):
+    from arena_fighters.config import Config
+    from scripts import train
+
+    monkeypatch.setattr(train.time, "sleep", lambda _s: None)
+    path = tmp_path / "evil.json"
+    path.write_text(
+        json.dumps(
+            {
+                "winner": "\x1b]0;TITLE\x07",
+                "map_name": "classic\x1b[2J",
+                "length": "1\rspoof",
+                "frames": [
+                    {
+                        "tick": "0\rspoof",
+                        "agents": {"agent_0": {"x": 5, "y": 18, "hp": "\x1b[31m"}},
+                        "bullets": [],
+                    }
+                ],
+            }
+        )
+    )
+
+    train.run_replay(Config(), str(path))
+    out = capsys.readouterr().out
+
+    assert "\x1b]0;" not in out
+    assert "\r" not in out
+    assert "\\x1b]0;TITLE\\x07" in out
+    # Only the intentional clear-screen from clear_terminal() remains.
+    assert "\x1b" not in out.replace("\x1b[2J\x1b[H", "")
