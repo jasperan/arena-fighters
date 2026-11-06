@@ -1393,34 +1393,40 @@ def gate_rank_summary(
 
     candidate = rankings[0]
     checks = (
-        ("score", float(candidate.get("score", 0.0)), min_score, "min"),
+        ("score", candidate.get("score", 0.0), min_score, "min"),
         (
             "mean_win_rate_agent_0",
-            float(candidate.get("mean_win_rate_agent_0", 0.0)),
+            candidate.get("mean_win_rate_agent_0", 0.0),
             min_win_rate,
             "min",
         ),
         (
             "mean_draw_rate",
-            float(candidate.get("mean_draw_rate", 0.0)),
+            candidate.get("mean_draw_rate", 0.0),
             max_draw_rate,
             "max",
         ),
         (
             "mean_no_damage_rate",
-            float(candidate.get("mean_no_damage_rate", 0.0)),
+            candidate.get("mean_no_damage_rate", 0.0),
             max_no_damage_rate,
             "max",
         ),
         (
             "mean_low_engagement_rate",
-            float(candidate.get("mean_low_engagement_rate", 0.0)),
+            candidate.get("mean_low_engagement_rate", 0.0),
             max_low_engagement_rate,
             "max",
         ),
     )
     failures = []
-    for metric, value, threshold, direction in checks:
+    for metric, raw_value, threshold, direction in checks:
+        value = _finite_float(raw_value)
+        if value is None:
+            failures.append(
+                {"metric": metric, "value": None, "reason": "invalid_metric"}
+            )
+            continue
         if direction == "min" and value < threshold:
             failures.append(
                 {
@@ -1693,6 +1699,16 @@ def gate_eval_comparison(
     ) -> None:
         min_delta = rule.get("min_delta")
         max_delta = rule.get("max_delta")
+        if not math.isfinite(delta):
+            failure = {
+                "metric": metric,
+                "delta": None,
+                "reason": "invalid_delta",
+            }
+            if extra:
+                failure.update(extra)
+            failures.append(failure)
+            return
         if min_delta is not None and delta < min_delta:
             failure = {
                 "metric": metric,

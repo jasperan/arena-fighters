@@ -1201,3 +1201,38 @@ def test_rusher_beats_idle_and_loses_nothing_to_nothing():
     )
     assert winner == "agent_0"
     assert ticks < 120
+
+
+def test_gate_rank_summary_fails_closed_on_non_finite_metrics():
+    for bad in (float("nan"), float("inf"), "nan", None):
+        summary = {
+            "rankings": [
+                {
+                    "label": "forged",
+                    "score": bad,
+                    "mean_win_rate_agent_0": bad,
+                    "mean_draw_rate": 0.0,
+                    "mean_no_damage_rate": 0.0,
+                    "mean_low_engagement_rate": 0.0,
+                }
+            ]
+        }
+
+        gate = gate_rank_summary(summary, min_score=0.9, min_win_rate=0.8)
+
+        assert gate["passed"] is False
+        assert {f["metric"] for f in gate["failures"]} == {
+            "score",
+            "mean_win_rate_agent_0",
+        }
+        assert all(f["reason"] == "invalid_metric" for f in gate["failures"])
+
+
+def test_gate_eval_comparison_fails_closed_on_non_finite_deltas():
+    from arena_fighters.evaluation import DEFAULT_GATE_RULES
+
+    nan = float("nan")
+    gate = gate_eval_comparison({"deltas": {m: nan for m in DEFAULT_GATE_RULES}})
+
+    assert gate["passed"] is False
+    assert {f["reason"] for f in gate["failures"]} == {"invalid_delta"}
